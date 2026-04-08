@@ -19,18 +19,41 @@ class TeamManager(models.Manager):
     def for_user(self, user):
         return self.get_queryset().for_user(user)
 
-    def create_team(self, *, club, name, description=""):
-        return self.create(club=club, name=name, description=description)
+    def create_team(self, *, club, name, description="", **extra_fields):
+        return self.create(club=club, name=name, description=description, **extra_fields)
 
 
 class Team(models.Model):
+    class Gender(models.TextChoices):
+        BOYS = "boys", "Boys"
+        GIRLS = "girls", "Girls"
+        MIXED = "mixed", "Mixed"
+
+    class Status(models.TextChoices):
+        ACTIVE = "active", "Active"
+        INACTIVE = "inactive", "Inactive"
+        ARCHIVED = "archived", "Archived"
+
     club = models.ForeignKey(
         "core.Club",
         on_delete=models.CASCADE,
         related_name="teams",
     )
     name = models.CharField(max_length=255)
+    short_name = models.CharField(max_length=50, blank=True)
     description = models.TextField(blank=True)
+    season = models.CharField(max_length=50, blank=True)
+    age_group = models.CharField(max_length=50, blank=True)
+    gender = models.CharField(max_length=20, choices=Gender.choices, blank=True)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.ACTIVE,
+    )
+    home_venue = models.CharField(max_length=255, blank=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     objects = TeamManager()
 

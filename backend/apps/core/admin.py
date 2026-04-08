@@ -45,15 +45,16 @@ class CustomUserAdmin(UserAdmin):
 
 @admin.register(Club)
 class ClubAdmin(admin.ModelAdmin):
-    list_display = ("name",)
-    search_fields = ("name",)
+    list_display = ("name", "short_name", "city", "country", "contact_email")
+    search_fields = ("name", "short_name", "city", "country", "contact_email")
+    list_filter = ("country", "city")
 
 
 @admin.register(Team)
 class TeamAdmin(admin.ModelAdmin):
-    list_display = ("name", "club")
-    search_fields = ("name", "club__name")
-    list_filter = ("club",)
+    list_display = ("name", "club", "season", "age_group", "gender", "status")
+    search_fields = ("name", "short_name", "club__name", "season", "age_group", "home_venue")
+    list_filter = ("club", "status", "gender", "season", "age_group")
 
 
 @admin.register(ClubMembership)
