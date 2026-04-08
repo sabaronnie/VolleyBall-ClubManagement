@@ -6,11 +6,14 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError
 from django.http import JsonResponse
+from django.shortcuts import get_object_or_404
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_POST, require_http_methods
 
 from .decorators import login_required
+from .models import ParentPlayerRelation, PlayerProfile, Team, TeamMembership, TeamRole
+from .permissions import can_manage_team_member, is_parent_of_team_player
 from .tokens import generate_auth_token
 
 
@@ -157,5 +160,178 @@ def me(request):
                     else None
                 ),
             }
+        }
+    )
+
+
+@csrf_exempt
+@login_required
+@require_http_methods(["PATCH"])
+# Team-related data handled here:
+# - User data for team members, such as emergency contact
+# - TeamMembership data for active team members, such as captaincy
+# - PlayerProfile data for players on the team, such as jersey number,
+#   primary position, parent email, and team notes
+# - ParentPlayerRelation data for parents of players on the team, such as
+#   guardian/payment/schedule/progress access flags for a specific child
+def update_team_member_data(request, team_id, target_user_id):
+    payload = _parse_json_request(request)
+    if payload is None:
+        return JsonResponse({"errors": {"body": "Invalid JSON."}}, status=400)
+
+    team = get_object_or_404(Team, pk=team_id)
+    target_user = get_object_or_404(User, pk=target_user_id)
+
+    if not can_manage_team_member(request.user, target_user, team):
+        return JsonResponse(
+            {"errors": {"authorization": "You cannot modify this team member."}},
+            status=403,
+        )
+
+    updated = {}
+
+    user_updated_fields = []
+    if "emergency_contact" in payload:
+        target_user.emergency_contact = (payload["emergency_contact"] or "").strip()
+        user_updated_fields.append("emergency_contact")
+
+    if user_updated_fields:
+        target_user.save(update_fields=user_updated_fields)
+        updated["user"] = {
+            "emergency_contact": target_user.emergency_contact,
+        }
+
+    membership = TeamMembership.objects.filter(
+        user=target_user,
+        team=team,
+        is_active=True,
+    ).first()
+    if membership is not None:
+        membership_updated_fields = []
+
+        if "is_captain" in payload:
+            membership.is_captain = bool(payload["is_captain"])
+            membership_updated_fields.append("is_captain")
+
+        if membership_updated_fields:
+            membership.save(update_fields=membership_updated_fields)
+            updated["membership"] = {
+                "role": membership.role,
+                "is_captain": membership.is_captain,
+                "is_active": membership.is_active,
+            }
+
+        if membership.role == TeamRole.PLAYER:
+            profile, _ = PlayerProfile.objects.get_or_create(user=target_user)
+            profile_updated_fields = []
+
+            if "jersey_number" in payload:
+                profile.jersey_number = payload["jersey_number"]
+                profile_updated_fields.append("jersey_number")
+            if "primary_position" in payload:
+                profile.primary_position = (payload["primary_position"] or "").strip()
+                profile_updated_fields.append("primary_position")
+            if "parent_email" in payload:
+                profile.parent_email = (payload["parent_email"] or "").strip().lower()
+                profile_updated_fields.append("parent_email")
+            if "notes" in payload:
+                profile.notes = payload["notes"] or ""
+                profile_updated_fields.append("notes")
+
+            if profile_updated_fields:
+                profile.save(update_fields=profile_updated_fields)
+                updated["player_profile"] = {
+                    "jersey_number": profile.jersey_number,
+                    "primary_position": profile.primary_position,
+                    "parent_email": profile.parent_email,
+                    "notes": profile.notes,
+                }
+
+    if is_parent_of_team_player(target_user, team):
+        player_id = payload.get("player_id")
+        parent_fields_present = any(
+            key in payload
+            for key in [
+                "is_legal_guardian",
+                "can_view_progress",
+                "can_manage_payments",
+                "can_view_schedule",
+                "can_limit_player_access",
+                "relation_is_active",
+            ]
+        )
+
+        if parent_fields_present:
+            if not player_id:
+                return JsonResponse(
+                    {
+                        "errors": {
+                            "player_id": "player_id is required when updating parent team data."
+                        }
+                    },
+                    status=400,
+                )
+
+            relation = ParentPlayerRelation.objects.filter(
+                parent=target_user,
+                player_id=player_id,
+                player__team_memberships__team=team,
+                player__team_memberships__role=TeamRole.PLAYER,
+                player__team_memberships__is_active=True,
+            ).first()
+
+            if relation is None:
+                return JsonResponse(
+                    {
+                        "errors": {
+                            "player_id": "No parent-player relation was found for that player on this team."
+                        }
+                    },
+                    status=404,
+                )
+
+            relation_updated_fields = []
+            field_mapping = {
+                "is_legal_guardian": "is_legal_guardian",
+                "can_view_progress": "can_view_progress",
+                "can_manage_payments": "can_manage_payments",
+                "can_view_schedule": "can_view_schedule",
+                "can_limit_player_access": "can_limit_player_access",
+                "relation_is_active": "is_active",
+            }
+
+            for payload_key, model_field in field_mapping.items():
+                if payload_key in payload:
+                    setattr(relation, model_field, bool(payload[payload_key]))
+                    relation_updated_fields.append(model_field)
+
+            if relation_updated_fields:
+                relation.save(update_fields=relation_updated_fields)
+                updated["parent_relation"] = {
+                    "player_id": relation.player_id,
+                    "is_legal_guardian": relation.is_legal_guardian,
+                    "can_view_progress": relation.can_view_progress,
+                    "can_manage_payments": relation.can_manage_payments,
+                    "can_view_schedule": relation.can_view_schedule,
+                    "can_limit_player_access": relation.can_limit_player_access,
+                    "is_active": relation.is_active,
+                }
+
+    if not updated:
+        return JsonResponse(
+            {
+                "errors": {
+                    "payload": "No supported team-based fields were provided for this user."
+                }
+            },
+            status=400,
+        )
+
+    return JsonResponse(
+        {
+            "message": "Team-based data updated successfully.",
+            "team_id": team.id,
+            "target_user_id": target_user.id,
+            "updated": updated,
         }
     )

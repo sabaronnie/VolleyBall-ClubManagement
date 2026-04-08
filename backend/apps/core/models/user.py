@@ -37,6 +37,7 @@ class User(AbstractUser):
     username = None
     email = models.EmailField(unique=True)
     date_of_birth = models.DateField(blank=True, null=True)
+    emergency_contact = models.CharField(max_length=30, blank=True)
 
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = []

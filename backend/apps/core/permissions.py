@@ -131,3 +131,26 @@ def can_manage_player(user, player_user) -> bool:
         role=ClubRole.CLUB_DIRECTOR,
     ).exists()
 
+
+def can_manage_team_member(actor, target_user, team) -> bool:
+    if is_staff_user(actor):
+        return True
+
+    if is_club_director(actor, team.club):
+        return any(
+            [
+                is_team_coach(target_user, team),
+                is_team_player(target_user, team),
+                is_parent_of_team_player(target_user, team),
+            ]
+        )
+
+    if is_team_coach(actor, team):
+        return any(
+            [
+                is_team_player(target_user, team),
+                is_parent_of_team_player(target_user, team),
+            ]
+        )
+
+    return False

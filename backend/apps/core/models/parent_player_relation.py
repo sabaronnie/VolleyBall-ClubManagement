@@ -30,6 +30,12 @@ class ParentPlayerRelation(models.Model):
         on_delete=models.CASCADE,
         related_name="parent_relationships",
     )
+    is_legal_guardian = models.BooleanField(default=False)
+    can_view_progress = models.BooleanField(default=True)
+    can_manage_payments = models.BooleanField(default=True)
+    can_view_schedule = models.BooleanField(default=True)
+    can_limit_player_access = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
 
     objects = ParentPlayerRelationManager()
 
