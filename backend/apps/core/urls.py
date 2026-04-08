@@ -8,6 +8,7 @@ from .views import (
     register,
     update_team_details,
     update_team_member_data,
+    view_team_members,
 )
 
 app_name = "core"
@@ -18,6 +19,7 @@ urlpatterns = [
     path("clubs/create/", create_club, name="create-club"),
     path("clubs/<int:club_id>/teams/create/", create_team, name="create-team"),
     path("register/", register, name="register"),
+    path("teams/<int:team_id>/members/", view_team_members, name="view-team-members"),
     path("teams/<int:team_id>/update/", update_team_details, name="update-team-details"),
     path(
         "teams/<int:team_id>/members/<int:target_user_id>/team-data/",

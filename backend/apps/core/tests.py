@@ -6,7 +6,16 @@ from django.http import JsonResponse
 from django.test import RequestFactory
 
 from .decorators import admin_required
-from .models import Club, ClubMembership, ClubRole, Team, User
+from .models import (
+    Club,
+    ClubMembership,
+    ClubRole,
+    ParentPlayerRelation,
+    Team,
+    TeamMembership,
+    TeamRole,
+    User,
+)
 from .tokens import generate_auth_token, verify_auth_token
 
 
@@ -124,6 +133,103 @@ class LoginRequiredDecoratorTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["user"]["email"], user.email)
+        self.assertEqual(response.json()["owned_clubs"], [])
+        self.assertEqual(response.json()["coached_teams"], [])
+        self.assertEqual(response.json()["player_teams"], [])
+        self.assertEqual(response.json()["children"], [])
+
+    def test_me_returns_owned_clubs_and_team_lists_for_user_roles(self):
+        user = User.objects.create_user(
+            email="multirole@example.com",
+            password="StrongPassword123!",
+            first_name="Multi",
+            last_name="Role",
+        )
+        owned_club = Club.objects.create_club(name="NetUp Volleyball Club", director=user)
+        coach_club = Club.objects.create_club(
+            name="Spike Academy",
+            director=User.objects.create_user(
+                email="director@example.com",
+                password="StrongPassword123!",
+                first_name="Club",
+                last_name="Director",
+            ),
+        )
+        player_club = Club.objects.create_club(
+            name="Serve Stars",
+            director=User.objects.create_user(
+                email="director2@example.com",
+                password="StrongPassword123!",
+                first_name="Club",
+                last_name="Director",
+            ),
+        )
+        coached_team = Team.objects.create_team(club=coach_club, name="U18 Boys", season="2026")
+        player_team = Team.objects.create_team(club=player_club, name="U16 Girls", season="2026")
+        TeamMembership.objects.add_member(user=user, team=coached_team, role=TeamRole.COACH)
+        TeamMembership.objects.add_member(user=user, team=player_team, role=TeamRole.PLAYER)
+        token = generate_auth_token(user)
+
+        response = self.client.get(
+            reverse("core:me"),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["user"]["email"], user.email)
+        self.assertEqual(len(payload["owned_clubs"]), 1)
+        self.assertEqual(payload["owned_clubs"][0]["id"], owned_club.id)
+        self.assertEqual(payload["owned_clubs"][0]["name"], owned_club.name)
+        self.assertEqual(len(payload["coached_teams"]), 1)
+        self.assertEqual(payload["coached_teams"][0]["id"], coached_team.id)
+        self.assertEqual(payload["coached_teams"][0]["club_id"], coach_club.id)
+        self.assertEqual(len(payload["player_teams"]), 1)
+        self.assertEqual(payload["player_teams"][0]["id"], player_team.id)
+        self.assertEqual(payload["player_teams"][0]["club_id"], player_club.id)
+        self.assertEqual(payload["children"], [])
+
+    def test_me_returns_child_player_teams_for_parent(self):
+        parent = User.objects.create_user(
+            email="parent@example.com",
+            password="StrongPassword123!",
+            first_name="Parent",
+            last_name="User",
+        )
+        child = User.objects.create_user(
+            email="child@example.com",
+            password="StrongPassword123!",
+            first_name="Child",
+            last_name="Player",
+        )
+        club = Club.objects.create_club(
+            name="Family Club",
+            director=User.objects.create_user(
+                email="familydirector@example.com",
+                password="StrongPassword123!",
+                first_name="Family",
+                last_name="Director",
+            ),
+        )
+        child_team = Team.objects.create_team(club=club, name="U14 Mixed", season="2026")
+        TeamMembership.objects.add_member(user=child, team=child_team, role=TeamRole.PLAYER)
+        ParentPlayerRelation.objects.link(parent=parent, player=child)
+        token = generate_auth_token(parent)
+
+        response = self.client.get(
+            reverse("core:me"),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["player_teams"], [])
+        self.assertEqual(len(payload["children"]), 1)
+        self.assertEqual(payload["children"][0]["user"]["id"], child.id)
+        self.assertEqual(payload["children"][0]["user"]["email"], child.email)
+        self.assertEqual(len(payload["children"][0]["teams"]), 1)
+        self.assertEqual(payload["children"][0]["teams"][0]["id"], child_team.id)
+        self.assertEqual(payload["children"][0]["teams"][0]["club_id"], club.id)
 
     def test_me_rejects_missing_authorization_header(self):
         response = self.client.get(reverse("core:me"))
@@ -240,6 +346,88 @@ class CreateTeamEndpointTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 403)
+
+
+class ViewTeamMembersEndpointTests(TestCase):
+    def test_view_team_members_returns_active_members_for_authenticated_user(self):
+        requester = User.objects.create_user(
+            email="viewer@example.com",
+            password="StrongPassword123!",
+            first_name="View",
+            last_name="Only",
+        )
+        director = User.objects.create_user(
+            email="director@example.com",
+            password="StrongPassword123!",
+            first_name="Club",
+            last_name="Director",
+        )
+        coach = User.objects.create_user(
+            email="coach@example.com",
+            password="StrongPassword123!",
+            first_name="Coach",
+            last_name="User",
+        )
+        player = User.objects.create_user(
+            email="player@example.com",
+            password="StrongPassword123!",
+            first_name="Player",
+            last_name="User",
+        )
+        inactive_player = User.objects.create_user(
+            email="inactive@example.com",
+            password="StrongPassword123!",
+            first_name="Inactive",
+            last_name="Player",
+        )
+        club = Club.objects.create_club(name="NetUp Volleyball Club", director=director)
+        team = Team.objects.create_team(club=club, name="U16 Girls", season="2026")
+        TeamMembership.objects.add_member(user=coach, team=team, role=TeamRole.COACH)
+        TeamMembership.objects.add_member(
+            user=player,
+            team=team,
+            role=TeamRole.PLAYER,
+            is_captain=True,
+        )
+        inactive_membership = TeamMembership.objects.add_member(
+            user=inactive_player,
+            team=team,
+            role=TeamRole.PLAYER,
+        )
+        TeamMembership.objects.deactivate(inactive_membership)
+        token = generate_auth_token(requester)
+
+        response = self.client.get(
+            reverse("core:view-team-members", kwargs={"team_id": team.id}),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["team"]["id"], team.id)
+        self.assertEqual(payload["team"]["name"], team.name)
+        self.assertEqual(len(payload["members"]), 2)
+        self.assertEqual(payload["members"][0]["membership"]["role"], TeamRole.COACH)
+        self.assertEqual(payload["members"][0]["user"]["id"], coach.id)
+        self.assertEqual(payload["members"][1]["membership"]["role"], TeamRole.PLAYER)
+        self.assertEqual(payload["members"][1]["user"]["id"], player.id)
+        self.assertTrue(payload["members"][1]["membership"]["is_captain"])
+
+    def test_view_team_members_requires_authentication(self):
+        director = User.objects.create_user(
+            email="director@example.com",
+            password="StrongPassword123!",
+            first_name="Club",
+            last_name="Director",
+        )
+        club = Club.objects.create_club(name="NetUp Volleyball Club", director=director)
+        team = Team.objects.create_team(club=club, name="U16 Girls", season="2026")
+
+        response = self.client.get(
+            reverse("core:view-team-members", kwargs={"team_id": team.id}),
+        )
+
+        self.assertEqual(response.status_code, 401)
 
 
 class UpdateTeamDetailsEndpointTests(TestCase):

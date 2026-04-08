@@ -12,7 +12,16 @@ from django.views.decorators.http import require_GET
 from django.views.decorators.http import require_POST, require_http_methods
 
 from .decorators import login_required
-from .models import Club, ParentPlayerRelation, PlayerProfile, Team, TeamMembership, TeamRole
+from .models import (
+    Club,
+    ClubMembership,
+    ClubRole,
+    ParentPlayerRelation,
+    PlayerProfile,
+    Team,
+    TeamMembership,
+    TeamRole,
+)
 from .permissions import (
     can_manage_club,
     can_manage_team,
@@ -40,6 +49,62 @@ def _parse_date_of_birth(value):
         return date.fromisoformat(value)
     except ValueError as exc:
         raise ValidationError({"date_of_birth": "Use YYYY-MM-DD format."}) from exc
+
+
+def _serialize_club(club):
+    return {
+        "id": club.id,
+        "name": club.name,
+        "short_name": club.short_name,
+        "description": club.description,
+        "contact_email": club.contact_email,
+        "contact_phone": club.contact_phone,
+        "website": club.website,
+        "country": club.country,
+        "city": club.city,
+        "address": club.address,
+        "founded_year": club.founded_year,
+    }
+
+
+def _serialize_team(team):
+    return {
+        "id": team.id,
+        "club_id": team.club_id,
+        "club_name": team.club.name,
+        "name": team.name,
+        "short_name": team.short_name,
+        "description": team.description,
+        "season": team.season,
+        "age_group": team.age_group,
+        "gender": team.gender,
+        "status": team.status,
+        "home_venue": team.home_venue,
+        "notes": team.notes,
+    }
+
+
+def _serialize_basic_user(user):
+    return {
+        "id": user.id,
+        "email": user.email,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "date_of_birth": user.date_of_birth.isoformat() if user.date_of_birth else None,
+    }
+
+
+def _serialize_team_member(membership):
+    return {
+        "user": _serialize_basic_user(membership.user),
+        "membership": {
+            "role": membership.role,
+            "is_captain": membership.is_captain,
+            "is_active": membership.is_active,
+            "joined_at": membership.joined_at.isoformat() if membership.joined_at else None,
+            "left_at": membership.left_at.isoformat() if membership.left_at else None,
+        },
+    }
 
 
 @csrf_exempt
@@ -152,19 +217,70 @@ def login(request):
 @login_required
 @require_GET
 def me(request):
+    owned_clubs = [
+        _serialize_club(membership.club)
+        for membership in ClubMembership.objects.active()
+        .filter(user=request.user, role=ClubRole.CLUB_DIRECTOR)
+        .select_related("club")
+    ]
+    coached_teams = [
+        _serialize_team(membership.team)
+        for membership in TeamMembership.objects.active()
+        .filter(user=request.user, role=TeamRole.COACH)
+        .select_related("team__club")
+    ]
+    player_teams = [
+        _serialize_team(membership.team)
+        for membership in TeamMembership.objects.active()
+        .filter(user=request.user, role=TeamRole.PLAYER)
+        .select_related("team__club")
+    ]
+    children = []
+    parent_relations = ParentPlayerRelation.objects.filter(
+        parent=request.user,
+        is_active=True,
+    ).select_related("player")
+
+    for relation in parent_relations:
+        child_teams = [
+            _serialize_team(membership.team)
+            for membership in TeamMembership.objects.active()
+            .filter(user=relation.player, role=TeamRole.PLAYER)
+            .select_related("team__club")
+        ]
+        children.append(
+            {
+                "user": _serialize_basic_user(relation.player),
+                "teams": child_teams,
+            }
+        )
+
     return JsonResponse(
         {
-            "user": {
-                "id": request.user.id,
-                "email": request.user.email,
-                "first_name": request.user.first_name,
-                "last_name": request.user.last_name,
-                "date_of_birth": (
-                    request.user.date_of_birth.isoformat()
-                    if request.user.date_of_birth
-                    else None
-                ),
-            }
+            "user": _serialize_basic_user(request.user),
+            "owned_clubs": owned_clubs,
+            "coached_teams": coached_teams,
+            "player_teams": player_teams,
+            "children": children,
+        }
+    )
+
+
+@login_required
+@require_GET
+def view_team_members(request, team_id):
+    team = get_object_or_404(Team.objects.select_related("club"), pk=team_id)
+    memberships = (
+        TeamMembership.objects.active()
+        .filter(team=team)
+        .select_related("user")
+        .order_by("role", "user__first_name", "user__last_name", "user__email")
+    )
+
+    return JsonResponse(
+        {
+            "team": _serialize_team(team),
+            "members": [_serialize_team_member(membership) for membership in memberships],
         }
     )
 
