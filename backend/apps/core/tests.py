@@ -6,7 +6,7 @@ from django.http import JsonResponse
 from django.test import RequestFactory
 
 from .decorators import admin_required
-from .models import Club, ClubMembership, ClubRole, User
+from .models import Club, ClubMembership, ClubRole, Team, User
 from .tokens import generate_auth_token, verify_auth_token
 
 
@@ -185,6 +185,136 @@ class CreateClubEndpointTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 401)
+
+
+class CreateTeamEndpointTests(TestCase):
+    def test_create_team_allows_club_director(self):
+        user = User.objects.create_user(
+            email="director@example.com",
+            password="StrongPassword123!",
+            first_name="Club",
+            last_name="Director",
+        )
+        club = Club.objects.create_club(name="NetUp Volleyball Club", director=user)
+        token = generate_auth_token(user)
+
+        response = self.client.post(
+            reverse("core:create-team", kwargs={"club_id": club.id}),
+            data=json.dumps(
+                {
+                    "name": "U16 Girls",
+                    "short_name": "U16G",
+                    "season": "2026",
+                    "age_group": "U16",
+                    "gender": "girls",
+                }
+            ),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(Team.objects.filter(club=club, name="U16 Girls").exists())
+
+    def test_create_team_rejects_user_who_cannot_manage_club(self):
+        director = User.objects.create_user(
+            email="director@example.com",
+            password="StrongPassword123!",
+            first_name="Club",
+            last_name="Director",
+        )
+        other_user = User.objects.create_user(
+            email="player@example.com",
+            password="StrongPassword123!",
+            first_name="Player",
+            last_name="User",
+        )
+        club = Club.objects.create_club(name="NetUp Volleyball Club", director=director)
+        token = generate_auth_token(other_user)
+
+        response = self.client.post(
+            reverse("core:create-team", kwargs={"club_id": club.id}),
+            data=json.dumps({"name": "U16 Girls"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+
+class UpdateTeamDetailsEndpointTests(TestCase):
+    def test_update_team_details_allows_club_director(self):
+        director = User.objects.create_user(
+            email="director@example.com",
+            password="StrongPassword123!",
+            first_name="Club",
+            last_name="Director",
+        )
+        club = Club.objects.create_club(name="NetUp Volleyball Club", director=director)
+        team = Team.objects.create_team(club=club, name="U16 Girls", season="2026")
+        token = generate_auth_token(director)
+
+        response = self.client.patch(
+            reverse("core:update-team-details", kwargs={"team_id": team.id}),
+            data=json.dumps({"home_venue": "Main Gym", "season": "2027"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_update_team_details_allows_coach_of_team(self):
+        director = User.objects.create_user(
+            email="director@example.com",
+            password="StrongPassword123!",
+            first_name="Club",
+            last_name="Director",
+        )
+        coach = User.objects.create_user(
+            email="coach@example.com",
+            password="StrongPassword123!",
+            first_name="Team",
+            last_name="Coach",
+        )
+        club = Club.objects.create_club(name="NetUp Volleyball Club", director=director)
+        team = Team.objects.create_team(club=club, name="U16 Girls")
+        TeamMembership.objects.add_member(user=coach, team=team, role=TeamRole.COACH)
+        token = generate_auth_token(coach)
+
+        response = self.client.patch(
+            reverse("core:update-team-details", kwargs={"team_id": team.id}),
+            data=json.dumps({"home_venue": "Secondary Gym"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_update_team_details_rejects_user_without_permission(self):
+        director = User.objects.create_user(
+            email="director@example.com",
+            password="StrongPassword123!",
+            first_name="Club",
+            last_name="Director",
+        )
+        other_user = User.objects.create_user(
+            email="player@example.com",
+            password="StrongPassword123!",
+            first_name="Player",
+            last_name="User",
+        )
+        club = Club.objects.create_club(name="NetUp Volleyball Club", director=director)
+        team = Team.objects.create_team(club=club, name="U16 Girls")
+        token = generate_auth_token(other_user)
+
+        response = self.client.patch(
+            reverse("core:update-team-details", kwargs={"team_id": team.id}),
+            data=json.dumps({"home_venue": "Secondary Gym"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 403)
 
 
 class AdminRequiredDecoratorTests(TestCase):

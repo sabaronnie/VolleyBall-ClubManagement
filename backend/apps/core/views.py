@@ -13,7 +13,12 @@ from django.views.decorators.http import require_POST, require_http_methods
 
 from .decorators import login_required
 from .models import Club, ParentPlayerRelation, PlayerProfile, Team, TeamMembership, TeamRole
-from .permissions import can_manage_team_member, is_parent_of_team_player
+from .permissions import (
+    can_manage_club,
+    can_manage_team,
+    can_manage_team_member,
+    is_parent_of_team_player,
+)
 from .tokens import generate_auth_token
 
 
@@ -227,6 +232,144 @@ def create_club(request):
             },
         },
         status=201,
+    )
+
+
+@csrf_exempt
+@login_required
+@require_POST
+def create_team(request, club_id):
+    payload = _parse_json_request(request)
+    if payload is None:
+        return JsonResponse({"errors": {"body": "Invalid JSON."}}, status=400)
+
+    club = get_object_or_404(Club, pk=club_id)
+    if not can_manage_club(request.user, club):
+        return JsonResponse(
+            {"errors": {"authorization": "You cannot create teams for this club."}},
+            status=403,
+        )
+
+    name = (payload.get("name") or "").strip()
+    errors = {}
+
+    if not name:
+        errors["name"] = "Team name is required."
+
+    if errors:
+        return JsonResponse({"errors": errors}, status=400)
+
+    team_data = {
+        "short_name": (payload.get("short_name") or "").strip(),
+        "description": payload.get("description") or "",
+        "season": (payload.get("season") or "").strip(),
+        "age_group": (payload.get("age_group") or "").strip(),
+        "gender": (payload.get("gender") or "").strip(),
+        "status": (payload.get("status") or Team.Status.ACTIVE).strip() or Team.Status.ACTIVE,
+        "home_venue": (payload.get("home_venue") or "").strip(),
+        "notes": payload.get("notes") or "",
+    }
+
+    try:
+        team = Team.objects.create_team(
+            club=club,
+            name=name,
+            **team_data,
+        )
+    except IntegrityError:
+        return JsonResponse(
+            {"errors": {"name": "A team with this name already exists in this club."}},
+            status=400,
+        )
+
+    return JsonResponse(
+        {
+            "message": "Team created successfully.",
+            "team": {
+                "id": team.id,
+                "club_id": club.id,
+                "name": team.name,
+                "short_name": team.short_name,
+                "description": team.description,
+                "season": team.season,
+                "age_group": team.age_group,
+                "gender": team.gender,
+                "status": team.status,
+                "home_venue": team.home_venue,
+                "notes": team.notes,
+            },
+        },
+        status=201,
+    )
+
+
+@csrf_exempt
+@login_required
+@require_http_methods(["PATCH"])
+def update_team_details(request, team_id):
+    payload = _parse_json_request(request)
+    if payload is None:
+        return JsonResponse({"errors": {"body": "Invalid JSON."}}, status=400)
+
+    team = get_object_or_404(Team, pk=team_id)
+    if not can_manage_team(request.user, team):
+        return JsonResponse(
+            {"errors": {"authorization": "You cannot modify this team."}},
+            status=403,
+        )
+
+    updated_fields = []
+    updatable_fields = {
+        "name": lambda value: (value or "").strip(),
+        "short_name": lambda value: (value or "").strip(),
+        "description": lambda value: value or "",
+        "season": lambda value: (value or "").strip(),
+        "age_group": lambda value: (value or "").strip(),
+        "gender": lambda value: (value or "").strip(),
+        "status": lambda value: (value or "").strip(),
+        "home_venue": lambda value: (value or "").strip(),
+        "notes": lambda value: value or "",
+    }
+
+    for field_name, transform in updatable_fields.items():
+        if field_name in payload:
+            setattr(team, field_name, transform(payload[field_name]))
+            updated_fields.append(field_name)
+
+    if "name" in updated_fields and not team.name:
+        return JsonResponse({"errors": {"name": "Team name cannot be empty."}}, status=400)
+
+    if not updated_fields:
+        return JsonResponse(
+            {"errors": {"payload": "No supported team fields were provided."}},
+            status=400,
+        )
+
+    try:
+        team.save(update_fields=updated_fields + ["updated_at"])
+    except IntegrityError:
+        return JsonResponse(
+            {"errors": {"name": "A team with this name already exists in this club."}},
+            status=400,
+        )
+
+    return JsonResponse(
+        {
+            "message": "Team details updated successfully.",
+            "team": {
+                "id": team.id,
+                "club_id": team.club_id,
+                "name": team.name,
+                "short_name": team.short_name,
+                "description": team.description,
+                "season": team.season,
+                "age_group": team.age_group,
+                "gender": team.gender,
+                "status": team.status,
+                "home_venue": team.home_venue,
+                "notes": team.notes,
+            },
+        }
     )
 
 
