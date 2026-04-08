@@ -287,6 +287,99 @@ def view_team_members(request, team_id):
 
 @csrf_exempt
 @login_required
+@require_http_methods(["DELETE"])
+def remove_team_member(request, team_id, target_user_id):
+    payload = _parse_json_request(request)
+    if payload is None:
+        return JsonResponse({"errors": {"body": "Invalid JSON."}}, status=400)
+
+    team = get_object_or_404(Team, pk=team_id)
+    target_user = get_object_or_404(User, pk=target_user_id)
+
+    if not can_manage_team_member(request.user, target_user, team):
+        return JsonResponse(
+            {"errors": {"authorization": "You cannot remove this team member."}},
+            status=403,
+        )
+
+    membership = TeamMembership.objects.active().filter(
+        user=target_user,
+        team=team,
+    ).first()
+    if membership is not None:
+        TeamMembership.objects.deactivate(membership)
+        return JsonResponse(
+            {
+                "message": "Team membership removed successfully.",
+                "removed": {
+                    "user_id": target_user.id,
+                    "team_id": team.id,
+                    "membership": {
+                        "role": membership.role,
+                        "is_captain": membership.is_captain,
+                        "is_active": membership.is_active,
+                        "left_at": (
+                            membership.left_at.isoformat() if membership.left_at else None
+                        ),
+                    },
+                },
+            }
+        )
+
+    if is_parent_of_team_player(target_user, team):
+        player_id = payload.get("player_id")
+        if not player_id:
+            return JsonResponse(
+                {
+                    "errors": {
+                        "player_id": "player_id is required when removing a parent from a team."
+                    }
+                },
+                status=400,
+            )
+
+        relation = ParentPlayerRelation.objects.filter(
+            parent=target_user,
+            player_id=player_id,
+            player__team_memberships__team=team,
+            player__team_memberships__role=TeamRole.PLAYER,
+            player__team_memberships__is_active=True,
+            is_active=True,
+        ).first()
+        if relation is None:
+            return JsonResponse(
+                {
+                    "errors": {
+                        "player_id": "No active parent-player relation was found for that player on this team."
+                    }
+                },
+                status=404,
+            )
+
+        relation.is_active = False
+        relation.save(update_fields=["is_active"])
+        return JsonResponse(
+            {
+                "message": "Parent access removed successfully.",
+                "removed": {
+                    "user_id": target_user.id,
+                    "team_id": team.id,
+                    "parent_relation": {
+                        "player_id": relation.player_id,
+                        "is_active": relation.is_active,
+                    },
+                },
+            }
+        )
+
+    return JsonResponse(
+        {"errors": {"membership": "No active team-based membership was found for this user."}},
+        status=404,
+    )
+
+
+@csrf_exempt
+@login_required
 @require_POST
 def create_club(request):
     payload = _parse_json_request(request)

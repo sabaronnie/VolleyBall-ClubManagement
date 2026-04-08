@@ -430,6 +430,170 @@ class ViewTeamMembersEndpointTests(TestCase):
         self.assertEqual(response.status_code, 401)
 
 
+class RemoveTeamMemberEndpointTests(TestCase):
+    def test_club_director_can_remove_coach_team_membership(self):
+        director = User.objects.create_user(
+            email="director@example.com",
+            password="StrongPassword123!",
+            first_name="Club",
+            last_name="Director",
+        )
+        coach = User.objects.create_user(
+            email="coach@example.com",
+            password="StrongPassword123!",
+            first_name="Coach",
+            last_name="User",
+        )
+        club = Club.objects.create_club(name="NetUp Volleyball Club", director=director)
+        team = Team.objects.create_team(club=club, name="U16 Girls", season="2026")
+        TeamMembership.objects.add_member(user=coach, team=team, role=TeamRole.COACH)
+        token = generate_auth_token(director)
+
+        response = self.client.delete(
+            reverse("core:remove-team-member", kwargs={"team_id": team.id, "target_user_id": coach.id}),
+            data=json.dumps({}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(
+            TeamMembership.objects.filter(
+                user=coach,
+                team=team,
+                is_active=True,
+            ).exists()
+        )
+
+    def test_coach_can_remove_player_team_membership(self):
+        director = User.objects.create_user(
+            email="director@example.com",
+            password="StrongPassword123!",
+            first_name="Club",
+            last_name="Director",
+        )
+        coach = User.objects.create_user(
+            email="coach@example.com",
+            password="StrongPassword123!",
+            first_name="Coach",
+            last_name="User",
+        )
+        player = User.objects.create_user(
+            email="player@example.com",
+            password="StrongPassword123!",
+            first_name="Player",
+            last_name="User",
+        )
+        club = Club.objects.create_club(name="NetUp Volleyball Club", director=director)
+        team = Team.objects.create_team(club=club, name="U16 Girls", season="2026")
+        TeamMembership.objects.add_member(user=coach, team=team, role=TeamRole.COACH)
+        TeamMembership.objects.add_member(user=player, team=team, role=TeamRole.PLAYER)
+        token = generate_auth_token(coach)
+
+        response = self.client.delete(
+            reverse("core:remove-team-member", kwargs={"team_id": team.id, "target_user_id": player.id}),
+            data=json.dumps({}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(
+            TeamMembership.objects.filter(
+                user=player,
+                team=team,
+                is_active=True,
+            ).exists()
+        )
+
+    def test_coach_can_remove_parent_for_player_on_team(self):
+        director = User.objects.create_user(
+            email="director@example.com",
+            password="StrongPassword123!",
+            first_name="Club",
+            last_name="Director",
+        )
+        coach = User.objects.create_user(
+            email="coach@example.com",
+            password="StrongPassword123!",
+            first_name="Coach",
+            last_name="User",
+        )
+        parent = User.objects.create_user(
+            email="parent@example.com",
+            password="StrongPassword123!",
+            first_name="Parent",
+            last_name="User",
+        )
+        player = User.objects.create_user(
+            email="player@example.com",
+            password="StrongPassword123!",
+            first_name="Player",
+            last_name="User",
+        )
+        club = Club.objects.create_club(name="NetUp Volleyball Club", director=director)
+        team = Team.objects.create_team(club=club, name="U16 Girls", season="2026")
+        TeamMembership.objects.add_member(user=coach, team=team, role=TeamRole.COACH)
+        TeamMembership.objects.add_member(user=player, team=team, role=TeamRole.PLAYER)
+        relation = ParentPlayerRelation.objects.link(parent=parent, player=player)
+        token = generate_auth_token(coach)
+
+        response = self.client.delete(
+            reverse("core:remove-team-member", kwargs={"team_id": team.id, "target_user_id": parent.id}),
+            data=json.dumps({"player_id": player.id}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        relation.refresh_from_db()
+        self.assertFalse(relation.is_active)
+
+    def test_coach_cannot_remove_coach_team_membership(self):
+        director = User.objects.create_user(
+            email="director@example.com",
+            password="StrongPassword123!",
+            first_name="Club",
+            last_name="Director",
+        )
+        coach = User.objects.create_user(
+            email="coach@example.com",
+            password="StrongPassword123!",
+            first_name="Coach",
+            last_name="User",
+        )
+        other_coach = User.objects.create_user(
+            email="coach2@example.com",
+            password="StrongPassword123!",
+            first_name="Other",
+            last_name="Coach",
+        )
+        club = Club.objects.create_club(name="NetUp Volleyball Club", director=director)
+        team = Team.objects.create_team(club=club, name="U16 Girls", season="2026")
+        TeamMembership.objects.add_member(user=coach, team=team, role=TeamRole.COACH)
+        TeamMembership.objects.add_member(user=other_coach, team=team, role=TeamRole.COACH)
+        token = generate_auth_token(coach)
+
+        response = self.client.delete(
+            reverse(
+                "core:remove-team-member",
+                kwargs={"team_id": team.id, "target_user_id": other_coach.id},
+            ),
+            data=json.dumps({}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(
+            TeamMembership.objects.filter(
+                user=other_coach,
+                team=team,
+                is_active=True,
+            ).exists()
+        )
+
+
 class UpdateTeamDetailsEndpointTests(TestCase):
     def test_update_team_details_allows_club_director(self):
         director = User.objects.create_user(

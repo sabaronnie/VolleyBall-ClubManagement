@@ -5,6 +5,7 @@ from .views import (
     create_team,
     login,
     me,
+    remove_team_member,
     register,
     update_team_details,
     update_team_member_data,
@@ -20,6 +21,11 @@ urlpatterns = [
     path("clubs/<int:club_id>/teams/create/", create_team, name="create-team"),
     path("register/", register, name="register"),
     path("teams/<int:team_id>/members/", view_team_members, name="view-team-members"),
+    path(
+        "teams/<int:team_id>/members/<int:target_user_id>/remove/",
+        remove_team_member,
+        name="remove-team-member",
+    ),
     path("teams/<int:team_id>/update/", update_team_details, name="update-team-details"),
     path(
         "teams/<int:team_id>/members/<int:target_user_id>/team-data/",
