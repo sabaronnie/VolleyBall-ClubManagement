@@ -11,9 +11,6 @@ class UserManager(BaseUserManager):
             raise ValueError("An email address is required.")
 
         email = self.normalize_email(email)
-        username = extra_fields.get("username")
-        if not username:
-            extra_fields["username"] = email
 
         user = self.model(email=email, **extra_fields)
         user.set_password(password)
@@ -34,16 +31,17 @@ class UserManager(BaseUserManager):
 
 
 # Inherited from AbstractUser so includes:
-# username, first_name, last_name, password, is_active, is_staff,
+# first_name, last_name, password, is_active, is_staff,
 # is_superuser, date_joined, last_login, groups, user_permissions
 class User(AbstractUser):
+    username = None
     email = models.EmailField(unique=True)
     date_of_birth = models.DateField(blank=True, null=True)
 
     USERNAME_FIELD = "email"
-    REQUIRED_FIELDS = ["username"]
+    REQUIRED_FIELDS = []
 
     objects = UserManager()
 
     def __str__(self) -> str:
-        return self.email
+        return self.get_full_name() or self.email

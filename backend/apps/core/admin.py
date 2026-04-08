@@ -15,20 +15,32 @@ from .models import (
 @admin.register(User)
 class CustomUserAdmin(UserAdmin):
     list_display = (
-        "username",
         "email",
-        "date_of_birth",
         "first_name",
         "last_name",
+        "date_of_birth",
         "is_staff",
     )
-    fieldsets = UserAdmin.fieldsets + (
-        ("Personal Info", {"fields": ("date_of_birth",)}),
+    fieldsets = (
+        (None, {"fields": ("email", "password")}),
+        ("Personal Info", {"fields": ("first_name", "last_name", "date_of_birth")}),
+        (
+            "Permissions",
+            {"fields": ("is_active", "is_staff", "is_superuser", "groups", "user_permissions")},
+        ),
+        ("Important dates", {"fields": ("last_login", "date_joined")}),
     )
-    add_fieldsets = UserAdmin.add_fieldsets + (
-        ("Personal Info", {"classes": ("wide",), "fields": ("email", "date_of_birth")}),
+    add_fieldsets = (
+        (
+            None,
+            {
+                "classes": ("wide",),
+                "fields": ("email", "first_name", "last_name", "date_of_birth", "password1", "password2"),
+            },
+        ),
     )
-    search_fields = ("username", "email", "first_name", "last_name")
+    search_fields = ("email", "first_name", "last_name")
+    ordering = ("email",)
 
 
 @admin.register(Club)
@@ -47,7 +59,7 @@ class TeamAdmin(admin.ModelAdmin):
 @admin.register(ClubMembership)
 class ClubMembershipAdmin(admin.ModelAdmin):
     list_display = ("user", "club", "role", "is_active", "joined_at", "left_at")
-    search_fields = ("user__username", "club__name", "role")
+    search_fields = ("user__email", "user__first_name", "user__last_name", "club__name", "role")
     list_filter = ("role", "is_active", "club")
 
 
@@ -62,17 +74,24 @@ class TeamMembershipAdmin(admin.ModelAdmin):
         "joined_at",
         "left_at",
     )
-    search_fields = ("user__username", "team__name", "role")
+    search_fields = ("user__email", "user__first_name", "user__last_name", "team__name", "role")
     list_filter = ("role", "is_captain", "is_active", "team__club")
 
 
 @admin.register(PlayerProfile)
 class PlayerProfileAdmin(admin.ModelAdmin):
     list_display = ("user", "jersey_number", "primary_position")
-    search_fields = ("user__username", "user__email", "primary_position")
+    search_fields = ("user__email", "user__first_name", "user__last_name", "primary_position")
 
 
 @admin.register(ParentPlayerRelation)
 class ParentPlayerRelationAdmin(admin.ModelAdmin):
     list_display = ("parent", "player")
-    search_fields = ("parent__username", "player__username")
+    search_fields = (
+        "parent__email",
+        "parent__first_name",
+        "parent__last_name",
+        "player__email",
+        "player__first_name",
+        "player__last_name",
+    )
