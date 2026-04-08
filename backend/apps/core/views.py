@@ -1,16 +1,27 @@
 import json
 from datetime import date
 
-from django.contrib.auth import get_user_model
+from django.contrib.auth import authenticate, get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_GET
 from django.views.decorators.http import require_POST
+
+from .decorators import login_required
+from .tokens import generate_auth_token
 
 
 User = get_user_model()
+
+
+def _parse_json_request(request):
+    try:
+        return json.loads(request.body or "{}")
+    except json.JSONDecodeError:
+        return None
 
 
 def _parse_date_of_birth(value):
@@ -26,9 +37,8 @@ def _parse_date_of_birth(value):
 @csrf_exempt
 @require_POST
 def register(request):
-    try:
-        payload = json.loads(request.body or "{}")
-    except json.JSONDecodeError:
+    payload = _parse_json_request(request)
+    if payload is None:
         return JsonResponse({"errors": {"body": "Invalid JSON."}}, status=400)
 
     email = (payload.get("email") or "").strip().lower()
@@ -87,4 +97,65 @@ def register(request):
             },
         },
         status=201,
+    )
+
+
+@csrf_exempt
+@require_POST
+def login(request):
+    payload = _parse_json_request(request)
+    if payload is None:
+        return JsonResponse({"errors": {"body": "Invalid JSON."}}, status=400)
+
+    email = (payload.get("email") or "").strip().lower()
+    password = payload.get("password") or ""
+
+    errors = {}
+    if not email:
+        errors["email"] = "Email is required."
+    if not password:
+        errors["password"] = "Password is required."
+
+    if errors:
+        return JsonResponse({"errors": errors}, status=400)
+
+    user = authenticate(request, email=email, password=password)
+    if user is None:
+        return JsonResponse(
+            {"errors": {"credentials": "Invalid email or password."}},
+            status=401,
+        )
+
+    token = generate_auth_token(user)
+    return JsonResponse(
+        {
+            "message": "Authentication successful.",
+            "token": token,
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+            },
+        }
+    )
+
+
+@login_required
+@require_GET
+def me(request):
+    return JsonResponse(
+        {
+            "user": {
+                "id": request.user.id,
+                "email": request.user.email,
+                "first_name": request.user.first_name,
+                "last_name": request.user.last_name,
+                "date_of_birth": (
+                    request.user.date_of_birth.isoformat()
+                    if request.user.date_of_birth
+                    else None
+                ),
+            }
+        }
     )
