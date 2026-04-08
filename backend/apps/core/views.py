@@ -12,7 +12,7 @@ from django.views.decorators.http import require_GET
 from django.views.decorators.http import require_POST, require_http_methods
 
 from .decorators import login_required
-from .models import ParentPlayerRelation, PlayerProfile, Team, TeamMembership, TeamRole
+from .models import Club, ParentPlayerRelation, PlayerProfile, Team, TeamMembership, TeamRole
 from .permissions import can_manage_team_member, is_parent_of_team_player
 from .tokens import generate_auth_token
 
@@ -161,6 +161,72 @@ def me(request):
                 ),
             }
         }
+    )
+
+
+@csrf_exempt
+@login_required
+@require_POST
+def create_club(request):
+    payload = _parse_json_request(request)
+    if payload is None:
+        return JsonResponse({"errors": {"body": "Invalid JSON."}}, status=400)
+
+    name = (payload.get("name") or "").strip()
+    errors = {}
+
+    if not name:
+        errors["name"] = "Club name is required."
+
+    if errors:
+        return JsonResponse({"errors": errors}, status=400)
+
+    club_data = {
+        "short_name": (payload.get("short_name") or "").strip(),
+        "description": payload.get("description") or "",
+        "contact_email": (payload.get("contact_email") or "").strip().lower(),
+        "contact_phone": (payload.get("contact_phone") or "").strip(),
+        "website": (payload.get("website") or "").strip(),
+        "country": (payload.get("country") or "").strip(),
+        "city": (payload.get("city") or "").strip(),
+        "address": (payload.get("address") or "").strip(),
+        "founded_year": payload.get("founded_year"),
+    }
+
+    try:
+        club = Club.objects.create_club(
+            name=name,
+            director=request.user,
+            **club_data,
+        )
+    except IntegrityError:
+        return JsonResponse(
+            {"errors": {"name": "A club with this name already exists."}},
+            status=400,
+        )
+
+    return JsonResponse(
+        {
+            "message": "Club created successfully.",
+            "club": {
+                "id": club.id,
+                "name": club.name,
+                "short_name": club.short_name,
+                "description": club.description,
+                "contact_email": club.contact_email,
+                "contact_phone": club.contact_phone,
+                "website": club.website,
+                "country": club.country,
+                "city": club.city,
+                "address": club.address,
+                "founded_year": club.founded_year,
+            },
+            "membership": {
+                "role": "club_director",
+                "user_id": request.user.id,
+            },
+        },
+        status=201,
     )
 
 

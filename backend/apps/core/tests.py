@@ -6,7 +6,7 @@ from django.http import JsonResponse
 from django.test import RequestFactory
 
 from .decorators import admin_required
-from .models import User
+from .models import Club, ClubMembership, ClubRole, User
 from .tokens import generate_auth_token, verify_auth_token
 
 
@@ -134,6 +134,54 @@ class LoginRequiredDecoratorTests(TestCase):
         response = self.client.get(
             reverse("core:me"),
             HTTP_AUTHORIZATION="Bearer invalid-token",
+        )
+
+        self.assertEqual(response.status_code, 401)
+
+
+class CreateClubEndpointTests(TestCase):
+    def test_create_club_creates_club_and_assigns_creator_as_director(self):
+        user = User.objects.create_user(
+            email="director@example.com",
+            password="StrongPassword123!",
+            first_name="Club",
+            last_name="Director",
+        )
+        token = generate_auth_token(user)
+
+        response = self.client.post(
+            reverse("core:create-club"),
+            data=json.dumps(
+                {
+                    "name": "NetUp Volleyball Club",
+                    "short_name": "NetUp",
+                    "city": "Beirut",
+                    "country": "Lebanon",
+                    "contact_email": "info@netup.com",
+                }
+            ),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(Club.objects.count(), 1)
+
+        club = Club.objects.get(name="NetUp Volleyball Club")
+        self.assertTrue(
+            ClubMembership.objects.filter(
+                user=user,
+                club=club,
+                role=ClubRole.CLUB_DIRECTOR,
+                is_active=True,
+            ).exists()
+        )
+
+    def test_create_club_requires_authentication(self):
+        response = self.client.post(
+            reverse("core:create-club"),
+            data=json.dumps({"name": "NetUp Volleyball Club"}),
+            content_type="application/json",
         )
 
         self.assertEqual(response.status_code, 401)
