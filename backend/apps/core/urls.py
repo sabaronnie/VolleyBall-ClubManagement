@@ -9,8 +9,10 @@ from .views import (
     manage_player_parent_access,
     me,
     remove_parent_association,
+    remove_team_captain,
     remove_team_member,
     register,
+    set_team_captain,
     update_team_details,
     update_team_member_data,
     view_team_members,
@@ -37,6 +39,16 @@ urlpatterns = [
     path("register/", register, name="register"),
     path("teams/<int:team_id>/members/", view_team_members, name="view-team-members"),
     path("teams/<int:team_id>/members/add/", add_team_member, name="add-team-member"),
+    path(
+        "teams/<int:team_id>/captains/<int:player_id>/",
+        set_team_captain,
+        name="set-team-captain",
+    ),
+    path(
+        "teams/<int:team_id>/captains/<int:player_id>/remove/",
+        remove_team_captain,
+        name="remove-team-captain",
+    ),
     path(
         "teams/<int:team_id>/members/<int:target_user_id>/remove/",
         remove_team_member,

@@ -360,6 +360,72 @@ def add_team_member(request, team_id):
 
 @csrf_exempt
 @login_required
+@require_POST
+def set_team_captain(request, team_id, player_id):
+    team = get_object_or_404(Team, pk=team_id)
+    if not can_manage_team(request.user, team):
+        return JsonResponse(
+            {"errors": {"authorization": "You cannot assign captains for this team."}},
+            status=403,
+        )
+
+    membership = TeamMembership.objects.active().filter(
+        user_id=player_id,
+        team=team,
+        role=TeamRole.PLAYER,
+    ).select_related("user").first()
+    if membership is None:
+        return JsonResponse(
+            {"errors": {"membership": "No active player membership was found for this user."}},
+            status=404,
+        )
+
+    membership.is_captain = True
+    membership.save(update_fields=["is_captain"])
+    return JsonResponse(
+        {
+            "message": "Player set as captain successfully.",
+            "team": _serialize_team(team),
+            "member": _serialize_team_member(membership),
+        }
+    )
+
+
+@csrf_exempt
+@login_required
+@require_http_methods(["DELETE"])
+def remove_team_captain(request, team_id, player_id):
+    team = get_object_or_404(Team, pk=team_id)
+    if not can_manage_team(request.user, team):
+        return JsonResponse(
+            {"errors": {"authorization": "You cannot remove captains for this team."}},
+            status=403,
+        )
+
+    membership = TeamMembership.objects.active().filter(
+        user_id=player_id,
+        team=team,
+        role=TeamRole.PLAYER,
+    ).select_related("user").first()
+    if membership is None:
+        return JsonResponse(
+            {"errors": {"membership": "No active player membership was found for this user."}},
+            status=404,
+        )
+
+    membership.is_captain = False
+    membership.save(update_fields=["is_captain"])
+    return JsonResponse(
+        {
+            "message": "Captain removed successfully.",
+            "team": _serialize_team(team),
+            "member": _serialize_team_member(membership),
+        }
+    )
+
+
+@csrf_exempt
+@login_required
 @require_http_methods(["DELETE"])
 def remove_team_member(request, team_id, target_user_id):
     payload = _parse_json_request(request)
