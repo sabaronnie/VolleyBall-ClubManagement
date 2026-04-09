@@ -2,6 +2,7 @@ from django.urls import path
 
 from .views import (
     add_parent_association,
+    add_team_member,
     create_club,
     create_team,
     login,
@@ -35,6 +36,7 @@ urlpatterns = [
     ),
     path("register/", register, name="register"),
     path("teams/<int:team_id>/members/", view_team_members, name="view-team-members"),
+    path("teams/<int:team_id>/members/add/", add_team_member, name="add-team-member"),
     path(
         "teams/<int:team_id>/members/<int:target_user_id>/remove/",
         remove_team_member,

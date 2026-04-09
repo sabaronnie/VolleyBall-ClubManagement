@@ -25,6 +25,7 @@ from .models import (
 )
 from .permissions import (
     can_add_parent_association,
+    can_add_team_member,
     can_manage_club,
     can_manage_team,
     can_manage_team_member,
@@ -310,6 +311,50 @@ def view_team_members(request, team_id):
             "team": _serialize_team(team),
             "members": [_serialize_team_member(membership) for membership in memberships],
         }
+    )
+
+
+@csrf_exempt
+@login_required
+@require_POST
+def add_team_member(request, team_id):
+    payload = _parse_json_request(request)
+    if payload is None:
+        return JsonResponse({"errors": {"body": "Invalid JSON."}}, status=400)
+
+    team = get_object_or_404(Team, pk=team_id)
+    target_user_id = payload.get("user_id")
+    role = (payload.get("role") or "").strip()
+
+    errors = {}
+    if not target_user_id:
+        errors["user_id"] = "user_id is required."
+    if role not in TeamRole.values:
+        errors["role"] = "Role must be either 'coach' or 'player'."
+
+    if errors:
+        return JsonResponse({"errors": errors}, status=400)
+
+    target_user = get_object_or_404(User, pk=target_user_id)
+
+    if not can_add_team_member(request.user, team, role):
+        return JsonResponse(
+            {"errors": {"authorization": "You cannot add that type of member to this team."}},
+            status=403,
+        )
+
+    membership = TeamMembership.objects.add_member(
+        user=target_user,
+        team=team,
+        role=role,
+    )
+    return JsonResponse(
+        {
+            "message": "Team member added successfully.",
+            "team": _serialize_team(team),
+            "member": _serialize_team_member(membership),
+        },
+        status=201,
     )
 
 

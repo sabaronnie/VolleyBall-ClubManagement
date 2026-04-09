@@ -121,6 +121,19 @@ def can_manage_team(user, team) -> bool:
     )
 
 
+def can_add_team_member(actor, team, role) -> bool:
+    if is_staff_user(actor):
+        return True
+
+    if is_club_director(actor, team.club):
+        return role in [TeamRole.COACH, TeamRole.PLAYER]
+
+    if is_team_coach(actor, team):
+        return role == TeamRole.PLAYER
+
+    return False
+
+
 def can_view_player(user, player_user) -> bool:
     if is_staff_user(user):
         return True
@@ -246,7 +259,6 @@ def can_manage_team_member(actor, target_user, team) -> bool:
             [
                 is_team_coach(target_user, team),
                 is_team_player(target_user, team),
-                is_parent_of_team_player(target_user, team),
             ]
         )
 
@@ -254,7 +266,6 @@ def can_manage_team_member(actor, target_user, team) -> bool:
         return any(
             [
                 is_team_player(target_user, team),
-                is_parent_of_team_player(target_user, team),
             ]
         )
 
