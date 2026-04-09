@@ -470,7 +470,7 @@ function App() {
       </section>
 
       <footer className="page-footer">
-        <div className="page-footer__content reveal-on-scroll" data-reveal="up">
+        <div className="page-footer__content">
           <div>
             <span className="page-footer__brand">NetUp</span>
             <p className="page-footer__tagline">
@@ -493,11 +493,7 @@ function App() {
           </nav>
         </div>
 
-        <div
-          className="page-footer__bottom reveal-on-scroll"
-          data-reveal="up"
-          style={{ "--reveal-delay": "120ms" }}
-        >
+        <div className="page-footer__bottom">
           <span>Copyright 2026 NetUp. All rights reserved.</span>
           <span>Built for modern volleyball clubs</span>
         </div>

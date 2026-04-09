@@ -20,6 +20,7 @@
 
 html {
   scroll-behavior: smooth;
+  overflow-x: clip;
 }
 
 body {
@@ -29,6 +30,7 @@ body {
     linear-gradient(180deg, #f6f1ee 0%, #f0ebe7 100%);
   color: var(--ink);
   font-family: var(--font-body);
+  overflow-x: clip;
 }
 
 .reveal-on-scroll {
@@ -78,6 +80,7 @@ button {
 .homepage-shell {
   width: 100%;
   background: transparent;
+  overflow-x: clip;
 }
 
 .hero-section {
@@ -647,11 +650,12 @@ button {
   background:
     linear-gradient(180deg, rgba(18, 28, 60, 0.98), rgba(10, 16, 34, 1));
   color: rgba(255, 255, 255, 0.84);
+  overflow-x: clip;
 }
 
 .page-footer__content,
 .page-footer__bottom {
-  width: min(100%, 1450px);
+  width: min(calc(100% - 2.5rem), 1450px);
   margin: 0 auto;
 }
 
@@ -660,6 +664,7 @@ button {
   justify-content: space-between;
   gap: 1.5rem;
   align-items: flex-start;
+  min-width: 0;
 }
 
 .page-footer__brand {
@@ -695,12 +700,19 @@ button {
 .page-footer__bottom {
   display: flex;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 1rem;
   margin-top: 1.8rem;
   padding: 1rem 0 1.15rem;
   border-top: 1px solid rgba(255, 255, 255, 0.12);
   color: rgba(255, 255, 255, 0.62);
   font-size: 0.92rem;
+  min-width: 0;
+}
+
+.page-footer__content > *,
+.page-footer__bottom > * {
+  min-width: 0;
 }
 
 @media (max-width: 1120px) {
@@ -749,6 +761,11 @@ button {
 
   .content-section,
   .showcase-band {
+    width: calc(100% - 2rem);
+  }
+
+  .page-footer__content,
+  .page-footer__bottom {
     width: calc(100% - 2rem);
   }
 
