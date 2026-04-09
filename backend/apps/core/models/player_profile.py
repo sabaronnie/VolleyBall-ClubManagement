@@ -20,14 +20,12 @@ class PlayerProfileManager(models.Manager):
         user,
         jersey_number=None,
         primary_position="",
-        parent_email="",
         notes="",
     ):
         return self.create(
             user=user,
             jersey_number=jersey_number,
             primary_position=primary_position,
-            parent_email=parent_email,
             notes=notes,
         )
 
@@ -40,7 +38,6 @@ class PlayerProfile(models.Model):
     )
     jersey_number = models.PositiveSmallIntegerField(blank=True, null=True)
     primary_position = models.CharField(max_length=100, blank=True)
-    parent_email = models.EmailField(blank=True)
     notes = models.TextField(blank=True)
 
     objects = PlayerProfileManager()

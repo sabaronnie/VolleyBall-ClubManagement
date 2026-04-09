@@ -17,16 +17,20 @@ from .models import (
     ClubMembership,
     ClubRole,
     ParentPlayerRelation,
+    PlayerAccessPolicy,
     PlayerProfile,
     Team,
     TeamMembership,
     TeamRole,
 )
 from .permissions import (
+    can_add_parent_association,
     can_manage_club,
     can_manage_team,
     can_manage_team_member,
-    is_parent_of_team_player,
+    can_parent_manage_player_access,
+    can_remove_parent_association,
+    is_user_adult,
 )
 from .tokens import generate_auth_token
 
@@ -104,6 +108,28 @@ def _serialize_team_member(membership):
             "joined_at": membership.joined_at.isoformat() if membership.joined_at else None,
             "left_at": membership.left_at.isoformat() if membership.left_at else None,
         },
+    }
+
+
+def _serialize_parent_relation(relation):
+    return {
+        "parent": _serialize_basic_user(relation.parent),
+        "player_id": relation.player_id,
+        "is_legal_guardian": relation.is_legal_guardian,
+        "is_active": relation.is_active,
+    }
+
+
+def _serialize_player_access_policy(policy):
+    return {
+        "is_parent_managed": policy.is_parent_managed,
+        "can_self_confirm_attendance": policy.can_self_confirm_attendance,
+        "can_self_make_payments": policy.can_self_make_payments,
+        "can_self_submit_absence_reasons": policy.can_self_submit_absence_reasons,
+        "can_self_approve_schedule_confirmations": (
+            policy.can_self_approve_schedule_confirmations
+        ),
+        "can_self_update_emergency_contact": policy.can_self_update_emergency_contact,
     }
 
 
@@ -236,9 +262,8 @@ def me(request):
         .select_related("team__club")
     ]
     children = []
-    parent_relations = ParentPlayerRelation.objects.filter(
+    parent_relations = ParentPlayerRelation.objects.active().filter(
         parent=request.user,
-        is_active=True,
     ).select_related("player")
 
     for relation in parent_relations:
@@ -295,6 +320,16 @@ def remove_team_member(request, team_id, target_user_id):
 
     team = get_object_or_404(Team, pk=team_id)
     target_user = get_object_or_404(User, pk=target_user_id)
+    membership = TeamMembership.objects.active().filter(
+        user=target_user,
+        team=team,
+    ).first()
+
+    if membership is None:
+        return JsonResponse(
+            {"errors": {"membership": "No active team membership was found for this user."}},
+            status=404,
+        )
 
     if not can_manage_team_member(request.user, target_user, team):
         return JsonResponse(
@@ -302,79 +337,162 @@ def remove_team_member(request, team_id, target_user_id):
             status=403,
         )
 
-    membership = TeamMembership.objects.active().filter(
-        user=target_user,
-        team=team,
-    ).first()
-    if membership is not None:
-        TeamMembership.objects.deactivate(membership)
-        return JsonResponse(
-            {
-                "message": "Team membership removed successfully.",
-                "removed": {
-                    "user_id": target_user.id,
-                    "team_id": team.id,
-                    "membership": {
-                        "role": membership.role,
-                        "is_captain": membership.is_captain,
-                        "is_active": membership.is_active,
-                        "left_at": (
-                            membership.left_at.isoformat() if membership.left_at else None
-                        ),
-                    },
+    TeamMembership.objects.deactivate(membership)
+    return JsonResponse(
+        {
+            "message": "Team membership removed successfully.",
+            "removed": {
+                "user_id": target_user.id,
+                "team_id": team.id,
+                "membership": {
+                    "role": membership.role,
+                    "is_captain": membership.is_captain,
+                    "is_active": membership.is_active,
+                    "left_at": (
+                        membership.left_at.isoformat() if membership.left_at else None
+                    ),
                 },
-            }
+            },
+        }
+    )
+
+
+@csrf_exempt
+@login_required
+@require_POST
+def add_parent_association(request, player_id):
+    payload = _parse_json_request(request)
+    if payload is None:
+        return JsonResponse({"errors": {"body": "Invalid JSON."}}, status=400)
+
+    player = get_object_or_404(User, pk=player_id)
+    if not can_add_parent_association(request.user, player):
+        return JsonResponse(
+            {"errors": {"authorization": "You cannot link a parent to this player."}},
+            status=403,
         )
 
-    if is_parent_of_team_player(target_user, team):
-        player_id = payload.get("player_id")
-        if not player_id:
-            return JsonResponse(
-                {
-                    "errors": {
-                        "player_id": "player_id is required when removing a parent from a team."
-                    }
-                },
-                status=400,
-            )
+    parent_id = payload.get("parent_id")
+    if not parent_id:
+        return JsonResponse({"errors": {"parent_id": "parent_id is required."}}, status=400)
 
-        relation = ParentPlayerRelation.objects.filter(
-            parent=target_user,
-            player_id=player_id,
-            player__team_memberships__team=team,
-            player__team_memberships__role=TeamRole.PLAYER,
-            player__team_memberships__is_active=True,
-            is_active=True,
-        ).first()
-        if relation is None:
-            return JsonResponse(
-                {
-                    "errors": {
-                        "player_id": "No active parent-player relation was found for that player on this team."
-                    }
-                },
-                status=404,
-            )
-
-        relation.is_active = False
-        relation.save(update_fields=["is_active"])
+    parent = get_object_or_404(User, pk=parent_id)
+    if parent == player:
         return JsonResponse(
-            {
-                "message": "Parent access removed successfully.",
-                "removed": {
-                    "user_id": target_user.id,
-                    "team_id": team.id,
-                    "parent_relation": {
-                        "player_id": relation.player_id,
-                        "is_active": relation.is_active,
-                    },
-                },
-            }
+            {"errors": {"parent_id": "A user cannot be linked as their own parent."}},
+            status=400,
         )
+
+    relation, created = ParentPlayerRelation.objects.link(
+        parent=parent,
+        player=player,
+        is_legal_guardian=bool(payload.get("is_legal_guardian", False)),
+    )
 
     return JsonResponse(
-        {"errors": {"membership": "No active team-based membership was found for this user."}},
-        status=404,
+        {
+            "message": (
+                "Parent linked successfully."
+                if created
+                else "Parent association saved successfully."
+            ),
+            "relation": _serialize_parent_relation(relation),
+        },
+        status=201 if created else 200,
+    )
+
+
+@csrf_exempt
+@login_required
+@require_http_methods(["DELETE"])
+def remove_parent_association(request, player_id, parent_id):
+    player = get_object_or_404(User, pk=player_id)
+    parent = get_object_or_404(User, pk=parent_id)
+    relation = ParentPlayerRelation.objects.active().filter(
+        parent=parent,
+        player=player,
+    ).first()
+
+    if relation is None:
+        return JsonResponse(
+            {"errors": {"relation": "No active parent association was found."}},
+            status=404,
+        )
+
+    if not can_remove_parent_association(request.user, player):
+        return JsonResponse(
+            {"errors": {"authorization": "You cannot remove this parent association."}},
+            status=403,
+        )
+
+    ParentPlayerRelation.objects.deactivate(relation)
+    return JsonResponse(
+        {
+            "message": "Parent association removed successfully.",
+            "relation": _serialize_parent_relation(relation),
+        }
+    )
+
+
+@csrf_exempt
+@login_required
+@require_http_methods(["GET", "PATCH"])
+def manage_player_parent_access(request, player_id):
+    player = get_object_or_404(User, pk=player_id)
+    if not can_parent_manage_player_access(request.user, player):
+        message = "You cannot manage parent-controlled access for this player."
+        if is_user_adult(player):
+            message = "Parent-managed access is only available for players under 18."
+        return JsonResponse({"errors": {"authorization": message}}, status=403)
+
+    policy = PlayerAccessPolicy.objects.get_or_create_for_player(player=player)
+
+    if request.method == "GET":
+        return JsonResponse(
+            {
+                "player": _serialize_basic_user(player),
+                "policy": _serialize_player_access_policy(policy),
+            }
+        )
+
+    payload = _parse_json_request(request)
+    if payload is None:
+        return JsonResponse({"errors": {"body": "Invalid JSON."}}, status=400)
+
+    field_mapping = {
+        "is_parent_managed": "is_parent_managed",
+        "can_self_confirm_attendance": "can_self_confirm_attendance",
+        "can_self_make_payments": "can_self_make_payments",
+        "can_self_submit_absence_reasons": "can_self_submit_absence_reasons",
+        "can_self_approve_schedule_confirmations": (
+            "can_self_approve_schedule_confirmations"
+        ),
+        "can_self_update_emergency_contact": "can_self_update_emergency_contact",
+    }
+
+    updated_fields = []
+    for payload_key, model_field in field_mapping.items():
+        if payload_key in payload:
+            setattr(policy, model_field, bool(payload[payload_key]))
+            updated_fields.append(model_field)
+
+    if not updated_fields:
+        return JsonResponse(
+            {
+                "errors": {
+                    "payload": "No supported parent-managed access fields were provided."
+                }
+            },
+            status=400,
+        )
+
+    policy.save(update_fields=updated_fields + ["updated_at"])
+    return JsonResponse(
+        {
+            "message": "Parent-managed access updated successfully.",
+            "player": _serialize_basic_user(player),
+            "policy": _serialize_player_access_policy(policy),
+        }
     )
 
 
@@ -589,9 +707,8 @@ def update_team_details(request, team_id):
 # - User data for team members, such as emergency contact
 # - TeamMembership data for active team members, such as captaincy
 # - PlayerProfile data for players on the team, such as jersey number,
-#   primary position, parent email, and team notes
-# - ParentPlayerRelation data for parents of players on the team, such as
-#   guardian/payment/schedule/progress access flags for a specific child
+#   primary position, and team notes
+# - ParentPlayerRelation updates are handled by dedicated parent-association endpoints
 def update_team_member_data(request, team_id, target_user_id):
     payload = _parse_json_request(request)
     if payload is None:
@@ -649,9 +766,6 @@ def update_team_member_data(request, team_id, target_user_id):
             if "primary_position" in payload:
                 profile.primary_position = (payload["primary_position"] or "").strip()
                 profile_updated_fields.append("primary_position")
-            if "parent_email" in payload:
-                profile.parent_email = (payload["parent_email"] or "").strip().lower()
-                profile_updated_fields.append("parent_email")
             if "notes" in payload:
                 profile.notes = payload["notes"] or ""
                 profile_updated_fields.append("notes")
@@ -661,78 +775,7 @@ def update_team_member_data(request, team_id, target_user_id):
                 updated["player_profile"] = {
                     "jersey_number": profile.jersey_number,
                     "primary_position": profile.primary_position,
-                    "parent_email": profile.parent_email,
                     "notes": profile.notes,
-                }
-
-    if is_parent_of_team_player(target_user, team):
-        player_id = payload.get("player_id")
-        parent_fields_present = any(
-            key in payload
-            for key in [
-                "is_legal_guardian",
-                "can_view_progress",
-                "can_manage_payments",
-                "can_view_schedule",
-                "can_limit_player_access",
-                "relation_is_active",
-            ]
-        )
-
-        if parent_fields_present:
-            if not player_id:
-                return JsonResponse(
-                    {
-                        "errors": {
-                            "player_id": "player_id is required when updating parent team data."
-                        }
-                    },
-                    status=400,
-                )
-
-            relation = ParentPlayerRelation.objects.filter(
-                parent=target_user,
-                player_id=player_id,
-                player__team_memberships__team=team,
-                player__team_memberships__role=TeamRole.PLAYER,
-                player__team_memberships__is_active=True,
-            ).first()
-
-            if relation is None:
-                return JsonResponse(
-                    {
-                        "errors": {
-                            "player_id": "No parent-player relation was found for that player on this team."
-                        }
-                    },
-                    status=404,
-                )
-
-            relation_updated_fields = []
-            field_mapping = {
-                "is_legal_guardian": "is_legal_guardian",
-                "can_view_progress": "can_view_progress",
-                "can_manage_payments": "can_manage_payments",
-                "can_view_schedule": "can_view_schedule",
-                "can_limit_player_access": "can_limit_player_access",
-                "relation_is_active": "is_active",
-            }
-
-            for payload_key, model_field in field_mapping.items():
-                if payload_key in payload:
-                    setattr(relation, model_field, bool(payload[payload_key]))
-                    relation_updated_fields.append(model_field)
-
-            if relation_updated_fields:
-                relation.save(update_fields=relation_updated_fields)
-                updated["parent_relation"] = {
-                    "player_id": relation.player_id,
-                    "is_legal_guardian": relation.is_legal_guardian,
-                    "can_view_progress": relation.can_view_progress,
-                    "can_manage_payments": relation.can_manage_payments,
-                    "can_view_schedule": relation.can_view_schedule,
-                    "can_limit_player_access": relation.can_limit_player_access,
-                    "is_active": relation.is_active,
                 }
 
     if not updated:

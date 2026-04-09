@@ -5,6 +5,7 @@ from .models import (
     Club,
     ClubMembership,
     ParentPlayerRelation,
+    PlayerAccessPolicy,
     PlayerProfile,
     Team,
     TeamMembership,
@@ -93,13 +94,12 @@ class TeamMembershipAdmin(admin.ModelAdmin):
 
 @admin.register(PlayerProfile)
 class PlayerProfileAdmin(admin.ModelAdmin):
-    list_display = ("user", "jersey_number", "primary_position", "parent_email")
+    list_display = ("user", "jersey_number", "primary_position")
     search_fields = (
         "user__email",
         "user__first_name",
         "user__last_name",
         "primary_position",
-        "parent_email",
     )
 
 
@@ -109,8 +109,6 @@ class ParentPlayerRelationAdmin(admin.ModelAdmin):
         "parent",
         "player",
         "is_legal_guardian",
-        "can_view_progress",
-        "can_manage_payments",
         "is_active",
     )
     search_fields = (
@@ -121,4 +119,30 @@ class ParentPlayerRelationAdmin(admin.ModelAdmin):
         "player__first_name",
         "player__last_name",
     )
-    list_filter = ("is_legal_guardian", "can_view_progress", "can_manage_payments", "is_active")
+    list_filter = ("is_legal_guardian", "is_active")
+
+
+@admin.register(PlayerAccessPolicy)
+class PlayerAccessPolicyAdmin(admin.ModelAdmin):
+    list_display = (
+        "player",
+        "is_parent_managed",
+        "can_self_confirm_attendance",
+        "can_self_make_payments",
+        "can_self_submit_absence_reasons",
+        "can_self_approve_schedule_confirmations",
+        "can_self_update_emergency_contact",
+    )
+    search_fields = (
+        "player__email",
+        "player__first_name",
+        "player__last_name",
+    )
+    list_filter = (
+        "is_parent_managed",
+        "can_self_confirm_attendance",
+        "can_self_make_payments",
+        "can_self_submit_absence_reasons",
+        "can_self_approve_schedule_confirmations",
+        "can_self_update_emergency_contact",
+    )

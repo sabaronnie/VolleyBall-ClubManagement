@@ -1,3 +1,4 @@
+from datetime import date
 from django.test import TestCase
 from django.urls import reverse
 import json
@@ -11,10 +12,16 @@ from .models import (
     ClubMembership,
     ClubRole,
     ParentPlayerRelation,
+    PlayerAccessPolicy,
     Team,
     TeamMembership,
     TeamRole,
     User,
+)
+from .permissions import (
+    can_player_make_payments,
+    can_player_update_own_emergency_contact,
+    is_player_parent_managed,
 )
 from .tokens import generate_auth_token, verify_auth_token
 
@@ -506,7 +513,7 @@ class RemoveTeamMemberEndpointTests(TestCase):
             ).exists()
         )
 
-    def test_coach_can_remove_parent_for_player_on_team(self):
+    def test_coach_cannot_remove_parent_because_parent_has_no_team_membership(self):
         director = User.objects.create_user(
             email="director@example.com",
             password="StrongPassword123!",
@@ -535,19 +542,19 @@ class RemoveTeamMemberEndpointTests(TestCase):
         team = Team.objects.create_team(club=club, name="U16 Girls", season="2026")
         TeamMembership.objects.add_member(user=coach, team=team, role=TeamRole.COACH)
         TeamMembership.objects.add_member(user=player, team=team, role=TeamRole.PLAYER)
-        relation = ParentPlayerRelation.objects.link(parent=parent, player=player)
+        relation, _ = ParentPlayerRelation.objects.link(parent=parent, player=player)
         token = generate_auth_token(coach)
 
         response = self.client.delete(
             reverse("core:remove-team-member", kwargs={"team_id": team.id, "target_user_id": parent.id}),
-            data=json.dumps({"player_id": player.id}),
+            data=json.dumps({}),
             content_type="application/json",
             HTTP_AUTHORIZATION=f"Bearer {token}",
         )
 
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 404)
         relation.refresh_from_db()
-        self.assertFalse(relation.is_active)
+        self.assertTrue(relation.is_active)
 
     def test_coach_cannot_remove_coach_team_membership(self):
         director = User.objects.create_user(
@@ -592,6 +599,305 @@ class RemoveTeamMemberEndpointTests(TestCase):
                 is_active=True,
             ).exists()
         )
+
+
+class ParentAssociationEndpointTests(TestCase):
+    def test_player_can_add_parent_association(self):
+        player = User.objects.create_user(
+            email="player@example.com",
+            password="StrongPassword123!",
+            first_name="Player",
+            last_name="User",
+            date_of_birth=date(2010, 4, 1),
+        )
+        parent = User.objects.create_user(
+            email="parent@example.com",
+            password="StrongPassword123!",
+            first_name="Parent",
+            last_name="User",
+        )
+        token = generate_auth_token(player)
+
+        response = self.client.post(
+            reverse("core:add-parent-association", kwargs={"player_id": player.id}),
+            data=json.dumps({"parent_id": parent.id, "is_legal_guardian": True}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        relation = ParentPlayerRelation.objects.get(parent=parent, player=player)
+        self.assertTrue(relation.is_active)
+        self.assertTrue(relation.is_legal_guardian)
+
+    def test_coach_can_add_parent_association_for_team_player(self):
+        director = User.objects.create_user(
+            email="director@example.com",
+            password="StrongPassword123!",
+            first_name="Club",
+            last_name="Director",
+        )
+        coach = User.objects.create_user(
+            email="coach@example.com",
+            password="StrongPassword123!",
+            first_name="Coach",
+            last_name="User",
+        )
+        player = User.objects.create_user(
+            email="player@example.com",
+            password="StrongPassword123!",
+            first_name="Player",
+            last_name="User",
+            date_of_birth=date(2010, 4, 1),
+        )
+        parent = User.objects.create_user(
+            email="parent@example.com",
+            password="StrongPassword123!",
+            first_name="Parent",
+            last_name="User",
+        )
+        club = Club.objects.create_club(name="NetUp Volleyball Club", director=director)
+        team = Team.objects.create_team(club=club, name="U16 Girls", season="2026")
+        TeamMembership.objects.add_member(user=coach, team=team, role=TeamRole.COACH)
+        TeamMembership.objects.add_member(user=player, team=team, role=TeamRole.PLAYER)
+        token = generate_auth_token(coach)
+
+        response = self.client.post(
+            reverse("core:add-parent-association", kwargs={"player_id": player.id}),
+            data=json.dumps({"parent_id": parent.id}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(
+            ParentPlayerRelation.objects.active().filter(parent=parent, player=player).exists()
+        )
+
+    def test_minor_player_cannot_remove_parent_association(self):
+        player = User.objects.create_user(
+            email="player@example.com",
+            password="StrongPassword123!",
+            first_name="Player",
+            last_name="User",
+            date_of_birth=date(2010, 4, 1),
+        )
+        parent = User.objects.create_user(
+            email="parent@example.com",
+            password="StrongPassword123!",
+            first_name="Parent",
+            last_name="User",
+        )
+        ParentPlayerRelation.objects.link(parent=parent, player=player)
+        token = generate_auth_token(player)
+
+        response = self.client.delete(
+            reverse(
+                "core:remove-parent-association",
+                kwargs={"player_id": player.id, "parent_id": parent.id},
+            ),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(
+            ParentPlayerRelation.objects.active().filter(parent=parent, player=player).exists()
+        )
+
+    def test_adult_player_can_remove_parent_association(self):
+        player = User.objects.create_user(
+            email="player@example.com",
+            password="StrongPassword123!",
+            first_name="Player",
+            last_name="User",
+            date_of_birth=date(2000, 4, 1),
+        )
+        parent = User.objects.create_user(
+            email="parent@example.com",
+            password="StrongPassword123!",
+            first_name="Parent",
+            last_name="User",
+        )
+        ParentPlayerRelation.objects.link(parent=parent, player=player)
+        token = generate_auth_token(player)
+
+        response = self.client.delete(
+            reverse(
+                "core:remove-parent-association",
+                kwargs={"player_id": player.id, "parent_id": parent.id},
+            ),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(
+            ParentPlayerRelation.objects.active().filter(parent=parent, player=player).exists()
+        )
+
+    def test_club_director_can_remove_parent_association(self):
+        director = User.objects.create_user(
+            email="director@example.com",
+            password="StrongPassword123!",
+            first_name="Club",
+            last_name="Director",
+        )
+        player = User.objects.create_user(
+            email="player@example.com",
+            password="StrongPassword123!",
+            first_name="Player",
+            last_name="User",
+            date_of_birth=date(2010, 4, 1),
+        )
+        parent = User.objects.create_user(
+            email="parent@example.com",
+            password="StrongPassword123!",
+            first_name="Parent",
+            last_name="User",
+        )
+        club = Club.objects.create_club(name="NetUp Volleyball Club", director=director)
+        team = Team.objects.create_team(club=club, name="U16 Girls", season="2026")
+        TeamMembership.objects.add_member(user=player, team=team, role=TeamRole.PLAYER)
+        ParentPlayerRelation.objects.link(parent=parent, player=player)
+        token = generate_auth_token(director)
+
+        response = self.client.delete(
+            reverse(
+                "core:remove-parent-association",
+                kwargs={"player_id": player.id, "parent_id": parent.id},
+            ),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(
+            ParentPlayerRelation.objects.active().filter(parent=parent, player=player).exists()
+        )
+
+
+class PlayerParentManagementEndpointTests(TestCase):
+    def test_parent_can_view_and_update_minor_player_management_settings(self):
+        parent = User.objects.create_user(
+            email="parent@example.com",
+            password="StrongPassword123!",
+            first_name="Parent",
+            last_name="User",
+        )
+        player = User.objects.create_user(
+            email="player@example.com",
+            password="StrongPassword123!",
+            first_name="Player",
+            last_name="User",
+            date_of_birth=date(2010, 4, 1),
+        )
+        ParentPlayerRelation.objects.link(parent=parent, player=player, is_legal_guardian=True)
+        token = generate_auth_token(parent)
+
+        get_response = self.client.get(
+            reverse("core:manage-player-parent-access", kwargs={"player_id": player.id}),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(get_response.status_code, 200)
+        self.assertEqual(get_response.json()["policy"]["is_parent_managed"], False)
+
+        patch_response = self.client.patch(
+            reverse("core:manage-player-parent-access", kwargs={"player_id": player.id}),
+            data=json.dumps(
+                {
+                    "is_parent_managed": True,
+                    "can_self_make_payments": False,
+                    "can_self_update_emergency_contact": False,
+                }
+            ),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(patch_response.status_code, 200)
+        policy = PlayerAccessPolicy.objects.get(player=player)
+        self.assertTrue(policy.is_parent_managed)
+        self.assertFalse(policy.can_self_make_payments)
+        self.assertFalse(policy.can_self_update_emergency_contact)
+
+    def test_parent_cannot_manage_access_for_adult_player(self):
+        parent = User.objects.create_user(
+            email="parent@example.com",
+            password="StrongPassword123!",
+            first_name="Parent",
+            last_name="User",
+        )
+        player = User.objects.create_user(
+            email="player@example.com",
+            password="StrongPassword123!",
+            first_name="Player",
+            last_name="User",
+            date_of_birth=date(2000, 4, 1),
+        )
+        ParentPlayerRelation.objects.link(parent=parent, player=player)
+        token = generate_auth_token(parent)
+
+        response = self.client.patch(
+            reverse("core:manage-player-parent-access", kwargs={"player_id": player.id}),
+            data=json.dumps({"is_parent_managed": True}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+
+class PlayerParentManagedPermissionTests(TestCase):
+    def test_parent_managed_policy_restricts_minor_player_self_service(self):
+        parent = User.objects.create_user(
+            email="parent@example.com",
+            password="StrongPassword123!",
+            first_name="Parent",
+            last_name="User",
+        )
+        player = User.objects.create_user(
+            email="player@example.com",
+            password="StrongPassword123!",
+            first_name="Player",
+            last_name="User",
+            date_of_birth=date(2010, 4, 1),
+        )
+        ParentPlayerRelation.objects.link(parent=parent, player=player)
+        PlayerAccessPolicy.objects.create(
+            player=player,
+            is_parent_managed=True,
+            can_self_make_payments=False,
+            can_self_update_emergency_contact=False,
+        )
+
+        self.assertTrue(is_player_parent_managed(player))
+        self.assertFalse(can_player_make_payments(player))
+        self.assertFalse(can_player_update_own_emergency_contact(player))
+
+    def test_adult_player_ignores_parent_managed_policy(self):
+        parent = User.objects.create_user(
+            email="parent@example.com",
+            password="StrongPassword123!",
+            first_name="Parent",
+            last_name="User",
+        )
+        player = User.objects.create_user(
+            email="player@example.com",
+            password="StrongPassword123!",
+            first_name="Player",
+            last_name="User",
+            date_of_birth=date(2000, 4, 1),
+        )
+        ParentPlayerRelation.objects.link(parent=parent, player=player)
+        PlayerAccessPolicy.objects.create(
+            player=player,
+            is_parent_managed=True,
+            can_self_make_payments=False,
+            can_self_update_emergency_contact=False,
+        )
+
+        self.assertFalse(is_player_parent_managed(player))
+        self.assertTrue(can_player_make_payments(player))
+        self.assertTrue(can_player_update_own_emergency_contact(player))
 
 
 class UpdateTeamDetailsEndpointTests(TestCase):

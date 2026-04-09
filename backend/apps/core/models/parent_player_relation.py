@@ -3,6 +3,12 @@ from django.db import models
 
 
 class ParentPlayerRelationQuerySet(models.QuerySet):
+    def active(self):
+        return self.filter(is_active=True)
+
+    def inactive(self):
+        return self.filter(is_active=False)
+
     def for_parent(self, parent):
         return self.filter(parent=parent)
 
@@ -14,8 +20,26 @@ class ParentPlayerRelationManager(models.Manager):
     def get_queryset(self):
         return ParentPlayerRelationQuerySet(self.model, using=self._db)
 
-    def link(self, *, parent, player):
-        relation, _ = self.get_or_create(parent=parent, player=player)
+    def active(self):
+        return self.get_queryset().active()
+
+    def inactive(self):
+        return self.get_queryset().inactive()
+
+    def link(self, *, parent, player, is_legal_guardian=False):
+        relation, created = self.update_or_create(
+            parent=parent,
+            player=player,
+            defaults={
+                "is_active": True,
+                "is_legal_guardian": is_legal_guardian,
+            },
+        )
+        return relation, created
+
+    def deactivate(self, relation):
+        relation.is_active = False
+        relation.save(update_fields=["is_active"])
         return relation
 
 
@@ -31,10 +55,6 @@ class ParentPlayerRelation(models.Model):
         related_name="parent_relationships",
     )
     is_legal_guardian = models.BooleanField(default=False)
-    can_view_progress = models.BooleanField(default=True)
-    can_manage_payments = models.BooleanField(default=True)
-    can_view_schedule = models.BooleanField(default=True)
-    can_limit_player_access = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
 
     objects = ParentPlayerRelationManager()
