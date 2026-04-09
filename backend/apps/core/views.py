@@ -28,8 +28,11 @@ from .permissions import (
     can_manage_club,
     can_manage_team,
     can_manage_team_member,
+    can_player_update_own_emergency_contact,
     can_parent_manage_player_access,
     can_remove_parent_association,
+    can_view_team,
+    is_parent_of_player_on_team,
     is_user_adult,
 )
 from .tokens import generate_auth_token
@@ -704,11 +707,9 @@ def update_team_details(request, team_id):
 @login_required
 @require_http_methods(["PATCH"])
 # Team-related data handled here:
-# - User data for team members, such as emergency contact
-# - TeamMembership data for active team members, such as captaincy
-# - PlayerProfile data for players on the team, such as jersey number,
-#   primary position, and team notes
-# - ParentPlayerRelation updates are handled by dedicated parent-association endpoints
+# - Any authenticated user can edit their own emergency contact
+# - Parents can edit their child's emergency contact for that team
+# - Coaches and club directors can edit player profile fields for that team
 def update_team_member_data(request, team_id, target_user_id):
     payload = _parse_json_request(request)
     if payload is None:
@@ -716,47 +717,54 @@ def update_team_member_data(request, team_id, target_user_id):
 
     team = get_object_or_404(Team, pk=team_id)
     target_user = get_object_or_404(User, pk=target_user_id)
-
-    if not can_manage_team_member(request.user, target_user, team):
-        return JsonResponse(
-            {"errors": {"authorization": "You cannot modify this team member."}},
-            status=403,
-        )
-
     updated = {}
-
-    user_updated_fields = []
-    if "emergency_contact" in payload:
-        target_user.emergency_contact = (payload["emergency_contact"] or "").strip()
-        user_updated_fields.append("emergency_contact")
-
-    if user_updated_fields:
-        target_user.save(update_fields=user_updated_fields)
-        updated["user"] = {
-            "emergency_contact": target_user.emergency_contact,
-        }
-
     membership = TeamMembership.objects.filter(
         user=target_user,
         team=team,
         is_active=True,
     ).first()
-    if membership is not None:
-        membership_updated_fields = []
+    is_self_edit = request.user == target_user
+    is_parent_edit = is_parent_of_player_on_team(request.user, target_user, team)
+    is_staff_team_edit = can_manage_team_member(request.user, target_user, team)
 
-        if "is_captain" in payload:
-            membership.is_captain = bool(payload["is_captain"])
-            membership_updated_fields.append("is_captain")
+    if is_self_edit:
+        if not can_view_team(request.user, team):
+            return JsonResponse(
+                {"errors": {"authorization": "You cannot modify this team member."}},
+                status=403,
+            )
 
-        if membership_updated_fields:
-            membership.save(update_fields=membership_updated_fields)
-            updated["membership"] = {
-                "role": membership.role,
-                "is_captain": membership.is_captain,
-                "is_active": membership.is_active,
+        if "emergency_contact" in payload:
+            if membership and membership.role == TeamRole.PLAYER:
+                if not can_player_update_own_emergency_contact(request.user):
+                    return JsonResponse(
+                        {
+                            "errors": {
+                                "authorization": (
+                                    "Your parent-managed settings do not allow you to update "
+                                    "your emergency contact."
+                                )
+                            }
+                        },
+                        status=403,
+                    )
+
+            target_user.emergency_contact = (payload["emergency_contact"] or "").strip()
+            target_user.save(update_fields=["emergency_contact"])
+            updated["user"] = {
+                "emergency_contact": target_user.emergency_contact,
             }
 
-        if membership.role == TeamRole.PLAYER:
+    elif is_parent_edit:
+        if "emergency_contact" in payload:
+            target_user.emergency_contact = (payload["emergency_contact"] or "").strip()
+            target_user.save(update_fields=["emergency_contact"])
+            updated["user"] = {
+                "emergency_contact": target_user.emergency_contact,
+            }
+
+    elif is_staff_team_edit:
+        if membership is not None and membership.role == TeamRole.PLAYER:
             profile, _ = PlayerProfile.objects.get_or_create(user=target_user)
             profile_updated_fields = []
 
@@ -777,6 +785,12 @@ def update_team_member_data(request, team_id, target_user_id):
                     "primary_position": profile.primary_position,
                     "notes": profile.notes,
                 }
+
+    else:
+        return JsonResponse(
+            {"errors": {"authorization": "You cannot modify this team member."}},
+            status=403,
+        )
 
     if not updated:
         return JsonResponse(

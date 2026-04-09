@@ -80,6 +80,19 @@ def is_parent_of_team_player(user, team) -> bool:
     ).exists()
 
 
+def is_parent_of_player_on_team(user, player_user, team) -> bool:
+    if is_staff_user(user):
+        return True
+
+    return ParentPlayerRelation.objects.active().filter(
+        parent=user,
+        player=player_user,
+        player__team_memberships__team=team,
+        player__team_memberships__role=TeamRole.PLAYER,
+        player__team_memberships__is_active=True,
+    ).exists()
+
+
 def can_view_club(user, club) -> bool:
     return is_club_director(user, club)
 

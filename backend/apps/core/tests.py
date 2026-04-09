@@ -13,6 +13,7 @@ from .models import (
     ClubRole,
     ParentPlayerRelation,
     PlayerAccessPolicy,
+    PlayerProfile,
     Team,
     TeamMembership,
     TeamRole,
@@ -898,6 +899,242 @@ class PlayerParentManagedPermissionTests(TestCase):
         self.assertFalse(is_player_parent_managed(player))
         self.assertTrue(can_player_make_payments(player))
         self.assertTrue(can_player_update_own_emergency_contact(player))
+
+
+class UpdateTeamMemberDataEndpointTests(TestCase):
+    def test_player_can_update_their_own_emergency_contact(self):
+        director = User.objects.create_user(
+            email="director@example.com",
+            password="StrongPassword123!",
+            first_name="Club",
+            last_name="Director",
+        )
+        player = User.objects.create_user(
+            email="player@example.com",
+            password="StrongPassword123!",
+            first_name="Player",
+            last_name="User",
+            date_of_birth=date(2010, 4, 1),
+        )
+        club = Club.objects.create_club(name="NetUp Volleyball Club", director=director)
+        team = Team.objects.create_team(club=club, name="U16 Girls", season="2026")
+        TeamMembership.objects.add_member(user=player, team=team, role=TeamRole.PLAYER)
+        token = generate_auth_token(player)
+
+        response = self.client.patch(
+            reverse(
+                "core:update-team-member-data",
+                kwargs={"team_id": team.id, "target_user_id": player.id},
+            ),
+            data=json.dumps({"emergency_contact": "+96170000000"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        player.refresh_from_db()
+        self.assertEqual(player.emergency_contact, "+96170000000")
+
+    def test_parent_managed_player_cannot_update_their_own_emergency_contact(self):
+        director = User.objects.create_user(
+            email="director@example.com",
+            password="StrongPassword123!",
+            first_name="Club",
+            last_name="Director",
+        )
+        parent = User.objects.create_user(
+            email="parent@example.com",
+            password="StrongPassword123!",
+            first_name="Parent",
+            last_name="User",
+        )
+        player = User.objects.create_user(
+            email="player@example.com",
+            password="StrongPassword123!",
+            first_name="Player",
+            last_name="User",
+            date_of_birth=date(2010, 4, 1),
+        )
+        club = Club.objects.create_club(name="NetUp Volleyball Club", director=director)
+        team = Team.objects.create_team(club=club, name="U16 Girls", season="2026")
+        TeamMembership.objects.add_member(user=player, team=team, role=TeamRole.PLAYER)
+        ParentPlayerRelation.objects.link(parent=parent, player=player)
+        PlayerAccessPolicy.objects.create(
+            player=player,
+            is_parent_managed=True,
+            can_self_update_emergency_contact=False,
+        )
+        token = generate_auth_token(player)
+
+        response = self.client.patch(
+            reverse(
+                "core:update-team-member-data",
+                kwargs={"team_id": team.id, "target_user_id": player.id},
+            ),
+            data=json.dumps({"emergency_contact": "+96170000000"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_parent_can_update_their_childs_emergency_contact(self):
+        director = User.objects.create_user(
+            email="director@example.com",
+            password="StrongPassword123!",
+            first_name="Club",
+            last_name="Director",
+        )
+        parent = User.objects.create_user(
+            email="parent@example.com",
+            password="StrongPassword123!",
+            first_name="Parent",
+            last_name="User",
+        )
+        player = User.objects.create_user(
+            email="player@example.com",
+            password="StrongPassword123!",
+            first_name="Player",
+            last_name="User",
+            date_of_birth=date(2010, 4, 1),
+        )
+        club = Club.objects.create_club(name="NetUp Volleyball Club", director=director)
+        team = Team.objects.create_team(club=club, name="U16 Girls", season="2026")
+        TeamMembership.objects.add_member(user=player, team=team, role=TeamRole.PLAYER)
+        ParentPlayerRelation.objects.link(parent=parent, player=player)
+        token = generate_auth_token(parent)
+
+        response = self.client.patch(
+            reverse(
+                "core:update-team-member-data",
+                kwargs={"team_id": team.id, "target_user_id": player.id},
+            ),
+            data=json.dumps({"emergency_contact": "+96171111111"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        player.refresh_from_db()
+        self.assertEqual(player.emergency_contact, "+96171111111")
+
+    def test_coach_can_update_player_profile_fields_only(self):
+        director = User.objects.create_user(
+            email="director@example.com",
+            password="StrongPassword123!",
+            first_name="Club",
+            last_name="Director",
+        )
+        coach = User.objects.create_user(
+            email="coach@example.com",
+            password="StrongPassword123!",
+            first_name="Coach",
+            last_name="User",
+        )
+        player = User.objects.create_user(
+            email="player@example.com",
+            password="StrongPassword123!",
+            first_name="Player",
+            last_name="User",
+            date_of_birth=date(2010, 4, 1),
+        )
+        club = Club.objects.create_club(name="NetUp Volleyball Club", director=director)
+        team = Team.objects.create_team(club=club, name="U16 Girls", season="2026")
+        TeamMembership.objects.add_member(user=coach, team=team, role=TeamRole.COACH)
+        TeamMembership.objects.add_member(user=player, team=team, role=TeamRole.PLAYER)
+        token = generate_auth_token(coach)
+
+        response = self.client.patch(
+            reverse(
+                "core:update-team-member-data",
+                kwargs={"team_id": team.id, "target_user_id": player.id},
+            ),
+            data=json.dumps(
+                {
+                    "jersey_number": 8,
+                    "primary_position": "Setter",
+                    "notes": "Strong serve receive.",
+                }
+            ),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        profile = PlayerProfile.objects.get(user=player)
+        self.assertEqual(profile.jersey_number, 8)
+        self.assertEqual(profile.primary_position, "Setter")
+        self.assertEqual(profile.notes, "Strong serve receive.")
+
+    def test_coach_cannot_update_player_emergency_contact(self):
+        director = User.objects.create_user(
+            email="director@example.com",
+            password="StrongPassword123!",
+            first_name="Club",
+            last_name="Director",
+        )
+        coach = User.objects.create_user(
+            email="coach@example.com",
+            password="StrongPassword123!",
+            first_name="Coach",
+            last_name="User",
+        )
+        player = User.objects.create_user(
+            email="player@example.com",
+            password="StrongPassword123!",
+            first_name="Player",
+            last_name="User",
+            date_of_birth=date(2010, 4, 1),
+        )
+        club = Club.objects.create_club(name="NetUp Volleyball Club", director=director)
+        team = Team.objects.create_team(club=club, name="U16 Girls", season="2026")
+        TeamMembership.objects.add_member(user=coach, team=team, role=TeamRole.COACH)
+        TeamMembership.objects.add_member(user=player, team=team, role=TeamRole.PLAYER)
+        token = generate_auth_token(coach)
+
+        response = self.client.patch(
+            reverse(
+                "core:update-team-member-data",
+                kwargs={"team_id": team.id, "target_user_id": player.id},
+            ),
+            data=json.dumps({"emergency_contact": "+96172222222"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_other_user_can_update_their_own_emergency_contact_only(self):
+        director = User.objects.create_user(
+            email="director@example.com",
+            password="StrongPassword123!",
+            first_name="Club",
+            last_name="Director",
+        )
+        coach = User.objects.create_user(
+            email="coach@example.com",
+            password="StrongPassword123!",
+            first_name="Coach",
+            last_name="User",
+        )
+        club = Club.objects.create_club(name="NetUp Volleyball Club", director=director)
+        team = Team.objects.create_team(club=club, name="U16 Girls", season="2026")
+        TeamMembership.objects.add_member(user=coach, team=team, role=TeamRole.COACH)
+        token = generate_auth_token(coach)
+
+        response = self.client.patch(
+            reverse(
+                "core:update-team-member-data",
+                kwargs={"team_id": team.id, "target_user_id": coach.id},
+            ),
+            data=json.dumps({"emergency_contact": "+96173333333"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        coach.refresh_from_db()
+        self.assertEqual(coach.emergency_contact, "+96173333333")
 
 
 class UpdateTeamDetailsEndpointTests(TestCase):
