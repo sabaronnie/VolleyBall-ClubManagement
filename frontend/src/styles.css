@@ -100,10 +100,11 @@ button {
   position: relative;
   z-index: 2;
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 1rem;
-  width: min(calc(100% - 2.6rem), 1450px);
-  margin: 0 auto;
+  width: fit-content;
+  max-width: calc(100% - 2.6rem);
+  margin: 0 1.3rem 0 auto;
   padding: 0.95rem 1.2rem;
   border-radius: 999px;
   background: rgba(36, 49, 91, 0.64);
@@ -111,7 +112,6 @@ button {
   box-shadow: 0 18px 48px rgba(10, 14, 31, 0.2);
 }
 
-.nav-left,
 .nav-right {
   display: flex;
   align-items: center;
@@ -735,7 +735,9 @@ button {
   }
 
   .site-nav {
-    width: calc(100% - 2rem);
+    width: fit-content;
+    max-width: calc(100% - 2rem);
+    margin: 0 1rem 0 auto;
     border-radius: 1.2rem;
   }
 

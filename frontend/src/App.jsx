@@ -1,13 +1,5 @@
 import { useEffect } from "react";
 
-const navItems = [
-  { label: "Home", sectionId: "home" },
-  { label: "Features", sectionId: "features" },
-  { label: "Clubs", sectionId: "roles" },
-  { label: "Parents", sectionId: "faq" },
-  { label: "About", sectionId: "about" },
-];
-
 const homepageImages = {
   hero: "/homepage/hero-volleyball.png",
   stripTop: "/homepage/strip-top.png",
@@ -231,19 +223,6 @@ function App() {
           style={{ "--hero-image": `url(${homepageImages.hero})` }}
         />
         <header className="site-nav">
-          <div className="nav-left">
-            {navItems.map((item) => (
-              <button
-                key={item.label}
-                className="nav-button"
-                type="button"
-                onClick={() => scrollToSection(item.sectionId)}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-
           <div className="nav-right">
             <span className="brand-mark">NetUp</span>
             <button
