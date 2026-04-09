@@ -12,7 +12,6 @@ The current codebase focuses on role-aware team management:
 - player-specific team data updates
 - parent-to-player association and parent-managed child access settings
 
-There is no full frontend in this repository yet. The implemented work today is the backend API and domain model.
 
 ## Core Concepts
 
@@ -134,7 +133,7 @@ venv/
 - MySQL
 - PyMySQL
 
-See [backend/requirements.txt](/Users/ronniesaba/Documents/EECE%20430L/430Course/Project/backend/requirements.txt).
+See [backend/requirements.txt].
 
 ## Local Setup
 

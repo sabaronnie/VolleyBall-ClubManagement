@@ -7,6 +7,7 @@ from django.core.exceptions import ValidationError
 from django.db import IntegrityError
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 from django.views.decorators.http import require_POST, require_http_methods
@@ -229,6 +230,8 @@ def login(request):
             status=401,
         )
 
+    user.last_login = timezone.now()
+    user.save(update_fields=["last_login"])
     token = generate_auth_token(user)
     return JsonResponse(
         {
