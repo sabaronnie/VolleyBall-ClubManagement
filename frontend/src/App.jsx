@@ -72,37 +72,22 @@ const showcaseStrips = [
   },
 ];
 
-const workspaceTiles = ["Clubs", "Teams", "Players", "Parents"];
-
-const workspaceList = [
-  "Role-based permissions",
-  "Captain assignment",
-  "Coach-managed rosters",
-];
-
-const workspaceFeatureCards = [
+const stackedHeadings = [
   {
-    label: "01",
-    title: "Smooth onboarding for every role",
-    text: "Directors, coaches, players, and parents each get a clear place to start without extra admin overhead.",
+    leading: "TEAM",
+    accent: "HIGHLIGHTS",
+    tone: "rose",
   },
   {
-    label: "02",
-    title: "Shared visibility across the club",
-    text: "Team activity, roster changes, and family connections stay organized in one connected system.",
+    leading: "YOUR CLUB",
+    accent: "CONNECTED",
+    tone: "violet",
   },
   {
-    label: "03",
-    title: "Guardrails that still feel fast",
-    text: "Parent-managed access rules protect younger athletes while keeping the full workflow easy to use.",
+    leading: "FAMILY ACCESS",
+    accent: "PROTECTED",
+    tone: "teal",
   },
-];
-
-const workspaceFeatureTags = [
-  "Club setup",
-  "Roster flow",
-  "Parent links",
-  "Player protection",
 ];
 
 const footerLinks = ["Features", "Clubs", "Teams", "Parents", "Contact"];
@@ -238,15 +223,21 @@ function App() {
       </section>
 
       <section className="content-section highlights-section">
-        <div
-          className="section-heading section-heading--split reveal-on-scroll"
-          data-reveal="left"
-        >
-          <h2>
-            <span>PLATFORM</span>
-            <span className="accent-word">HIGHLIGHTS</span>
-          </h2>
-          <div className="heading-line" />
+        <div className="stacked-heading-group">
+          {stackedHeadings.map((heading, index) => (
+            <div
+              key={heading.accent}
+              className={`section-heading section-heading--stacked section-heading--${heading.tone} reveal-on-scroll`}
+              data-reveal="left"
+              style={{ "--reveal-delay": `${index * 120}ms` }}
+            >
+              <h2>
+                <span>{heading.leading}</span>
+                <span className="accent-word">{heading.accent}</span>
+              </h2>
+              <div className="heading-line" />
+            </div>
+          ))}
         </div>
 
         <div className="highlight-grid">
@@ -271,82 +262,6 @@ function App() {
               </div>
             </article>
           ))}
-        </div>
-      </section>
-
-      <section className="workspace-section">
-        <div
-          className="section-heading section-heading--workspace reveal-on-scroll"
-          data-reveal="left"
-        >
-          <h2>
-            <span>YOUR CLUB</span>
-            <span className="accent-word accent-word--blue">CONNECTED</span>
-          </h2>
-          <div className="heading-line heading-line--blue" />
-        </div>
-
-        <div className="workspace-panel reveal-on-scroll" data-reveal="up">
-          <aside className="workspace-sidebar reveal-on-scroll" data-reveal="left">
-            <div className="workspace-tile-grid">
-              {workspaceTiles.map((tile) => (
-                <button key={tile} className="workspace-tile" type="button">
-                  {tile}
-                </button>
-              ))}
-            </div>
-
-            <div className="workspace-list">
-              <div className="workspace-list__header">
-                <span>Core tools</span>
-                <span>+</span>
-              </div>
-              {workspaceList.map((item) => (
-                <p key={item}>{item}</p>
-              ))}
-            </div>
-          </aside>
-
-          <div
-            className="workspace-main reveal-on-scroll"
-            data-reveal="right"
-            style={{ "--reveal-delay": "120ms" }}
-          >
-            <div className="workspace-main__header">
-              <h3>Everything you need to launch and manage your club</h3>
-              <button type="button">Explore Platform</button>
-            </div>
-
-            <div className="workspace-feature-stage">
-              <div className="workspace-feature-tags" aria-label="Platform features">
-                {workspaceFeatureTags.map((tag, index) => (
-                  <span
-                    key={tag}
-                    className="workspace-feature-tag reveal-on-scroll"
-                    data-reveal="up"
-                    style={{ "--reveal-delay": `${index * 70}ms` }}
-                  >
-                    {tag}
-                  </span>
-                ))}
-              </div>
-
-              <div className="workspace-feature-grid">
-                {workspaceFeatureCards.map((item, index) => (
-                  <article
-                    key={item.title}
-                    className="workspace-feature-card reveal-on-scroll"
-                    data-reveal={index === 1 ? "up" : index % 2 === 0 ? "left" : "right"}
-                    style={{ "--reveal-delay": `${index * 130}ms` }}
-                  >
-                    <span className="workspace-feature-card__label">{item.label}</span>
-                    <h4>{item.title}</h4>
-                    <p>{item.text}</p>
-                  </article>
-                ))}
-              </div>
-            </div>
-          </div>
         </div>
 
         <div
@@ -383,7 +298,7 @@ function App() {
           data-reveal="up"
           style={{ "--reveal-delay": "120ms" }}
         >
-          <span>2026 NetUp</span>
+          <span>Copyright 2026 NetUp. All rights reserved.</span>
           <span>Built for modern volleyball clubs</span>
         </div>
       </footer>

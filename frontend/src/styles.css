@@ -92,7 +92,7 @@ button {
   inset: 0;
   background:
     linear-gradient(180deg, rgba(10, 14, 31, 0.24), rgba(10, 14, 31, 0.38)),
-    var(--hero-image) center/cover no-repeat;
+    var(--hero-image) center top / cover no-repeat;
   box-shadow: var(--shadow);
 }
 
@@ -251,8 +251,7 @@ button {
   font-size: 1.15rem;
 }
 
-.content-section,
-.workspace-section {
+.content-section {
   width: min(calc(100% - 2.5rem), 1450px);
   margin: 0 auto;
   padding: 2.5rem 0 0;
@@ -273,8 +272,7 @@ button {
   letter-spacing: -0.06em;
 }
 
-.section-heading--split h2,
-.section-heading--workspace h2 {
+.section-heading--stacked h2 {
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem 0.75rem;
@@ -284,10 +282,6 @@ button {
   color: var(--plum);
 }
 
-.accent-word--blue {
-  color: var(--blue);
-}
-
 .heading-line {
   flex: 1;
   height: 6px;
@@ -295,8 +289,42 @@ button {
   background: linear-gradient(90deg, rgba(125, 85, 116, 0.1), var(--plum));
 }
 
-.heading-line--blue {
-  background: linear-gradient(90deg, rgba(77, 109, 187, 0.12), var(--blue));
+.stacked-heading-group {
+  display: grid;
+  gap: 0.55rem;
+  margin-bottom: 2rem;
+}
+
+.section-heading--stacked {
+  --heading-accent: var(--plum);
+  --heading-line-start: rgba(125, 85, 116, 0.12);
+  --heading-line-end: var(--plum);
+}
+
+.section-heading--stacked .accent-word {
+  color: var(--heading-accent);
+}
+
+.section-heading--stacked .heading-line {
+  background: linear-gradient(90deg, var(--heading-line-start), var(--heading-line-end));
+}
+
+.section-heading--rose {
+  --heading-accent: #b34d79;
+  --heading-line-start: rgba(179, 77, 121, 0.14);
+  --heading-line-end: #b34d79;
+}
+
+.section-heading--violet {
+  --heading-accent: #6260d9;
+  --heading-line-start: rgba(98, 96, 217, 0.14);
+  --heading-line-end: #6260d9;
+}
+
+.section-heading--teal {
+  --heading-accent: #23a39a;
+  --heading-line-start: rgba(35, 163, 154, 0.14);
+  --heading-line-end: #23a39a;
 }
 
 .feature-feed {
@@ -428,152 +456,6 @@ button {
   line-height: 1.6;
 }
 
-.workspace-panel {
-  display: grid;
-  grid-template-columns: minmax(260px, 330px) minmax(0, 1fr);
-  gap: 0;
-  overflow: hidden;
-  background: linear-gradient(180deg, #4262b4, #37539c);
-  border-radius: 1.15rem;
-  box-shadow: 0 22px 50px rgba(43, 59, 111, 0.18);
-}
-
-.workspace-sidebar {
-  padding: 1rem;
-  background: linear-gradient(180deg, rgba(69, 104, 193, 0.98), rgba(50, 79, 150, 0.98));
-}
-
-.workspace-tile-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.65rem;
-}
-
-.workspace-tile {
-  padding: 1.05rem 0.75rem;
-  border: 0;
-  border-radius: 0.7rem;
-  background: rgba(255, 255, 255, 0.13);
-  color: #fff;
-  text-align: left;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.workspace-list {
-  min-height: 250px;
-  margin-top: 0.9rem;
-  padding: 1rem;
-  border-radius: 0.8rem;
-  background: rgba(255, 255, 255, 0.09);
-  color: #fff;
-}
-
-.workspace-list__header {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 1rem;
-  font-weight: 700;
-}
-
-.workspace-list p {
-  margin: 0.82rem 0;
-  padding-bottom: 0.42rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
-  font-size: 0.94rem;
-}
-
-.workspace-main {
-  padding: 1.3rem 1.35rem 1.6rem;
-  background: rgba(255, 252, 248, 0.95);
-}
-
-.workspace-main__header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 1rem;
-}
-
-.workspace-main__header h3 {
-  margin: 0;
-  color: #b4b2b3;
-  font-size: clamp(1.6rem, 2vw, 2rem);
-  font-weight: 700;
-}
-
-.workspace-main__header button {
-  border: 0;
-  background: transparent;
-  color: var(--ink);
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.workspace-feature-stage {
-  margin-top: 1.4rem;
-}
-
-.workspace-feature-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.7rem;
-}
-
-.workspace-feature-tag {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.55rem 0.95rem;
-  border-radius: 999px;
-  background: rgba(66, 98, 180, 0.12);
-  color: var(--blue-deep);
-  font-size: 0.82rem;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-}
-
-.workspace-feature-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 1rem;
-  margin-top: 1.25rem;
-}
-
-.workspace-feature-card {
-  min-height: 210px;
-  padding: 1.2rem 1.1rem 1.25rem;
-  border-radius: 1rem;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(241, 245, 255, 0.96));
-  box-shadow: 0 18px 38px rgba(56, 82, 145, 0.12);
-}
-
-.workspace-feature-card__label {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 2.5rem;
-  height: 2.5rem;
-  border-radius: 50%;
-  background: var(--blue);
-  color: #fff;
-  font-weight: 800;
-}
-
-.workspace-feature-card h4 {
-  margin: 1rem 0 0.55rem;
-  color: var(--navy);
-  font-size: 1.18rem;
-  line-height: 1.35;
-}
-
-.workspace-feature-card p {
-  margin: 0;
-  color: var(--muted);
-  line-height: 1.7;
-}
-
 .workspace-closing-banner {
   margin-top: 1.1rem;
   padding: 3.2rem 1.5rem 3.8rem;
@@ -606,7 +488,7 @@ button {
 
 .page-footer {
   margin-top: 2.2rem;
-  padding: 2rem 1.25rem 2.4rem;
+  padding: 2rem 1.25rem 0;
   background:
     linear-gradient(180deg, rgba(18, 28, 60, 0.98), rgba(10, 16, 34, 1));
   color: rgba(255, 255, 255, 0.84);
@@ -657,7 +539,7 @@ button {
   justify-content: space-between;
   gap: 1rem;
   margin-top: 1.8rem;
-  padding-top: 1rem;
+  padding: 1rem 0 1.15rem;
   border-top: 1px solid rgba(255, 255, 255, 0.12);
   color: rgba(255, 255, 255, 0.62);
   font-size: 0.92rem;
@@ -665,19 +547,12 @@ button {
 
 @media (max-width: 1120px) {
   .hero-content,
-  .highlight-grid,
-  .workspace-panel,
-  .workspace-feature-grid {
+  .highlight-grid {
     grid-template-columns: 1fr;
   }
 
   .hero-pills {
     justify-self: start;
-  }
-
-  .workspace-main__header {
-    align-items: flex-start;
-    flex-direction: column;
   }
 
   .page-footer__content,
@@ -704,14 +579,12 @@ button {
   }
 
   .content-section,
-  .workspace-section,
   .showcase-band {
     width: calc(100% - 2rem);
   }
 
   .section-heading,
-  .section-heading--split,
-  .section-heading--workspace {
+  .section-heading--stacked {
     align-items: flex-start;
     flex-direction: column;
   }
