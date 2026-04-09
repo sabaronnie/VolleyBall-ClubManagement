@@ -1,6 +1,12 @@
 import { useEffect } from "react";
 
-const navItems = ["Home", "Features", "Clubs", "Parents", "About"];
+const navItems = [
+  { label: "Home", sectionId: "home" },
+  { label: "Features", sectionId: "features" },
+  { label: "Clubs", sectionId: "roles" },
+  { label: "Parents", sectionId: "faq" },
+  { label: "About", sectionId: "about" },
+];
 
 const homepageImages = {
   hero: "/homepage/hero-volleyball.png",
@@ -12,46 +18,142 @@ const homepageImages = {
 const featureFeed = [
   {
     category: "Club Operations",
-    title: "Create clubs, build teams, and keep every role organized.",
+    title: "Create clubs and structure teams in minutes.",
     description:
-      "Directors and coaches can manage clubs, spin up teams, and update structures without losing track of who belongs where.",
+      "Directors and coaches can launch club spaces, build squads, and keep responsibilities clear from day one.",
   },
   {
     category: "Roster Control",
-    title: "Add players and coaches with role-aware team management.",
+    title: "Manage rosters with role-aware updates.",
     description:
-      "Membership updates, captain assignment, and player-specific details all live in one place so staff can move quickly.",
+      "Player assignments, coach roles, and captain changes stay organized in one shared workflow.",
+  },
+  {
+    category: "Scheduling",
+    title: "Keep practices, matches, and planning aligned.",
+    description:
+      "Teams can track activity and stay in sync around the rhythm of the season without scattered tools.",
   },
   {
     category: "Parent Access",
-    title: "Support parent-linked accounts and child access settings.",
+    title: "Give families connected, protected access.",
     description:
-      "Parents can stay connected to younger athletes while age-aware policies protect the right level of self-service access.",
+      "Parents can stay close to younger athletes while age-aware permissions protect the right self-service boundaries.",
   },
 ];
 
-const highlightCards = [
+const platformStats = [
   {
-    eyebrow: "01",
-    title: "Registration & Login",
-    text: "Simple account entry points for players, parents, coaches, and directors.",
-    image: homepageImages.stripTop,
-    alt: "Close-up volleyball scene with a red and yellow ball",
+    value: "4",
+    label: "core user roles supported",
   },
   {
-    eyebrow: "02",
-    title: "Team Memberships",
-    text: "Bring rosters together, manage staff, and keep team roles clear.",
-    image: homepageImages.stripMiddle,
-    alt: "Close-up volleyball scene with a blue and yellow ball",
+    value: "1",
+    label: "shared workspace for the whole club",
   },
   {
-    eyebrow: "03",
-    title: "Protected Player Access",
-    text: "Respect parent-managed rules without blocking the full club workflow.",
-    image: homepageImages.stripBottom,
-    alt: "Close-up volleyball scene with a white volleyball",
+    value: "24/7",
+    label: "access to schedules, rosters, and updates",
   },
+];
+
+const trustSignals = [
+  "Youth volleyball clubs",
+  "Competitive travel teams",
+  "Academy directors",
+  "Coaching staff",
+  "Parent coordinators",
+  "Player families",
+];
+
+const valueHighlights = [
+  {
+    title: "Less admin overhead",
+    description:
+      "Cut down on scattered messages and manual follow-ups by keeping the core club workflow in one place.",
+  },
+  {
+    title: "Clearer team ownership",
+    description:
+      "Directors and coaches can see who belongs where, who is responsible for what, and what still needs attention.",
+  },
+  {
+    title: "A better family experience",
+    description:
+      "Parents get visibility without clubs sacrificing structure, boundaries, or role-based access control.",
+  },
+];
+
+const journeySteps = [
+  {
+    number: "01",
+    title: "Launch your club space",
+    description:
+      "Set up your organization, create teams, and invite the right people without messy handoffs.",
+  },
+  {
+    number: "02",
+    title: "Keep everyone aligned",
+    description:
+      "Manage rosters, staff responsibilities, and day-to-day updates from one connected system.",
+  },
+  {
+    number: "03",
+    title: "Support families with confidence",
+    description:
+      "Give parents visibility and athletes the right level of access with age-aware controls built in.",
+  },
+];
+
+const roleSpotlights = [
+  {
+    role: "Directors",
+    title: "See the full club picture.",
+    description:
+      "Track teams, coaches, and memberships from a single operational view that helps the season stay organized.",
+  },
+  {
+    role: "Coaches",
+    title: "Work with cleaner rosters.",
+    description:
+      "Spend less time untangling lists and more time coaching with up-to-date team information.",
+  },
+  {
+    role: "Players",
+    title: "Stay connected to your team.",
+    description:
+      "Give athletes a clearer view of their role, their team space, and the structure around them.",
+  },
+  {
+    role: "Parents",
+    title: "Stay informed with confidence.",
+    description:
+      "Follow younger athletes through parent-linked access that keeps communication and visibility simple.",
+  },
+];
+
+const faqs = [
+  {
+    question: "Who is NetUp for?",
+    answer:
+      "NetUp is designed for volleyball clubs that need one platform for directors, coaches, players, and parents to work together.",
+  },
+  {
+    question: "Can parents and players use the same system?",
+    answer:
+      "Yes. Parent-linked access is part of the workflow, so families can stay informed while clubs keep the right boundaries in place.",
+  },
+  {
+    question: "What makes it different from scattered tools?",
+    answer:
+      "Instead of splitting club operations across messages, spreadsheets, and separate apps, NetUp keeps the core workflow in one place.",
+  },
+];
+
+const ctaActions = [
+  "Start with one club and scale as your teams grow",
+  "Support directors, coaches, players, and parents in one workspace",
+  "Bring structure to the season before operations become chaotic",
 ];
 
 const showcaseStrips = [
@@ -72,25 +174,13 @@ const showcaseStrips = [
   },
 ];
 
-const stackedHeadings = [
-  {
-    leading: "TEAM",
-    accent: "HIGHLIGHTS",
-    tone: "rose",
-  },
-  {
-    leading: "YOUR CLUB",
-    accent: "CONNECTED",
-    tone: "violet",
-  },
-  {
-    leading: "FAMILY ACCESS",
-    accent: "PROTECTED",
-    tone: "teal",
-  },
+const footerLinks = [
+  { label: "Features", sectionId: "features" },
+  { label: "Clubs", sectionId: "roles" },
+  { label: "Teams", sectionId: "journey" },
+  { label: "Parents", sectionId: "faq" },
+  { label: "Contact", sectionId: "cta" },
 ];
-
-const footerLinks = ["Features", "Clubs", "Teams", "Parents", "Contact"];
 
 function App() {
   useEffect(() => {
@@ -129,9 +219,19 @@ function App() {
     };
   }, []);
 
+  const scrollToSection = (sectionId) => {
+    const section = document.getElementById(sectionId);
+
+    if (!section) {
+      return;
+    }
+
+    section.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   return (
     <div className="homepage-shell">
-      <section className="hero-section">
+      <section id="home" className="hero-section">
         <div
           className="hero-backdrop"
           style={{ "--hero-image": `url(${homepageImages.hero})` }}
@@ -139,18 +239,31 @@ function App() {
         <header className="site-nav">
           <div className="nav-left">
             {navItems.map((item) => (
-              <button key={item} className="nav-button" type="button">
-                {item}
+              <button
+                key={item.label}
+                className="nav-button"
+                type="button"
+                onClick={() => scrollToSection(item.sectionId)}
+              >
+                {item.label}
               </button>
             ))}
           </div>
 
           <div className="nav-right">
             <span className="brand-mark">NetUp</span>
-            <button className="action-button action-button--ghost" type="button">
+            <button
+              className="action-button action-button--ghost"
+              type="button"
+              onClick={() => scrollToSection("cta")}
+            >
               Register
             </button>
-            <button className="action-button" type="button">
+            <button
+              className="action-button"
+              type="button"
+              onClick={() => scrollToSection("journey")}
+            >
               Login
             </button>
           </div>
@@ -184,28 +297,55 @@ function App() {
         </div>
       </section>
 
-      <section className="content-section feature-feed-section">
-        <div className="section-heading reveal-on-scroll" data-reveal="left">
-          <h2>FEATURES</h2>
-          <div className="heading-line" />
+      <section id="about" className="content-section story-section">
+        <div className="section-intro reveal-on-scroll" data-reveal="left">
+          <span className="section-kicker">Who We Are</span>
         </div>
 
-        <div className="feature-feed">
-          {featureFeed.map((item, index) => (
-            <article
-              key={item.title}
-              className="feature-post reveal-on-scroll"
-              data-reveal={index % 2 === 0 ? "left" : "right"}
-              style={{ "--reveal-delay": `${index * 110}ms` }}
-            >
-              <div className="feature-post__meta">
-                <span>{item.category}</span>
-                <span>{`0${index + 1}`}</span>
-              </div>
-              <h3>{item.title}</h3>
-              <p>{item.description}</p>
-            </article>
-          ))}
+        <div className="story-grid">
+          <div className="story-copy reveal-on-scroll" data-reveal="left">
+            <p className="story-intro">
+              NetUp is a volleyball operations platform built to help clubs feel
+              more connected, more organized, and easier to run.
+            </p>
+            <p>
+              We focus on the everyday work that keeps a club healthy: creating
+              teams, managing roles, supporting families, and giving everyone a
+              clearer place inside the same system.
+            </p>
+
+            <div className="story-stats">
+              {platformStats.map((stat, index) => (
+                <div
+                  key={stat.label}
+                  className="story-stat reveal-on-scroll"
+                  data-reveal="up"
+                  style={{ "--reveal-delay": `${index * 100}ms` }}
+                >
+                  <strong>{stat.value}</strong>
+                  <span>{stat.label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div id="features" className="story-cards">
+            {featureFeed.map((item, index) => (
+              <article
+                key={item.title}
+                className="feature-post reveal-on-scroll"
+                data-reveal={index % 2 === 0 ? "up" : "right"}
+                style={{ "--reveal-delay": `${index * 110}ms` }}
+              >
+                <div className="feature-post__meta">
+                  <span>{item.category}</span>
+                  <span>{`0${index + 1}`}</span>
+                </div>
+                <h3>{item.title}</h3>
+                <p>{item.description}</p>
+              </article>
+            ))}
+          </div>
         </div>
       </section>
 
@@ -222,48 +362,123 @@ function App() {
         ))}
       </section>
 
-      <section className="content-section highlights-section">
-        <div className="stacked-heading-group">
-          {stackedHeadings.map((heading, index) => (
-            <div
-              key={heading.accent}
-              className={`section-heading section-heading--stacked section-heading--${heading.tone} reveal-on-scroll`}
-              data-reveal="left"
-              style={{ "--reveal-delay": `${index * 120}ms` }}
-            >
-              <h2>
-                <span>{heading.leading}</span>
-                <span className="accent-word">{heading.accent}</span>
-              </h2>
-              <div className="heading-line" />
-            </div>
-          ))}
+      <section className="content-section trust-section">
+        <div className="trust-panel">
+          <div className="trust-copy reveal-on-scroll" data-reveal="left">
+            <p className="trust-kicker">Trusted By</p>
+            <h3>Trusted by the roles that keep volleyball communities moving.</h3>
+            <p>
+              From directors planning the year to parents checking in on younger
+              athletes, NetUp is shaped around the real people who carry club
+              operations forward.
+            </p>
+          </div>
+
+          <div className="trust-cloud">
+            {trustSignals.map((item, index) => (
+              <span
+                key={item}
+                className="trust-chip reveal-on-scroll"
+                data-reveal="up"
+                style={{ "--reveal-delay": `${index * 80}ms` }}
+              >
+                {item}
+              </span>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="content-section value-section">
+        <div className="section-intro reveal-on-scroll" data-reveal="left">
+          <span className="section-kicker">Why NetUp</span>
+          <p>
+            A simpler platform for clubs that want structure, visibility, and a
+            smoother season.
+          </p>
         </div>
 
-        <div className="highlight-grid">
-          {highlightCards.map((card, index) => (
+        <div className="value-grid">
+          {valueHighlights.map((item, index) => (
             <article
-              key={card.title}
-              className="highlight-card reveal-on-scroll"
+              key={item.title}
+              className="value-card reveal-on-scroll"
               data-reveal={index % 2 === 0 ? "up" : "right"}
-              style={{ "--reveal-delay": `${index * 120}ms` }}
+              style={{ "--reveal-delay": `${index * 100}ms` }}
             >
-              <div className="highlight-visual">
-                <img
-                  className="highlight-visual__image"
-                  src={card.image}
-                  alt={card.alt}
-                />
-                <span className="highlight-badge">{card.eyebrow}</span>
-              </div>
-              <div className="highlight-body">
-                <h3>{card.title}</h3>
-                <p>{card.text}</p>
-              </div>
+              <h3>{item.title}</h3>
+              <p>{item.description}</p>
             </article>
           ))}
         </div>
+      </section>
 
+      <section id="journey" className="content-section journey-section">
+        <div className="section-intro reveal-on-scroll" data-reveal="left">
+          <span className="section-kicker">How It Works</span>
+          <p>Three steps to bring your club into one organized workflow.</p>
+        </div>
+
+        <div className="journey-grid">
+          {journeySteps.map((step, index) => (
+            <article
+              key={step.title}
+              className="journey-card reveal-on-scroll"
+              data-reveal={index % 2 === 0 ? "up" : "right"}
+              style={{ "--reveal-delay": `${index * 120}ms` }}
+            >
+              <span className="journey-card__number">{step.number}</span>
+              <h3>{step.title}</h3>
+              <p>{step.description}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section id="roles" className="content-section role-section">
+        <div className="section-intro reveal-on-scroll" data-reveal="left">
+          <span className="section-kicker">For Every Role</span>
+          <p>Each part of the club gets a clearer experience inside the same system.</p>
+        </div>
+
+        <div className="role-grid">
+          {roleSpotlights.map((item, index) => (
+            <article
+              key={item.role}
+              className="role-card reveal-on-scroll"
+              data-reveal={index % 2 === 0 ? "left" : "right"}
+              style={{ "--reveal-delay": `${index * 90}ms` }}
+            >
+              <span className="role-card__label">{item.role}</span>
+              <h3>{item.title}</h3>
+              <p>{item.description}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section id="faq" className="content-section faq-section">
+        <div className="section-intro reveal-on-scroll" data-reveal="left">
+          <span className="section-kicker">FAQ</span>
+          <p>Quick answers to the questions people usually ask first.</p>
+        </div>
+
+        <div className="faq-grid">
+          {faqs.map((item, index) => (
+            <article
+              key={item.question}
+              className="faq-card reveal-on-scroll"
+              data-reveal={index % 2 === 0 ? "left" : "right"}
+              style={{ "--reveal-delay": `${index * 100}ms` }}
+            >
+              <h3>{item.question}</h3>
+              <p>{item.answer}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section id="cta" className="content-section highlights-section">
         <div
           className="workspace-closing-banner reveal-on-scroll"
           data-reveal="up"
@@ -271,6 +486,34 @@ function App() {
         >
           <p>Built for the full volleyball community</p>
           <h3>One place for clubs, teams, players, and parents to move together.</h3>
+          <div className="closing-banner-actions">
+            <button
+              className="closing-button"
+              type="button"
+              onClick={() => scrollToSection("faq")}
+            >
+              Request a demo
+            </button>
+            <button
+              className="closing-button closing-button--ghost"
+              type="button"
+              onClick={() => scrollToSection("features")}
+            >
+              Explore features
+            </button>
+          </div>
+          <div className="closing-banner-points">
+            {ctaActions.map((item, index) => (
+              <span
+                key={item}
+                className="closing-banner-point reveal-on-scroll"
+                data-reveal="up"
+                style={{ "--reveal-delay": `${index * 90}ms` }}
+              >
+                {item}
+              </span>
+            ))}
+          </div>
         </div>
       </section>
 
@@ -286,9 +529,14 @@ function App() {
 
           <nav className="page-footer__nav" aria-label="Footer">
             {footerLinks.map((item) => (
-              <a key={item} href="/" onClick={(event) => event.preventDefault()}>
-                {item}
-              </a>
+              <button
+                key={item.label}
+                type="button"
+                className="footer-link"
+                onClick={() => scrollToSection(item.sectionId)}
+              >
+                {item.label}
+              </button>
             ))}
           </nav>
         </div>
