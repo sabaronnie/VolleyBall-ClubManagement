@@ -1,4 +1,8 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import LoginPage from "./pages/LoginPage";
+import RegisterPage from "./pages/RegisterPage";
+
+const AUTH_TOKEN_KEY = "netup.auth.token";
 
 const homepageImages = {
   hero: "/homepage/hero-volleyball.png",
@@ -168,8 +172,34 @@ const footerLinks = [
   { label: "Contact", sectionId: "cta" },
 ];
 
-function App() {
+function usePathname() {
+  const [pathname, setPathname] = useState(window.location.pathname);
+
   useEffect(() => {
+    const onPopState = () => setPathname(window.location.pathname);
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  return pathname;
+}
+
+function navigate(path) {
+  window.history.pushState({}, "", path);
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
+function App() {
+  const pathname = usePathname();
+  const [isAuthenticated, setIsAuthenticated] = useState(
+    Boolean(localStorage.getItem(AUTH_TOKEN_KEY)),
+  );
+
+  useEffect(() => {
+    if (pathname !== "/") {
+      return undefined;
+    }
+
     const revealElements = document.querySelectorAll(".reveal-on-scroll");
 
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
@@ -203,7 +233,34 @@ function App() {
     return () => {
       observer.disconnect();
     };
+  }, [pathname]);
+
+  useEffect(() => {
+    const updateAuthState = () => {
+      setIsAuthenticated(Boolean(localStorage.getItem(AUTH_TOKEN_KEY)));
+    };
+
+    const onStorage = (event) => {
+      if (!event.key || event.key === AUTH_TOKEN_KEY) {
+        updateAuthState();
+      }
+    };
+
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("auth-state-changed", updateAuthState);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("auth-state-changed", updateAuthState);
+    };
   }, []);
+
+  if (pathname === "/login") {
+    return <LoginPage />;
+  }
+
+  if (pathname === "/register") {
+    return <RegisterPage />;
+  }
 
   const scrollToSection = (sectionId) => {
     const section = document.getElementById(sectionId);
@@ -223,22 +280,65 @@ function App() {
           style={{ "--hero-image": `url(${homepageImages.hero})` }}
         />
         <header className="site-nav">
+          <div className="nav-left">
+            {isAuthenticated ? (
+              <>
+                <button type="button" className="nav-link-button" onClick={() => scrollToSection("home")}>
+                  Home
+                </button>
+                <button
+                  type="button"
+                  className="nav-link-button"
+                  onClick={() => scrollToSection("features")}
+                >
+                  Features
+                </button>
+                <button type="button" className="nav-link-button" onClick={() => scrollToSection("roles")}>
+                  Clubs
+                </button>
+                <button type="button" className="nav-link-button" onClick={() => scrollToSection("faq")}>
+                  Parents
+                </button>
+                <button type="button" className="nav-link-button" onClick={() => scrollToSection("about")}>
+                  About
+                </button>
+              </>
+            ) : (
+              <span className="brand-mark">NetUp</span>
+            )}
+          </div>
           <div className="nav-right">
-            <span className="brand-mark">NetUp</span>
-            <button
-              className="action-button action-button--ghost"
-              type="button"
-              onClick={() => scrollToSection("cta")}
-            >
-              Register
-            </button>
-            <button
-              className="action-button"
-              type="button"
-              onClick={() => scrollToSection("journey")}
-            >
-              Login
-            </button>
+            {isAuthenticated ? (
+              <button
+                className="action-button"
+                type="button"
+                onClick={() => {
+                  localStorage.removeItem("netup.auth.token");
+                  localStorage.removeItem("netup.auth.user");
+                  window.dispatchEvent(new Event("auth-state-changed"));
+                  navigate("/");
+                }}
+              >
+                Logout
+              </button>
+            ) : (
+              <>
+                <button
+                  className="action-button action-button--ghost"
+                  type="button"
+                  onClick={() => navigate("/register")}
+                >
+                  Register
+                </button>
+                <button
+                  className="action-button"
+                  type="button"
+                  onClick={() => navigate("/login")}
+                >
+                  Login
+                </button>
+              </>
+            )}
           </div>
         </header>
 
@@ -248,8 +348,7 @@ function App() {
             <h1>All Your Volleyball Club Operations In One Place</h1>
             <p className="hero-description">
               Bring directors, coaches, players, and parents onto one shared
-              platform with role-aware access and a homepage inspired by your
-              reference design.
+              platform with role-aware access built for smooth club operations.
             </p>
           </div>
 
