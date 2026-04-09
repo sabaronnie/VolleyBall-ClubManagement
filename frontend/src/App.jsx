@@ -57,13 +57,13 @@ const platformStats = [
   },
 ];
 
-const trustSignals = [
-  "Youth volleyball clubs",
-  "Competitive travel teams",
-  "Academy directors",
-  "Coaching staff",
-  "Parent coordinators",
-  "Player families",
+const trustBrands = [
+  { name: "Mikasa", mark: "M" },
+  { name: "Molten", mark: "MO" },
+  { name: "Wilson", mark: "W" },
+  { name: "Mizuno", mark: "MI" },
+  { name: "ASICS", mark: "A" },
+  { name: "adidas", mark: "ad" },
 ];
 
 const valueHighlights = [
@@ -148,12 +148,6 @@ const faqs = [
     answer:
       "Instead of splitting club operations across messages, spreadsheets, and separate apps, NetUp keeps the core workflow in one place.",
   },
-];
-
-const ctaActions = [
-  "Start with one club and scale as your teams grow",
-  "Support directors, coaches, players, and parents in one workspace",
-  "Bring structure to the season before operations become chaotic",
 ];
 
 const showcaseStrips = [
@@ -298,8 +292,9 @@ function App() {
       </section>
 
       <section id="about" className="content-section story-section">
-        <div className="section-intro reveal-on-scroll" data-reveal="left">
-          <span className="section-kicker">Who We Are</span>
+        <div className="section-heading reveal-on-scroll" data-reveal="left">
+          <h2>WHO WE ARE</h2>
+          <div className="heading-line" />
         </div>
 
         <div className="story-grid">
@@ -362,40 +357,10 @@ function App() {
         ))}
       </section>
 
-      <section className="content-section trust-section">
-        <div className="trust-panel">
-          <div className="trust-copy reveal-on-scroll" data-reveal="left">
-            <p className="trust-kicker">Trusted By</p>
-            <h3>Trusted by the roles that keep volleyball communities moving.</h3>
-            <p>
-              From directors planning the year to parents checking in on younger
-              athletes, NetUp is shaped around the real people who carry club
-              operations forward.
-            </p>
-          </div>
-
-          <div className="trust-cloud">
-            {trustSignals.map((item, index) => (
-              <span
-                key={item}
-                className="trust-chip reveal-on-scroll"
-                data-reveal="up"
-                style={{ "--reveal-delay": `${index * 80}ms` }}
-              >
-                {item}
-              </span>
-            ))}
-          </div>
-        </div>
-      </section>
-
       <section className="content-section value-section">
-        <div className="section-intro reveal-on-scroll" data-reveal="left">
-          <span className="section-kicker">Why NetUp</span>
-          <p>
-            A simpler platform for clubs that want structure, visibility, and a
-            smoother season.
-          </p>
+        <div className="section-heading reveal-on-scroll" data-reveal="left">
+          <h2>WHY NETUP</h2>
+          <div className="heading-line" />
         </div>
 
         <div className="value-grid">
@@ -413,10 +378,31 @@ function App() {
         </div>
       </section>
 
+      <section className="content-section trust-section">
+        <div className="trust-strip reveal-on-scroll" data-reveal="left">
+          <span className="trust-strip__title">Trusted By</span>
+          <div className="brand-logos" aria-label="Volleyball brands">
+            {trustBrands.map((brand, index) => (
+              <span
+                key={brand.name}
+                className="brand-logo reveal-on-scroll"
+                data-reveal="up"
+                style={{ "--reveal-delay": `${index * 70}ms` }}
+              >
+                <span className="brand-logo__mark" aria-hidden="true">
+                  {brand.mark}
+                </span>
+                <span className="brand-logo__name">{brand.name}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      </section>
+
       <section id="journey" className="content-section journey-section">
-        <div className="section-intro reveal-on-scroll" data-reveal="left">
-          <span className="section-kicker">How It Works</span>
-          <p>Three steps to bring your club into one organized workflow.</p>
+        <div className="section-heading reveal-on-scroll" data-reveal="left">
+          <h2>HOW IT WORKS</h2>
+          <div className="heading-line" />
         </div>
 
         <div className="journey-grid">
@@ -436,9 +422,9 @@ function App() {
       </section>
 
       <section id="roles" className="content-section role-section">
-        <div className="section-intro reveal-on-scroll" data-reveal="left">
-          <span className="section-kicker">For Every Role</span>
-          <p>Each part of the club gets a clearer experience inside the same system.</p>
+        <div className="section-heading reveal-on-scroll" data-reveal="left">
+          <h2>FOR EVERY ROLE</h2>
+          <div className="heading-line" />
         </div>
 
         <div className="role-grid">
@@ -455,31 +441,9 @@ function App() {
             </article>
           ))}
         </div>
-      </section>
 
-      <section id="faq" className="content-section faq-section">
-        <div className="section-intro reveal-on-scroll" data-reveal="left">
-          <span className="section-kicker">FAQ</span>
-          <p>Quick answers to the questions people usually ask first.</p>
-        </div>
-
-        <div className="faq-grid">
-          {faqs.map((item, index) => (
-            <article
-              key={item.question}
-              className="faq-card reveal-on-scroll"
-              data-reveal={index % 2 === 0 ? "left" : "right"}
-              style={{ "--reveal-delay": `${index * 100}ms` }}
-            >
-              <h3>{item.question}</h3>
-              <p>{item.answer}</p>
-            </article>
-          ))}
-        </div>
-      </section>
-
-      <section id="cta" className="content-section highlights-section">
         <div
+          id="cta"
           className="workspace-closing-banner reveal-on-scroll"
           data-reveal="up"
           style={{ "--closing-banner-image": `url(${homepageImages.hero})` }}
@@ -502,18 +466,27 @@ function App() {
               Explore features
             </button>
           </div>
-          <div className="closing-banner-points">
-            {ctaActions.map((item, index) => (
-              <span
-                key={item}
-                className="closing-banner-point reveal-on-scroll"
-                data-reveal="up"
-                style={{ "--reveal-delay": `${index * 90}ms` }}
-              >
-                {item}
-              </span>
-            ))}
-          </div>
+        </div>
+      </section>
+
+      <section id="faq" className="content-section faq-section">
+        <div className="section-heading reveal-on-scroll" data-reveal="left">
+          <h2>FAQ</h2>
+          <div className="heading-line" />
+        </div>
+
+        <div className="faq-grid">
+          {faqs.map((item, index) => (
+            <article
+              key={item.question}
+              className="faq-card reveal-on-scroll"
+              data-reveal={index % 2 === 0 ? "left" : "right"}
+              style={{ "--reveal-delay": `${index * 100}ms` }}
+            >
+              <h3>{item.question}</h3>
+              <p>{item.answer}</p>
+            </article>
+          ))}
         </div>
       </section>
 
