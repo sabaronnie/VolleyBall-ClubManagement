@@ -36,6 +36,16 @@ def is_club_director(user, club) -> bool:
     ).exists()
 
 
+def is_any_club_director(user) -> bool:
+    if is_staff_user(user):
+        return True
+
+    return ClubMembership.objects.active().filter(
+        user=user,
+        role=ClubRole.CLUB_DIRECTOR,
+    ).exists()
+
+
 def is_team_coach(user, team) -> bool:
     if is_staff_user(user):
         return True
