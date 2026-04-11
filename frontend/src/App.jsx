@@ -13,6 +13,10 @@ import {
   sendTeamNotification,
   updateTrainingSession,
 } from "./api";
+import ClubWorkspaceLayout, { ClubTeamSelect } from "./components/ClubWorkspaceLayout";
+import { navigate } from "./navigation";
+import DashboardPage from "./pages/DashboardPage";
+import DirectorUserManagementPage from "./pages/DirectorUserManagementPage";
 import LoginPage from "./pages/LoginPage";
 import { ForgotPasswordPage, ResetPasswordPage } from "./pages/PasswordResetPages";
 import RegisterPage from "./pages/RegisterPage";
@@ -198,11 +202,6 @@ function usePathname() {
   }, []);
 
   return pathname;
-}
-
-function navigate(path) {
-  window.history.pushState({}, "", path);
-  window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
 function formatCoachName(team) {
@@ -1094,13 +1093,14 @@ function NotificationBell({
   isOpen,
   onToggle,
   isLight,
+  className = "",
 }) {
   return (
     <button
       type="button"
       className={`notification-bell${isLight ? " notification-bell--light" : ""}${
         isOpen ? " is-open" : ""
-      }`}
+      }${className ? ` ${className}` : ""}`}
       onClick={onToggle}
       aria-label="Notifications"
     >
@@ -1352,6 +1352,7 @@ function App() {
   const [notificationsError, setNotificationsError] = useState("");
   const [manualNotificationDraft, setManualNotificationDraft] = useState(emptyManualNotificationDraft());
   const [isSendingManualNotification, setIsSendingManualNotification] = useState(false);
+  const [directorDashboardAllowed, setDirectorDashboardAllowed] = useState(null);
   const activeTeam = teams.find((team) => String(team.id) === String(activeTeamId)) || null;
 
   useEffect(() => {
@@ -1359,40 +1360,50 @@ function App() {
       return undefined;
     }
 
-    const revealElements = document.querySelectorAll(".reveal-on-scroll");
+    let observer = null;
+    const timerId = requestAnimationFrame(() => {
+      const revealElements = document.querySelectorAll(".reveal-on-scroll");
 
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      revealElements.forEach((element) => {
-        element.classList.add("is-visible");
-      });
-      return undefined;
-    }
+      if (!revealElements.length) {
+        return;
+      }
 
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (!entry.isIntersecting) {
-            return;
-          }
-
-          entry.target.classList.add("is-visible");
-          observer.unobserve(entry.target);
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        revealElements.forEach((element) => {
+          element.classList.add("is-visible");
         });
-      },
-      {
-        threshold: 0.18,
-        rootMargin: "0px 0px -10% 0px",
-      },
-    );
+        return;
+      }
 
-    revealElements.forEach((element) => {
-      observer.observe(element);
+      observer = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (!entry.isIntersecting) {
+              return;
+            }
+
+            entry.target.classList.add("is-visible");
+            observer.unobserve(entry.target);
+          });
+        },
+        {
+          threshold: 0.15,
+          rootMargin: "0px 0px -5% 0px",
+        },
+      );
+
+      revealElements.forEach((element) => {
+        observer.observe(element);
+      });
     });
 
     return () => {
-      observer.disconnect();
+      cancelAnimationFrame(timerId);
+      if (observer) {
+        observer.disconnect();
+      }
     };
-  }, [pathname]);
+  }, [pathname, isAuthenticated]);
 
   useEffect(() => {
     const updateAuthState = () => {
@@ -1418,6 +1429,7 @@ function App() {
 
     async function loadTeams() {
       if (!isAuthenticated) {
+        setDirectorDashboardAllowed(null);
         setTeams([]);
         setActiveTeamId("");
         setTrainingStateByTeam({});
@@ -1431,12 +1443,19 @@ function App() {
           return;
         }
 
+        const allowed =
+          typeof payload.is_director_or_staff === "boolean"
+            ? payload.is_director_or_staff
+            : (payload.owned_clubs || []).length > 0;
+        setDirectorDashboardAllowed(Boolean(allowed));
+
         const relatedTeams = buildRelatedTeams(payload);
         setTeams(relatedTeams);
       } catch {
         if (!isMounted) {
           return;
         }
+        setDirectorDashboardAllowed(false);
         setTeams([]);
         setActiveTeamId("");
         setTrainingStateByTeam({});
@@ -1738,24 +1757,6 @@ function App() {
     navigate("/schedule");
   };
 
-  const handleTeamsNavChange = (event) => {
-    const nextValue = event.target.value;
-
-    if (nextValue === "teams") {
-      navigate("/teams");
-      return;
-    }
-
-    if (nextValue === "training") {
-      navigate("/training");
-      return;
-    }
-
-    if (nextValue === "schedule") {
-      navigate("/schedule");
-    }
-  };
-
   const updateDraftEntry = (index, field, value) => {
     setDraftEntries((currentEntries) =>
       currentEntries.map((entry, entryIndex) =>
@@ -2036,112 +2037,117 @@ function App() {
     return <RegisterPage />;
   }
 
+  if (pathname === "/dashboard") {
+    if (!isAuthenticated) {
+      return <LoginPage />;
+    }
+    if (directorDashboardAllowed === null) {
+      return (
+        <div className="vc-app vc-dashboard" style={{ padding: "3rem", textAlign: "center" }}>
+          <p className="vc-modal__muted">Loading…</p>
+        </div>
+      );
+    }
+    if (!directorDashboardAllowed) {
+      return (
+        <div className="vc-app vc-dashboard" style={{ padding: "3rem", maxWidth: 520, margin: "0 auto" }}>
+          <h1 style={{ fontSize: "1.25rem", marginBottom: "0.75rem" }}>Club director dashboard</h1>
+          <p style={{ color: "#5c6570", lineHeight: 1.55 }}>
+            The operations dashboard (registration overview, revenue summaries, and director tools) is only
+            available to club directors and platform staff.
+          </p>
+          <button
+            type="button"
+            className="vc-action-btn"
+            style={{ marginTop: "1.25rem" }}
+            onClick={() => navigate("/teams")}
+          >
+            <span>Go to your teams</span>
+            <span aria-hidden="true">›</span>
+          </button>
+        </div>
+      );
+    }
+    return <DashboardPage />;
+  }
+
+  if (pathname === "/director/users") {
+    if (!isAuthenticated) {
+      return <LoginPage />;
+    }
+    if (directorDashboardAllowed === null) {
+      return (
+        <div className="vc-app vc-dashboard" style={{ padding: "3rem", textAlign: "center" }}>
+          <p className="vc-modal__muted">Loading…</p>
+        </div>
+      );
+    }
+    if (!directorDashboardAllowed) {
+      return (
+        <div className="vc-app vc-dashboard" style={{ padding: "3rem", maxWidth: 520, margin: "0 auto" }}>
+          <h1 style={{ fontSize: "1.25rem", marginBottom: "0.75rem" }}>Director tools</h1>
+          <p style={{ color: "#5c6570", lineHeight: 1.55 }}>
+            Pending account review is limited to club directors and platform staff.
+          </p>
+          <button
+            type="button"
+            className="vc-action-btn"
+            style={{ marginTop: "1.25rem" }}
+            onClick={() => navigate("/teams")}
+          >
+            <span>Go to your teams</span>
+            <span aria-hidden="true">›</span>
+          </button>
+        </div>
+      );
+    }
+    return <DirectorUserManagementPage />;
+  }
+
   if (pathname === "/teams") {
     return (
-      <div className="teams-workspace">
-        <header className="site-nav teams-site-nav">
-          <div className="nav-left">
-            <button type="button" className="nav-link-button" onClick={() => navigate("/")}>
-              Home
-            </button>
-            <div className="nav-jump">
-              <select
-                id="teams-page-nav-select"
-                className="nav-jump__select nav-jump__select--light nav-jump__select--compact"
-                aria-label="Teams navigation"
-                value=""
-                onChange={handleTeamsNavChange}
-              >
-                <option value="" disabled>
-                  Teams
-                </option>
-                <option value="teams">Open Teams</option>
-                <option value="training" disabled={!activeTeam}>
-                  Open Session
-                </option>
-                <option value="schedule" disabled={!activeTeam}>
-                  Open Schedule
-                </option>
-              </select>
-            </div>
-          </div>
-
-          <div className="nav-right">
-            <div className="nav-notification-stack">
-              <NotificationBell
-                unreadCount={notificationUnreadCount}
-                isOpen={isNotificationPanelOpen}
-                onToggle={toggleNotificationPanel}
-                isLight
-              />
-              <NotificationPanel
-                isOpen={isNotificationPanelOpen}
-                notifications={notifications}
-                sentNotifications={sentNotifications}
-                loading={notificationsLoading}
-                error={notificationsError}
-                canSend={Boolean(activeTeam?.canManageTraining)}
-                manualDraft={manualNotificationDraft}
-                onManualChange={updateManualNotificationDraft}
-                onManualSend={handleSendManualNotification}
-                isSendingManual={isSendingManualNotification}
-              />
-            </div>
-            <div className="team-bubble team-bubble--light">
-              <label className="team-bubble__label" htmlFor="teams-page-select">
-                Team
-              </label>
-              <select
-                id="teams-page-select"
-                className="team-bubble__select"
-                value={activeTeamId}
-                onChange={(event) => {
-                  const selectedTeam = teams.find(
-                    (team) => String(team.id) === event.target.value,
-                  );
-
-                  if (selectedTeam) {
-                    handleSelectTeam(selectedTeam);
-                  }
-                }}
-              >
-                {teams.length ? (
-                  teams.map((team) => (
-                    <option key={team.id} value={String(team.id)}>
-                      {team.name}
-                    </option>
-                  ))
-                ) : (
-                  <option value="">No teams linked</option>
-                )}
-              </select>
-            </div>
-
-            <button
-              className="action-button teams-action-button"
-              type="button"
-              onClick={() => {
-                localStorage.removeItem("netup.auth.token");
-                localStorage.removeItem("netup.auth.user");
-                localStorage.removeItem(ACTIVE_TEAM_KEY);
-                window.dispatchEvent(new Event("auth-state-changed"));
-                navigate("/");
-              }}
-            >
-              Logout
-            </button>
-          </div>
-        </header>
-
-        <main className="teams-workspace__content">
-          <TeamsPage
+      <ClubWorkspaceLayout
+        activeTab="statistics"
+        trainingEnabled={Boolean(activeTeam)}
+        beforeIconActions={
+          <ClubTeamSelect
             teams={teams}
             activeTeamId={activeTeamId}
-            onSelectTeam={handleSelectTeam}
-            onOpenSchedule={openTeamSchedule}
+            onChangeTeam={handleSelectTeam}
+            selectId="teams-workspace-team"
           />
-        </main>
-      </div>
+        }
+        notificationsSlot={
+          <>
+            <NotificationBell
+              unreadCount={notificationUnreadCount}
+              isOpen={isNotificationPanelOpen}
+              onToggle={toggleNotificationPanel}
+              isLight
+              className="notification-bell--vc-toolbar"
+            />
+            <NotificationPanel
+              isOpen={isNotificationPanelOpen}
+              notifications={notifications}
+              sentNotifications={sentNotifications}
+              loading={notificationsLoading}
+              error={notificationsError}
+              canSend={Boolean(activeTeam?.canManageTraining)}
+              manualDraft={manualNotificationDraft}
+              onManualChange={updateManualNotificationDraft}
+              onManualSend={handleSendManualNotification}
+              isSendingManual={isSendingManualNotification}
+            />
+          </>
+        }
+      >
+        <TeamsPage
+          teams={teams}
+          activeTeamId={activeTeamId}
+          onSelectTeam={handleSelectTeam}
+          onOpenSchedule={openTeamSchedule}
+        />
+      </ClubWorkspaceLayout>
     );
   }
 
@@ -2158,106 +2164,42 @@ function App() {
     ];
 
     return (
-      <div className="teams-workspace">
-        <header className="site-nav teams-site-nav">
-          <div className="nav-left">
-            <button type="button" className="nav-link-button" onClick={() => navigate("/")}>
-              Home
-            </button>
-            <button type="button" className="nav-link-button is-current" onClick={() => navigate("/schedule")}>
-              Schedule
-            </button>
-            <div className="nav-jump">
-              <select
-                id="schedule-page-nav-select"
-                className="nav-jump__select nav-jump__select--light nav-jump__select--compact"
-                aria-label="Teams navigation"
-                value=""
-                onChange={handleTeamsNavChange}
-              >
-                <option value="" disabled>
-                  Teams
-                </option>
-                <option value="teams">Open Teams</option>
-                <option value="training" disabled={!activeTeam}>
-                  Open Session
-                </option>
-                <option value="schedule" disabled={!activeTeam}>
-                  Open Schedule
-                </option>
-              </select>
-            </div>
-          </div>
-
-          <div className="nav-right">
-            <div className="nav-notification-stack">
-              <NotificationBell
-                unreadCount={notificationUnreadCount}
-                isOpen={isNotificationPanelOpen}
-                onToggle={toggleNotificationPanel}
-                isLight
-              />
-              <NotificationPanel
-                isOpen={isNotificationPanelOpen}
-                notifications={notifications}
-                sentNotifications={sentNotifications}
-                loading={notificationsLoading}
-                error={notificationsError}
-                canSend={Boolean(activeTeam?.canManageTraining)}
-                manualDraft={manualNotificationDraft}
-                onManualChange={updateManualNotificationDraft}
-                onManualSend={handleSendManualNotification}
-                isSendingManual={isSendingManualNotification}
-              />
-            </div>
-            <div className="team-bubble team-bubble--light">
-              <label className="team-bubble__label" htmlFor="schedule-page-select">
-                Team
-              </label>
-              <select
-                id="schedule-page-select"
-                className="team-bubble__select"
-                value={activeTeamId}
-                onChange={(event) => {
-                  const selectedTeam = teams.find(
-                    (team) => String(team.id) === event.target.value,
-                  );
-
-                  if (selectedTeam) {
-                    handleSelectTeam(selectedTeam);
-                  }
-                }}
-              >
-                {teams.length ? (
-                  teams.map((team) => (
-                    <option key={team.id} value={String(team.id)}>
-                      {team.name}
-                    </option>
-                  ))
-                ) : (
-                  <option value="">No teams linked</option>
-                )}
-              </select>
-            </div>
-
-            <button
-              className="action-button teams-action-button"
-              type="button"
-              onClick={() => {
-                localStorage.removeItem("netup.auth.token");
-                localStorage.removeItem("netup.auth.user");
-                localStorage.removeItem(ACTIVE_TEAM_KEY);
-                window.dispatchEvent(new Event("auth-state-changed"));
-                navigate("/");
-              }}
-            >
-              Logout
-            </button>
-          </div>
-        </header>
-
-        <main className="teams-workspace__content">
-          <section className="teams-page-shell">
+      <ClubWorkspaceLayout
+        activeTab="schedule"
+        trainingEnabled={Boolean(activeTeam)}
+        beforeIconActions={
+          <ClubTeamSelect
+            teams={teams}
+            activeTeamId={activeTeamId}
+            onChangeTeam={handleSelectTeam}
+            selectId="schedule-workspace-team"
+          />
+        }
+        notificationsSlot={
+          <>
+            <NotificationBell
+              unreadCount={notificationUnreadCount}
+              isOpen={isNotificationPanelOpen}
+              onToggle={toggleNotificationPanel}
+              isLight
+              className="notification-bell--vc-toolbar"
+            />
+            <NotificationPanel
+              isOpen={isNotificationPanelOpen}
+              notifications={notifications}
+              sentNotifications={sentNotifications}
+              loading={notificationsLoading}
+              error={notificationsError}
+              canSend={Boolean(activeTeam?.canManageTraining)}
+              manualDraft={manualNotificationDraft}
+              onManualChange={updateManualNotificationDraft}
+              onManualSend={handleSendManualNotification}
+              isSendingManual={isSendingManualNotification}
+            />
+          </>
+        }
+      >
+        <section className="teams-page-shell">
             <header className="teams-page-header">
               <div className="teams-page-heading">
                 <p className="teams-page-kicker">Schedule</p>
@@ -2331,9 +2273,8 @@ function App() {
                 isSaving={isSavingSchedule}
               />
             ) : null}
-          </section>
-        </main>
-      </div>
+        </section>
+      </ClubWorkspaceLayout>
     );
   }
 
@@ -2341,106 +2282,42 @@ function App() {
     const activeTrainingState = trainingStateByTeam[String(activeTeamId)] || {};
 
     return (
-      <div className="teams-workspace">
-        <header className="site-nav teams-site-nav">
-          <div className="nav-left">
-            <button type="button" className="nav-link-button" onClick={() => navigate("/")}>
-              Home
-            </button>
-            <button type="button" className="nav-link-button is-current" onClick={() => navigate("/training")}>
-              Training
-            </button>
-            <div className="nav-jump">
-              <select
-                id="training-page-nav-select"
-                className="nav-jump__select nav-jump__select--light nav-jump__select--compact"
-                aria-label="Teams navigation"
-                value=""
-                onChange={handleTeamsNavChange}
-              >
-                <option value="" disabled>
-                  Teams
-                </option>
-                <option value="teams">Open Teams</option>
-                <option value="training" disabled={!activeTeam}>
-                  Open Session
-                </option>
-                <option value="schedule" disabled={!activeTeam}>
-                  Open Schedule
-                </option>
-              </select>
-            </div>
-          </div>
-
-          <div className="nav-right">
-            <div className="nav-notification-stack">
-              <NotificationBell
-                unreadCount={notificationUnreadCount}
-                isOpen={isNotificationPanelOpen}
-                onToggle={toggleNotificationPanel}
-                isLight
-              />
-              <NotificationPanel
-                isOpen={isNotificationPanelOpen}
-                notifications={notifications}
-                sentNotifications={sentNotifications}
-                loading={notificationsLoading}
-                error={notificationsError}
-                canSend={Boolean(activeTeam?.canManageTraining)}
-                manualDraft={manualNotificationDraft}
-                onManualChange={updateManualNotificationDraft}
-                onManualSend={handleSendManualNotification}
-                isSendingManual={isSendingManualNotification}
-              />
-            </div>
-            <div className="team-bubble team-bubble--light">
-              <label className="team-bubble__label" htmlFor="training-page-select">
-                Team
-              </label>
-              <select
-                id="training-page-select"
-                className="team-bubble__select"
-                value={activeTeamId}
-                onChange={(event) => {
-                  const selectedTeam = teams.find(
-                    (team) => String(team.id) === event.target.value,
-                  );
-
-                  if (selectedTeam) {
-                    handleSelectTeam(selectedTeam);
-                  }
-                }}
-              >
-                {teams.length ? (
-                  teams.map((team) => (
-                    <option key={team.id} value={String(team.id)}>
-                      {team.name}
-                    </option>
-                  ))
-                ) : (
-                  <option value="">No teams linked</option>
-                )}
-              </select>
-            </div>
-
-            <button
-              className="action-button teams-action-button"
-              type="button"
-              onClick={() => {
-                localStorage.removeItem("netup.auth.token");
-                localStorage.removeItem("netup.auth.user");
-                localStorage.removeItem(ACTIVE_TEAM_KEY);
-                window.dispatchEvent(new Event("auth-state-changed"));
-                navigate("/");
-              }}
-            >
-              Logout
-            </button>
-          </div>
-        </header>
-
-        <main className="teams-workspace__content">
-          {activeTeam ? (
+      <ClubWorkspaceLayout
+        activeTab="training"
+        trainingEnabled={Boolean(activeTeam)}
+        beforeIconActions={
+          <ClubTeamSelect
+            teams={teams}
+            activeTeamId={activeTeamId}
+            onChangeTeam={handleSelectTeam}
+            selectId="training-workspace-team"
+          />
+        }
+        notificationsSlot={
+          <>
+            <NotificationBell
+              unreadCount={notificationUnreadCount}
+              isOpen={isNotificationPanelOpen}
+              onToggle={toggleNotificationPanel}
+              isLight
+              className="notification-bell--vc-toolbar"
+            />
+            <NotificationPanel
+              isOpen={isNotificationPanelOpen}
+              notifications={notifications}
+              sentNotifications={sentNotifications}
+              loading={notificationsLoading}
+              error={notificationsError}
+              canSend={Boolean(activeTeam?.canManageTraining)}
+              manualDraft={manualNotificationDraft}
+              onManualChange={updateManualNotificationDraft}
+              onManualSend={handleSendManualNotification}
+              isSendingManual={isSendingManualNotification}
+            />
+          </>
+        }
+      >
+        {activeTeam ? (
             <TrainingPage
               team={activeTeam}
               trainingState={activeTrainingState}
@@ -2464,153 +2341,36 @@ function App() {
               <p>Select a team first to view training sessions.</p>
             </section>
           )}
-        </main>
-      </div>
+      </ClubWorkspaceLayout>
     );
   }
 
-  return (
-    <div className="homepage-shell">
+  const renderHomepageMarketing = ({ withSiteNav }) => (
+    <div className={`homepage-shell${withSiteNav ? "" : " homepage-shell--in-workspace"}`}>
       <section id="home" className="hero-section">
         <div
           className="hero-backdrop"
           style={{ "--hero-image": `url(${homepageImages.hero})` }}
         />
-        <header className="site-nav">
-          <div className="nav-left">
-            {isAuthenticated ? (
-              <>
-                <button type="button" className="nav-link-button" onClick={() => scrollToSection("home")}>
-                  Home
-                </button>
-                <button
-                  type="button"
-                  className="nav-link-button"
-                  onClick={() => scrollToSection("features")}
-                >
-                  Features
-                </button>
-                <button type="button" className="nav-link-button" onClick={() => scrollToSection("roles")}>
-                  Clubs
-                </button>
-                <button type="button" className="nav-link-button" onClick={() => scrollToSection("faq")}>
-                  Parents
-                </button>
-                <button type="button" className="nav-link-button" onClick={() => scrollToSection("about")}>
-                  About
-                </button>
-                <div className="nav-jump">
-                  <select
-                    id="teams-nav-select"
-                    className="nav-jump__select"
-                    aria-label="Teams navigation"
-                    value=""
-                    onChange={handleTeamsNavChange}
-                  >
-                    <option value="" disabled>
-                      Teams
-                    </option>
-                    <option value="teams">Open Teams</option>
-                    <option value="training" disabled={!activeTeam}>
-                      Open Session
-                    </option>
-                    <option value="schedule" disabled={!activeTeam}>
-                      Open Schedule
-                    </option>
-                  </select>
-                </div>
-              </>
-            ) : (
+        {withSiteNav ? (
+          <header className="site-nav">
+            <div className="nav-left">
               <span className="brand-mark">NetUp</span>
-            )}
-          </div>
-          <div className="nav-right">
-            {isAuthenticated ? (
-              <>
-                <div className="nav-notification-stack">
-                  <NotificationBell
-                    unreadCount={notificationUnreadCount}
-                    isOpen={isNotificationPanelOpen}
-                    onToggle={toggleNotificationPanel}
-                    isLight={false}
-                  />
-                  <NotificationPanel
-                    isOpen={isNotificationPanelOpen}
-                    notifications={notifications}
-                    sentNotifications={sentNotifications}
-                    loading={notificationsLoading}
-                    error={notificationsError}
-                    canSend={Boolean(activeTeam?.canManageTraining)}
-                    manualDraft={manualNotificationDraft}
-                    onManualChange={updateManualNotificationDraft}
-                    onManualSend={handleSendManualNotification}
-                    isSendingManual={isSendingManualNotification}
-                  />
-                </div>
-                <div className="team-bubble">
-                  <label className="team-bubble__label" htmlFor="team-bubble-select">
-                    Team
-                  </label>
-                  <select
-                    id="team-bubble-select"
-                    className="team-bubble__select"
-                    value={activeTeamId}
-                    onChange={(event) => {
-                      const selectedTeam = teams.find(
-                        (team) => String(team.id) === event.target.value,
-                      );
-
-                      if (selectedTeam) {
-                        handleSelectTeam(selectedTeam);
-                      }
-                    }}
-                  >
-                    {teams.length ? (
-                      teams.map((team) => (
-                        <option key={team.id} value={String(team.id)}>
-                          {team.name}
-                        </option>
-                      ))
-                    ) : (
-                      <option value="">No teams linked</option>
-                    )}
-                  </select>
-                </div>
-
-                <button
-                  className="action-button"
-                  type="button"
-                  onClick={() => {
-                    localStorage.removeItem("netup.auth.token");
-                    localStorage.removeItem("netup.auth.user");
-                    localStorage.removeItem(ACTIVE_TEAM_KEY);
-                    window.dispatchEvent(new Event("auth-state-changed"));
-                    navigate("/");
-                  }}
-                >
-                  Logout
-                </button>
-              </>
-            ) : (
-              <>
-                <button
-                  className="action-button action-button--ghost"
-                  type="button"
-                  onClick={() => navigate("/register")}
-                >
-                  Register
-                </button>
-                <button
-                  className="action-button"
-                  type="button"
-                  onClick={() => navigate("/login")}
-                >
-                  Login
-                </button>
-              </>
-            )}
-          </div>
-        </header>
+            </div>
+            <div className="nav-right">
+              <button
+                className="action-button action-button--ghost"
+                type="button"
+                onClick={() => navigate("/register")}
+              >
+                Register
+              </button>
+              <button className="action-button" type="button" onClick={() => navigate("/login")}>
+                Login
+              </button>
+            </div>
+          </header>
+        ) : null}
 
         <div className="hero-content">
           <div className="hero-copy reveal-on-scroll" data-reveal="left">
@@ -2869,6 +2629,50 @@ function App() {
       </footer>
     </div>
   );
+
+  if (pathname === "/" && isAuthenticated) {
+    return (
+      <ClubWorkspaceLayout
+        activeTab="home"
+        trainingEnabled={Boolean(activeTeam)}
+        beforeIconActions={
+          <ClubTeamSelect
+            teams={teams}
+            activeTeamId={activeTeamId}
+            onChangeTeam={handleSelectTeam}
+            selectId="home-workspace-team"
+          />
+        }
+        notificationsSlot={
+          <>
+            <NotificationBell
+              unreadCount={notificationUnreadCount}
+              isOpen={isNotificationPanelOpen}
+              onToggle={toggleNotificationPanel}
+              isLight
+              className="notification-bell--vc-toolbar"
+            />
+            <NotificationPanel
+              isOpen={isNotificationPanelOpen}
+              notifications={notifications}
+              sentNotifications={sentNotifications}
+              loading={notificationsLoading}
+              error={notificationsError}
+              canSend={Boolean(activeTeam?.canManageTraining)}
+              manualDraft={manualNotificationDraft}
+              onManualChange={updateManualNotificationDraft}
+              onManualSend={handleSendManualNotification}
+              isSendingManual={isSendingManualNotification}
+            />
+          </>
+        }
+      >
+        {renderHomepageMarketing({ withSiteNav: false })}
+      </ClubWorkspaceLayout>
+    );
+  }
+
+  return renderHomepageMarketing({ withSiteNav: true });
 }
 
 export default App;

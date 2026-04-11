@@ -85,6 +85,10 @@ button {
   overflow-x: clip;
 }
 
+.homepage-shell--in-workspace .hero-section {
+  min-height: auto;
+}
+
 .hero-section {
   position: relative;
   min-height: 720px;
