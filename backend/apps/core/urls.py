@@ -8,6 +8,8 @@ from .views import (
     create_team,
     confirm_training_session,
     login,
+    password_reset_confirm,
+    password_reset_request,
     mark_notifications_read,
     manage_player_parent_access,
     manage_training_session,
@@ -30,6 +32,8 @@ app_name = "core"
 
 urlpatterns = [
     path("auth/login/", login, name="login"),
+    path("auth/password-reset/request/", password_reset_request, name="password-reset-request"),
+    path("auth/password-reset/confirm/", password_reset_confirm, name="password-reset-confirm"),
     path("auth/me/", me, name="me"),
     path("notifications/", notifications, name="notifications"),
     path("notifications/read/", mark_notifications_read, name="mark-notifications-read"),

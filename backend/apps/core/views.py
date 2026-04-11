@@ -1,9 +1,13 @@
 import json
+import secrets
 from datetime import date, datetime, timedelta
 
+from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
+from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
+from django.core.mail import send_mail
 from django.db import IntegrityError
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404
@@ -19,6 +23,7 @@ from .models import (
     ClubRole,
     Notification,
     ParentPlayerRelation,
+    PasswordResetOTP,
     PlayerAccessPolicy,
     PlayerProfile,
     Team,
@@ -46,6 +51,32 @@ from .tokens import generate_auth_token
 
 
 User = get_user_model()
+
+
+def _password_reset_email_configured():
+    return bool(settings.EMAIL_HOST_USER and settings.EMAIL_HOST_PASSWORD)
+
+
+def _generate_numeric_otp():
+    return f"{secrets.randbelow(10**6):06d}"
+
+
+def _send_password_reset_otp_email(user, otp_plain):
+    minutes = settings.PASSWORD_RESET_OTP_MINUTES
+    subject = "Your password reset code"
+    body = (
+        f"Hello,\n\n"
+        f"Your password reset verification code is: {otp_plain}\n\n"
+        f"This code expires in {minutes} minute(s).\n\n"
+        f"If you did not request this, you can ignore this email.\n"
+    )
+    send_mail(
+        subject,
+        body,
+        settings.DEFAULT_FROM_EMAIL,
+        [user.email],
+        fail_silently=False,
+    )
 
 
 def _parse_json_request(request):
@@ -572,6 +603,120 @@ def login(request):
             },
         }
     )
+
+
+@csrf_exempt
+@require_POST
+def password_reset_request(request):
+    if not _password_reset_email_configured():
+        return JsonResponse(
+            {
+                "errors": {
+                    "server": "Outbound email is not configured. Set EMAIL_HOST_USER and EMAIL_HOST_PASSWORD.",
+                }
+            },
+            status=503,
+        )
+
+    payload = _parse_json_request(request)
+    if payload is None:
+        return JsonResponse({"errors": {"body": "Invalid JSON."}}, status=400)
+
+    email = (payload.get("email") or "").strip().lower()
+    if not email:
+        return JsonResponse({"errors": {"email": "Email is required."}}, status=400)
+
+    generic_message = {
+        "message": "If an account exists for this email, a reset code has been sent."
+    }
+
+    try:
+        user = User.objects.get(email=email)
+    except User.DoesNotExist:
+        return JsonResponse(generic_message, status=200)
+
+    if not user.is_active:
+        return JsonResponse(generic_message, status=200)
+
+    PasswordResetOTP.objects.filter(user=user).delete()
+    otp_plain = _generate_numeric_otp()
+    expires_at = timezone.now() + timedelta(minutes=settings.PASSWORD_RESET_OTP_MINUTES)
+    PasswordResetOTP.objects.create(
+        user=user,
+        otp_hash=make_password(otp_plain),
+        expires_at=expires_at,
+    )
+
+    try:
+        _send_password_reset_otp_email(user, otp_plain)
+    except Exception:
+        PasswordResetOTP.objects.filter(user=user).delete()
+        return JsonResponse(
+            {
+                "errors": {
+                    "email": "Could not send the reset email. Check server email settings and try again."
+                }
+            },
+            status=503,
+        )
+
+    return JsonResponse(generic_message, status=200)
+
+
+@csrf_exempt
+@require_POST
+def password_reset_confirm(request):
+    payload = _parse_json_request(request)
+    if payload is None:
+        return JsonResponse({"errors": {"body": "Invalid JSON."}}, status=400)
+
+    email = (payload.get("email") or "").strip().lower()
+    otp = (payload.get("otp") or "").strip()
+    new_password = payload.get("new_password") or ""
+
+    errors = {}
+    if not email:
+        errors["email"] = "Email is required."
+    if not otp:
+        errors["otp"] = "Verification code is required."
+    if not new_password:
+        errors["new_password"] = "New password is required."
+    if errors:
+        return JsonResponse({"errors": errors}, status=400)
+
+    try:
+        validate_password(new_password)
+    except ValidationError as exc:
+        if hasattr(exc, "message_dict"):
+            return JsonResponse({"errors": exc.message_dict}, status=400)
+        messages = exc.messages if hasattr(exc, "messages") else [str(exc)]
+        return JsonResponse({"errors": {"new_password": messages}}, status=400)
+
+    try:
+        user = User.objects.get(email=email)
+    except User.DoesNotExist:
+        return JsonResponse(
+            {"errors": {"otp": "Invalid or expired verification code."}},
+            status=400,
+        )
+
+    reset_row = (
+        PasswordResetOTP.objects.filter(user=user, expires_at__gt=timezone.now())
+        .order_by("-created_at")
+        .first()
+    )
+
+    if reset_row is None or not check_password(otp, reset_row.otp_hash):
+        return JsonResponse(
+            {"errors": {"otp": "Invalid or expired verification code."}},
+            status=400,
+        )
+
+    user.set_password(new_password)
+    user.save(update_fields=["password"])
+    PasswordResetOTP.objects.filter(user=user).delete()
+
+    return JsonResponse({"message": "Your password has been reset successfully."}, status=200)
 
 
 @login_required
