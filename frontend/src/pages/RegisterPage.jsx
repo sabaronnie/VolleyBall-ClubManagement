@@ -1,19 +1,5 @@
 import { useState } from "react";
-import { loginWithPassword, registerUser } from "../api";
-
-const ROLE_OPTIONS = [
-  { value: "player", label: "Player" },
-  { value: "parent", label: "Parent" },
-  { value: "coach", label: "Coach" },
-  { value: "director", label: "Director" },
-];
-
-const AUTH_TOKEN_KEY = "netup.auth.token";
-const AUTH_USER_KEY = "netup.auth.user";
-
-function notifyAuthStateChanged() {
-  window.dispatchEvent(new Event("auth-state-changed"));
-}
+import { registerUser } from "../api";
 
 function navigate(path) {
   window.history.pushState({}, "", path);
@@ -23,9 +9,8 @@ function navigate(path) {
 export default function RegisterPage() {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
-  const [role, setRole] = useState(ROLE_OPTIONS[0].value);
-  const [dropdownOpen, setDropdownOpen] = useState(false);
   const [email, setEmail] = useState("");
+  const [dateOfBirth, setDateOfBirth] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -33,8 +18,6 @@ export default function RegisterPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-
-  const selectedRole = ROLE_OPTIONS.find((option) => option.value === role);
 
   const onSubmit = async (event) => {
     event.preventDefault();
@@ -49,6 +32,10 @@ export default function RegisterPage() {
       setError("Email is required.");
       return;
     }
+    if (!dateOfBirth) {
+      setError("Date of birth is required.");
+      return;
+    }
     if (!password) {
       setError("Password is required.");
       return;
@@ -60,21 +47,18 @@ export default function RegisterPage() {
 
     setLoading(true);
     try {
-      await registerUser({
+      const payload = await registerUser({
         firstName: firstName.trim(),
         lastName: lastName.trim(),
         email: email.trim().toLowerCase(),
         password,
+        dateOfBirth,
       });
-      const authPayload = await loginWithPassword({
-        email: email.trim().toLowerCase(),
-        password,
-      });
-      localStorage.setItem(AUTH_TOKEN_KEY, authPayload.token || "");
-      localStorage.setItem(AUTH_USER_KEY, JSON.stringify(authPayload.user || {}));
-      notifyAuthStateChanged();
-      setSuccess("Account created successfully.");
-      setTimeout(() => navigate("/"), 500);
+      setSuccess(
+        payload.message ||
+          "Registration received. A director will review your account; you will get an email when you can log in.",
+      );
+      setTimeout(() => navigate("/login"), 2800);
     } catch (requestError) {
       setError(requestError.message || "Could not create account.");
     } finally {
@@ -112,40 +96,6 @@ export default function RegisterPage() {
             autoComplete="family-name"
           />
 
-          <div className="register-role-row">
-            <label htmlFor="register-role">Select Role</label>
-            <div className="role-dropdown">
-              <button
-                id="register-role"
-                type="button"
-                className="role-dropdown-trigger"
-                onClick={() => setDropdownOpen((previous) => !previous)}
-                aria-expanded={dropdownOpen}
-              >
-                <span>{selectedRole?.label || "Select role"}</span>
-                <span className="role-dropdown-caret">⌄</span>
-              </button>
-              {dropdownOpen ? (
-                <div className="role-dropdown-menu">
-                  {ROLE_OPTIONS.map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      className="role-dropdown-option"
-                      onClick={() => {
-                        setRole(option.value);
-                        setDropdownOpen(false);
-                      }}
-                    >
-                      <span className="role-radio" aria-hidden="true" />
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          </div>
-
           <label htmlFor="register-email">Email</label>
           <input
             id="register-email"
@@ -153,6 +103,16 @@ export default function RegisterPage() {
             value={email}
             onChange={(event) => setEmail(event.target.value)}
             autoComplete="email"
+          />
+
+          <label htmlFor="register-dob">Date of birth</label>
+          <input
+            id="register-dob"
+            type="date"
+            value={dateOfBirth}
+            onChange={(event) => setDateOfBirth(event.target.value)}
+            autoComplete="bday"
+            required
           />
 
           <label htmlFor="register-password">Password</label>

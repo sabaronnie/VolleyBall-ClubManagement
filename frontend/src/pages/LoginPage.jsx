@@ -16,7 +16,6 @@ function navigate(path) {
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState("player");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -93,29 +92,6 @@ export default function LoginPage() {
               >
                 {showPassword ? "Hide" : "Show"}
               </button>
-            </div>
-
-            <div className="login-role-group">
-              <p>Select Role</p>
-              <div className="login-role-options">
-                {[
-                  { value: "player", label: "Player" },
-                  { value: "parent", label: "Parent" },
-                  { value: "coach", label: "Coach" },
-                  { value: "director", label: "Director" },
-                ].map((option) => (
-                  <label key={option.value} className="login-role-option">
-                    <input
-                      type="radio"
-                      name="login-role"
-                      value={option.value}
-                      checked={role === option.value}
-                      onChange={(event) => setRole(event.target.value)}
-                    />
-                    <span>{option.label}</span>
-                  </label>
-                ))}
-              </div>
             </div>
 
             {error ? <p className="auth-error">{error}</p> : null}

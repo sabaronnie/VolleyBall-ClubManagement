@@ -120,12 +120,13 @@ export async function confirmPasswordReset({ email, otp, new_password }) {
   return request("/api/auth/password-reset/confirm/", { email, otp, new_password });
 }
 
-export async function registerUser({ firstName, lastName, email, password }) {
+export async function registerUser({ firstName, lastName, email, password, dateOfBirth }) {
   return request("/api/register/", {
     first_name: firstName,
     last_name: lastName,
     email,
     password,
+    date_of_birth: dateOfBirth,
   });
 }
 
@@ -228,4 +229,16 @@ export async function markNotificationsRead() {
 
 export async function sendTeamNotification(payload) {
   return authenticatedJson("/api/notifications/send/", "POST", payload);
+}
+
+export async function fetchDirectorPendingUsers() {
+  return authenticatedGet("/api/directors/pending-users/");
+}
+
+export async function directorVerifyUser(userId, body) {
+  return authenticatedJson(`/api/directors/users/${userId}/verify/`, "POST", body || {});
+}
+
+export async function directorRejectUser(userId) {
+  return authenticatedJson(`/api/directors/users/${userId}/reject/`, "POST", {});
 }
