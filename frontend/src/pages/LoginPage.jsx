@@ -124,7 +124,7 @@ export default function LoginPage() {
               {loading ? "LOGGING IN..." : "LOGIN"}
             </button>
 
-            <button className="forgot-link" type="button">
+            <button className="forgot-link" type="button" onClick={() => navigate("/forgot-password")}>
               Forgot Password?
             </button>
           </form>

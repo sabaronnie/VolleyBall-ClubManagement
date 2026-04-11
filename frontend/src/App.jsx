@@ -14,6 +14,7 @@ import {
   updateTrainingSession,
 } from "./api";
 import LoginPage from "./pages/LoginPage";
+import { ForgotPasswordPage, ResetPasswordPage } from "./pages/PasswordResetPages";
 import RegisterPage from "./pages/RegisterPage";
 
 const AUTH_TOKEN_KEY = "netup.auth.token";
@@ -2021,6 +2022,14 @@ function App() {
 
   if (pathname === "/login") {
     return <LoginPage />;
+  }
+
+  if (pathname === "/forgot-password") {
+    return <ForgotPasswordPage />;
+  }
+
+  if (pathname === "/forgot-password/reset") {
+    return <ResetPasswordPage />;
   }
 
   if (pathname === "/register") {

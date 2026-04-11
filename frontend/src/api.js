@@ -112,6 +112,14 @@ export async function loginWithPassword({ email, password }) {
   return request("/api/auth/login/", { email, password });
 }
 
+export async function requestPasswordReset({ email }) {
+  return request("/api/auth/password-reset/request/", { email });
+}
+
+export async function confirmPasswordReset({ email, otp, new_password }) {
+  return request("/api/auth/password-reset/confirm/", { email, otp, new_password });
+}
+
 export async function registerUser({ firstName, lastName, email, password }) {
   return request("/api/register/", {
     first_name: firstName,

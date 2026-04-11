@@ -1,4 +1,5 @@
 import json
+import logging
 import secrets
 from datetime import date, datetime, timedelta
 
@@ -49,6 +50,8 @@ from .permissions import (
 )
 from .tokens import generate_auth_token
 
+
+logger = logging.getLogger(__name__)
 
 User = get_user_model()
 
@@ -650,6 +653,7 @@ def password_reset_request(request):
     try:
         _send_password_reset_otp_email(user, otp_plain)
     except Exception:
+        logger.exception("Password reset email failed for %s", user.email)
         PasswordResetOTP.objects.filter(user=user).delete()
         return JsonResponse(
             {

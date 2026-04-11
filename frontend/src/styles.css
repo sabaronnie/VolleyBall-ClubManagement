@@ -2243,6 +2243,24 @@ button {
   padding: 0;
 }
 
+.auth-flow-hint {
+  margin: 0 0 0.75rem;
+  color: #333;
+  font-family: "Sansita", system-ui, sans-serif;
+  font-size: 0.92rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.auth-flow-hint strong {
+  font-weight: 800;
+}
+
+.auth-input-readonly {
+  opacity: 0.85;
+  cursor: default;
+}
+
 .auth-error,
 .auth-success {
   margin: 0.35rem 0 0;
