@@ -3,6 +3,20 @@ from django.contrib.auth.models import AbstractUser
 from django.db import models
 
 
+class VerificationStatus(models.TextChoices):
+    PENDING = "pending", "Pending director review"
+    VERIFIED = "verified", "Verified"
+    REJECTED = "rejected", "Rejected"
+
+
+class AssignedAccountRole(models.TextChoices):
+    """Set by a director when approving registration (before full roster linking)."""
+
+    PLAYER = "player", "Player"
+    PARENT = "parent", "Parent"
+    COACH = "coach", "Coach"
+
+
 class UserManager(BaseUserManager):
     use_in_migrations = True
 
@@ -21,6 +35,7 @@ class UserManager(BaseUserManager):
         extra_fields.setdefault("is_staff", True)
         extra_fields.setdefault("is_superuser", True)
         extra_fields.setdefault("is_active", True)
+        extra_fields.setdefault("verification_status", VerificationStatus.VERIFIED)
 
         if extra_fields.get("is_staff") is not True:
             raise ValueError("Superuser must have is_staff=True.")
@@ -30,14 +45,23 @@ class UserManager(BaseUserManager):
         return self.create_user(email, password, **extra_fields)
 
 
-# Inherited from AbstractUser so includes:
-# first_name, last_name, password, is_active, is_staff,
-# is_superuser, date_joined, last_login, groups, user_permissions
 class User(AbstractUser):
     username = None
     email = models.EmailField(unique=True)
     date_of_birth = models.DateField(blank=True, null=True)
     emergency_contact = models.CharField(max_length=30, blank=True)
+    verification_status = models.CharField(
+        max_length=20,
+        choices=VerificationStatus.choices,
+        default=VerificationStatus.VERIFIED,
+    )
+    assigned_account_role = models.CharField(
+        max_length=20,
+        choices=AssignedAccountRole.choices,
+        blank=True,
+        default="",
+        help_text="Role chosen by a director when approving this account.",
+    )
 
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = []

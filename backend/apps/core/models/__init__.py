@@ -7,4 +7,4 @@ from .player_profile import PlayerProfile
 from .schedule import TeamScheduleEntry, TrainingSession, TrainingSessionConfirmation
 from .team import Team
 from .password_reset_otp import PasswordResetOTP
-from .user import User
+from .user import AssignedAccountRole, User, VerificationStatus
