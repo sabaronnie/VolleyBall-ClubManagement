@@ -9,7 +9,7 @@ from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from django.core.mail import send_mail
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -33,6 +33,7 @@ from .models import (
     TeamScheduleEntry,
     TrainingSession,
     TrainingSessionConfirmation,
+    VerificationStatus,
 )
 from .permissions import (
     can_add_parent_association,
@@ -45,7 +46,9 @@ from .permissions import (
     can_parent_manage_player_access,
     can_remove_parent_association,
     can_view_team,
+    is_any_club_director,
     is_parent_of_player_on_team,
+    is_staff_user,
     is_user_adult,
 )
 from .tokens import generate_auth_token
@@ -87,16 +90,6 @@ def _parse_json_request(request):
         return json.loads(request.body or "{}")
     except json.JSONDecodeError:
         return None
-
-
-def _parse_date_of_birth(value):
-    if not value:
-        return None
-
-    try:
-        return date.fromisoformat(value)
-    except ValueError as exc:
-        raise ValidationError({"date_of_birth": "Use YYYY-MM-DD format."}) from exc
 
 
 def _serialize_club(club):
@@ -391,6 +384,102 @@ def _serialize_basic_user(user):
         "first_name": user.first_name,
         "last_name": user.last_name,
         "date_of_birth": user.date_of_birth.isoformat() if user.date_of_birth else None,
+        "verification_status": user.verification_status,
+        "assigned_account_role": user.assigned_account_role or None,
+    }
+
+
+def _account_roles_for_user(user):
+    roles = []
+    if ClubMembership.objects.active().filter(user=user, role=ClubRole.CLUB_DIRECTOR).exists():
+        roles.append("director")
+    if TeamMembership.objects.active().filter(user=user, role=TeamRole.COACH).exists():
+        roles.append("coach")
+    if TeamMembership.objects.active().filter(user=user, role=TeamRole.PLAYER).exists():
+        roles.append("player")
+    if ParentPlayerRelation.objects.active().filter(parent=user).exists():
+        roles.append("parent")
+    return roles
+
+
+def _linked_parent_accounts(player_user):
+    return [
+        {
+            "id": rel.parent_id,
+            "email": rel.parent.email,
+            "first_name": rel.parent.first_name,
+            "last_name": rel.parent.last_name,
+            "is_legal_guardian": rel.is_legal_guardian,
+        }
+        for rel in ParentPlayerRelation.objects.active()
+        .filter(player=player_user)
+        .select_related("parent")
+    ]
+
+
+def _linked_children_accounts(parent_user):
+    return [
+        {
+            "id": rel.player_id,
+            "email": rel.player.email,
+            "first_name": rel.player.first_name,
+            "last_name": rel.player.last_name,
+            "is_legal_guardian": rel.is_legal_guardian,
+        }
+        for rel in ParentPlayerRelation.objects.active()
+        .filter(parent=parent_user)
+        .select_related("player")
+    ]
+
+
+def _pending_fees_summary(_user):
+    return {
+        "currency": "USD",
+        "total_due": 0.0,
+        "items": [],
+        "note": "No payment records are linked to this account yet.",
+    }
+
+
+def _build_account_profile(request_user):
+    return {
+        "roles": _account_roles_for_user(request_user),
+        "pending_fees": _pending_fees_summary(request_user),
+        "linked_parents": _linked_parent_accounts(request_user),
+        "linked_children": _linked_children_accounts(request_user),
+    }
+
+
+def _send_registration_approved_email(user):
+    subject = "Your NetUp account was approved"
+    body = (
+        f"Hello {user.first_name or 'there'},\n\n"
+        "A club director has approved your registration. You can now sign in to NetUp "
+        "using the email address and password you chose when you registered.\n\n"
+        "If you did not create an account, you can ignore this email.\n"
+    )
+    try:
+        send_mail(
+            subject,
+            body,
+            settings.DEFAULT_FROM_EMAIL,
+            [user.email],
+            fail_silently=False,
+        )
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "Failed to send registration approval email to %s",
+            user.email,
+        )
+
+
+def _serialize_pending_account_user(user):
+    return {
+        "id": user.id,
+        "email": user.email,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "date_joined": user.date_joined.isoformat() if user.date_joined else None,
     }
 
 
@@ -525,9 +614,23 @@ def register(request):
     if errors:
         return JsonResponse({"errors": errors}, status=400)
 
+    raw_dob = payload.get("date_of_birth")
+    if raw_dob is None or (isinstance(raw_dob, str) and not str(raw_dob).strip()):
+        return JsonResponse(
+            {"errors": {"date_of_birth": "Date of birth is required."}},
+            status=400,
+        )
+
+    try:
+        date_of_birth = date.fromisoformat(str(raw_dob).strip())
+    except ValueError:
+        return JsonResponse(
+            {"errors": {"date_of_birth": "Use YYYY-MM-DD format."}},
+            status=400,
+        )
+
     try:
         validate_password(password)
-        date_of_birth = _parse_date_of_birth(payload.get("date_of_birth"))
     except ValidationError as exc:
         if hasattr(exc, "message_dict"):
             return JsonResponse({"errors": exc.message_dict}, status=400)
@@ -541,6 +644,7 @@ def register(request):
             first_name=first_name,
             last_name=last_name,
             date_of_birth=date_of_birth,
+            verification_status=VerificationStatus.PENDING,
         )
     except IntegrityError:
         return JsonResponse(
@@ -550,16 +654,11 @@ def register(request):
 
     return JsonResponse(
         {
-            "message": "User registered successfully.",
-            "user": {
-                "id": user.id,
-                "email": user.email,
-                "first_name": user.first_name,
-                "last_name": user.last_name,
-                "date_of_birth": (
-                    user.date_of_birth.isoformat() if user.date_of_birth else None
-                ),
-            },
+            "message": (
+                "Registration received. Your account is pending director approval. "
+                "You will receive an email at this address when you can sign in."
+            ),
+            "user": _serialize_basic_user(user),
         },
         status=201,
     )
@@ -591,6 +690,32 @@ def login(request):
             status=401,
         )
 
+    if not user.is_superuser:
+        if user.verification_status == VerificationStatus.PENDING:
+            return JsonResponse(
+                {
+                    "errors": {
+                        "verification": (
+                            "Your account is pending approval by a club director. "
+                            "You will receive an email when you can log in."
+                        ),
+                    },
+                },
+                status=403,
+            )
+        if user.verification_status == VerificationStatus.REJECTED:
+            return JsonResponse(
+                {
+                    "errors": {
+                        "verification": (
+                            "Your registration was not approved. "
+                            "Contact the club if you believe this is a mistake."
+                        ),
+                    },
+                },
+                status=403,
+            )
+
     user.last_login = timezone.now()
     user.save(update_fields=["last_login"])
     token = generate_auth_token(user)
@@ -598,11 +723,160 @@ def login(request):
         {
             "message": "Authentication successful.",
             "token": token,
+            "user": _serialize_basic_user(user),
+        }
+    )
+
+
+@login_required
+@require_GET
+def directors_pending_users(request):
+    if not is_any_club_director(request.user):
+        return JsonResponse(
+            {"errors": {"authorization": "Only club directors can view pending accounts."}},
+            status=403,
+        )
+
+    pending = (
+        User.objects.filter(verification_status=VerificationStatus.PENDING)
+        .exclude(is_superuser=True)
+        .order_by("date_joined", "id")
+    )
+
+    if is_staff_user(request.user):
+        assignable_teams = (
+            Team.objects.select_related("club").order_by("club__name", "name")[:500]
+        )
+    else:
+        assignable_teams = (
+            Team.objects.filter(
+                club__memberships__user=request.user,
+                club__memberships__role=ClubRole.CLUB_DIRECTOR,
+                club__memberships__is_active=True,
+            )
+            .select_related("club")
+            .distinct()
+            .order_by("club__name", "name")
+        )
+
+    return JsonResponse(
+        {
+            "pending_users": [_serialize_pending_account_user(u) for u in pending],
+            "assignable_teams": [
+                {"id": t.id, "name": t.name, "club_name": t.club.name} for t in assignable_teams
+            ],
+        },
+    )
+
+
+@login_required
+@require_POST
+@csrf_exempt
+def directors_verify_user(request, user_id):
+    if not is_any_club_director(request.user):
+        return JsonResponse(
+            {"errors": {"authorization": "Only club directors can verify accounts."}},
+            status=403,
+        )
+
+    payload = _parse_json_request(request) or {}
+    role = (payload.get("role") or "").strip().lower()
+    if role not in ("player", "parent", "coach"):
+        return JsonResponse(
+            {"errors": {"role": "Choose a role: player, parent, or coach."}},
+            status=400,
+        )
+
+    target = get_object_or_404(User, pk=user_id)
+    if target.is_superuser:
+        return JsonResponse(
+            {"errors": {"user": "Cannot change verification for this account."}},
+            status=403,
+        )
+
+    if target.verification_status != VerificationStatus.PENDING:
+        return JsonResponse(
+            {"errors": {"user": "This account is not pending approval."}},
+            status=400,
+        )
+
+    team = None
+    if role in ("player", "coach"):
+        raw_team_id = payload.get("team_id")
+        if raw_team_id is not None and str(raw_team_id).strip() != "":
+            try:
+                team_id = int(raw_team_id)
+            except (TypeError, ValueError):
+                return JsonResponse(
+                    {"errors": {"team_id": "Invalid team id."}},
+                    status=400,
+                )
+            team = get_object_or_404(Team.objects.select_related("club"), pk=team_id)
+            team_role = TeamRole.PLAYER if role == "player" else TeamRole.COACH
+            if not can_add_team_member(request.user, team, team_role):
+                return JsonResponse(
+                    {"errors": {"team_id": "You cannot assign this user to the selected team."}},
+                    status=403,
+                )
+
+    try:
+        with transaction.atomic():
+            if team is not None:
+                team_role = TeamRole.PLAYER if role == "player" else TeamRole.COACH
+                TeamMembership.objects.add_member(
+                    user=target,
+                    team=team,
+                    role=team_role,
+                )
+            target.assigned_account_role = role
+            target.verification_status = VerificationStatus.VERIFIED
+            target.save(update_fields=["verification_status", "assigned_account_role"])
+    except IntegrityError:
+        return JsonResponse(
+            {"errors": {"user": "Could not complete approval (data conflict). Try again."}},
+            status=400,
+        )
+
+    _send_registration_approved_email(target)
+    return JsonResponse(
+        {
+            "message": "Account verified.",
+            "user": _serialize_basic_user(target),
+        }
+    )
+
+
+@login_required
+@require_POST
+@csrf_exempt
+def directors_reject_user(request, user_id):
+    if not is_any_club_director(request.user):
+        return JsonResponse(
+            {"errors": {"authorization": "Only club directors can reject accounts."}},
+            status=403,
+        )
+
+    target = get_object_or_404(User, pk=user_id)
+    if target.is_superuser or target.is_staff:
+        return JsonResponse(
+            {"errors": {"user": "Cannot reject this account."}},
+            status=403,
+        )
+    if target.id == request.user.id:
+        return JsonResponse(
+            {"errors": {"user": "You cannot reject your own account."}},
+            status=400,
+        )
+
+    target.verification_status = VerificationStatus.REJECTED
+    target.save(update_fields=["verification_status"])
+    return JsonResponse(
+        {
+            "message": "Account rejected.",
             "user": {
-                "id": user.id,
-                "email": user.email,
-                "first_name": user.first_name,
-                "last_name": user.last_name,
+                "id": target.id,
+                "email": target.email,
+                "verification_status": target.verification_status,
             },
         }
     )
@@ -792,6 +1066,8 @@ def me(request):
     return JsonResponse(
         {
             "user": _serialize_basic_user(request.user),
+            "account_profile": _build_account_profile(request.user),
+            "is_director_or_staff": is_any_club_director(request.user),
             "owned_clubs": owned_clubs,
             "director_teams": director_teams,
             "coached_teams": coached_teams,
