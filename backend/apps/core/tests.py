@@ -18,6 +18,7 @@ from .models import (
     TeamMembership,
     TeamRole,
     User,
+    VerificationStatus,
 )
 from .permissions import (
     can_player_make_payments,
@@ -45,11 +46,32 @@ class RegisterEndpointTests(TestCase):
 
         self.assertEqual(response.status_code, 201)
         self.assertEqual(User.objects.count(), 1)
+        self.assertIn("pending", response.json()["message"].lower())
+        self.assertEqual(response.json()["user"]["verification_status"], VerificationStatus.PENDING)
 
         user = User.objects.get(email="player@example.com")
         self.assertEqual(user.first_name, "Ronnie")
         self.assertEqual(user.last_name, "Saba")
         self.assertTrue(user.check_password("StrongPassword123!"))
+        self.assertEqual(user.verification_status, VerificationStatus.PENDING)
+        self.assertIsNotNone(user.date_of_birth)
+
+    def test_register_requires_date_of_birth(self):
+        response = self.client.post(
+            reverse("core:register"),
+            data=json.dumps(
+                {
+                    "email": "nodob@example.com",
+                    "password": "StrongPassword123!",
+                    "first_name": "No",
+                    "last_name": "Dob",
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("date_of_birth", response.json().get("errors", {}))
+        self.assertEqual(User.objects.filter(email="nodob@example.com").count(), 0)
 
     def test_register_rejects_duplicate_email(self):
         User.objects.create_user(
@@ -67,6 +89,7 @@ class RegisterEndpointTests(TestCase):
                     "password": "AnotherStrongPassword123!",
                     "first_name": "Ronnie",
                     "last_name": "Saba",
+                    "date_of_birth": "2004-06-15",
                 }
             ),
             content_type="application/json",
@@ -123,6 +146,29 @@ class LoginEndpointTests(TestCase):
 
         self.assertEqual(response.status_code, 401)
 
+    def test_login_rejects_pending_verification(self):
+        User.objects.create_user(
+            email="pending@example.com",
+            password="StrongPassword123!",
+            first_name="Wait",
+            last_name="User",
+            verification_status=VerificationStatus.PENDING,
+        )
+
+        response = self.client.post(
+            reverse("core:login"),
+            data=json.dumps(
+                {
+                    "email": "pending@example.com",
+                    "password": "StrongPassword123!",
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("pending", response.json()["errors"]["verification"].lower())
+
 
 class LoginRequiredDecoratorTests(TestCase):
     def test_me_returns_authenticated_user_for_valid_bearer_token(self):
@@ -145,6 +191,13 @@ class LoginRequiredDecoratorTests(TestCase):
         self.assertEqual(response.json()["coached_teams"], [])
         self.assertEqual(response.json()["player_teams"], [])
         self.assertEqual(response.json()["children"], [])
+        profile = response.json().get("account_profile") or {}
+        self.assertIn("roles", profile)
+        self.assertIn("pending_fees", profile)
+        self.assertIn("linked_parents", profile)
+        self.assertIn("linked_children", profile)
+        self.assertIn("is_director_or_staff", response.json())
+        self.assertFalse(response.json()["is_director_or_staff"])
 
     def test_me_returns_owned_clubs_and_team_lists_for_user_roles(self):
         user = User.objects.create_user(
