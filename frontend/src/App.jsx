@@ -17,6 +17,7 @@ import LoginPage from "./pages/LoginPage";
 import MemberHubPage from "./pages/MemberHubPage";
 import MyFeesPage from "./pages/MyFeesPage";
 import ParentAttendancePage from "./pages/ParentAttendancePage";
+import PlayerAttendancePage from "./pages/PlayerAttendancePage";
 import TeamRosterPage from "./pages/TeamRosterPage";
 import { ForgotPasswordPage, ResetPasswordPage } from "./pages/PasswordResetPages";
 import RegisterPage from "./pages/RegisterPage";
@@ -920,6 +921,13 @@ function App() {
     [teams, scheduleAccessElevated],
   );
 
+  const playerTeamsOnly = useMemo(
+    () => teams.filter((t) => t.source === "Player"),
+    [teams],
+  );
+
+  const showPlayerSessionsTab = playerTeamsOnly.length > 0;
+
   const activeTeam = useMemo(() => {
     if (String(activeTeamId) === "__all__" && teams.length > 0) {
       return {
@@ -1118,6 +1126,22 @@ function App() {
     }
     return undefined;
   }, [pathname, activeTeamId, scheduleTeams, isAuthenticated]);
+
+  useEffect(() => {
+    if (pathname !== "/player/attendance" && pathname !== "/player/attendance/") {
+      return undefined;
+    }
+    if (!isAuthenticated || !playerTeamsOnly.length) {
+      return undefined;
+    }
+    const ok = playerTeamsOnly.some((t) => String(t.id) === String(activeTeamId));
+    if (!ok) {
+      const nextId = String(playerTeamsOnly[0].id);
+      setActiveTeamId(nextId);
+      localStorage.setItem(ACTIVE_TEAM_KEY, nextId);
+    }
+    return undefined;
+  }, [pathname, isAuthenticated, playerTeamsOnly, activeTeamId]);
 
   useEffect(() => {
     if (!teams.length) {
@@ -1501,8 +1525,52 @@ function App() {
       return <LoginPage />;
     }
     return (
-      <ClubWorkspaceLayout activeTab="parent-attendance" viewerAccountRole={viewerAccountRole}>
+      <ClubWorkspaceLayout
+        activeTab="parent-attendance"
+        viewerAccountRole={viewerAccountRole}
+        showPlayerSessionsTab={showPlayerSessionsTab}
+      >
         <ParentAttendancePage />
+      </ClubWorkspaceLayout>
+    );
+  }
+
+  if (pathname === "/player/attendance" || pathname === "/player/attendance/") {
+    if (!isAuthenticated) {
+      return <LoginPage />;
+    }
+    if (!showPlayerSessionsTab) {
+      return (
+        <ClubWorkspaceLayout
+          activeTab="player-attendance"
+          viewerAccountRole={viewerAccountRole}
+          showPlayerSessionsTab={showPlayerSessionsTab}
+        >
+          <section className="teams-page-shell" style={{ padding: "1.5rem" }}>
+            <h1 style={{ fontSize: "1.2rem" }}>My sessions</h1>
+            <p className="vc-modal__muted" style={{ marginTop: "0.75rem" }}>
+              You are not on any roster as a player. When a director adds you as a player, you can confirm attendance
+              for your team here.
+            </p>
+          </section>
+        </ClubWorkspaceLayout>
+      );
+    }
+    return (
+      <ClubWorkspaceLayout
+        activeTab="player-attendance"
+        viewerAccountRole={viewerAccountRole}
+        showPlayerSessionsTab={showPlayerSessionsTab}
+        beforeIconActions={
+          <ClubTeamSelect
+            teams={playerTeamsOnly}
+            activeTeamId={activeTeamId}
+            onChangeTeam={handleSelectTeam}
+            selectId="player-attendance-team"
+          />
+        }
+      >
+        <PlayerAttendancePage activeTeam={activeTeam} />
       </ClubWorkspaceLayout>
     );
   }
@@ -1512,6 +1580,7 @@ function App() {
       <ClubWorkspaceLayout
         activeTab=""
         viewerAccountRole={viewerAccountRole}
+        showPlayerSessionsTab={showPlayerSessionsTab}
         beforeIconActions={
           <ClubTeamSelect
             teams={teams}
@@ -1531,6 +1600,7 @@ function App() {
       <ClubWorkspaceLayout
         activeTab=""
         viewerAccountRole={viewerAccountRole}
+        showPlayerSessionsTab={showPlayerSessionsTab}
         beforeIconActions={
           <ClubTeamSelect
             teams={teams}
@@ -1553,6 +1623,7 @@ function App() {
       <ClubWorkspaceLayout
         activeTab=""
         viewerAccountRole={viewerAccountRole}
+        showPlayerSessionsTab={showPlayerSessionsTab}
         beforeIconActions={
           <ClubTeamSelect
             teams={teams}
@@ -1581,6 +1652,7 @@ function App() {
       <ClubWorkspaceLayout
         activeTab=""
         viewerAccountRole={viewerAccountRole}
+        showPlayerSessionsTab={showPlayerSessionsTab}
         beforeIconActions={
           <ClubTeamSelect
             teams={teams}
@@ -1603,6 +1675,7 @@ function App() {
       <ClubWorkspaceLayout
         activeTab="schedule"
         viewerAccountRole={viewerAccountRole}
+        showPlayerSessionsTab={showPlayerSessionsTab}
         beforeIconActions={
           <ClubTeamSelect
             teams={scheduleTeams}
@@ -1983,6 +2056,7 @@ function App() {
       <ClubWorkspaceLayout
         activeTab="home"
         viewerAccountRole={viewerAccountRole}
+        showPlayerSessionsTab={showPlayerSessionsTab}
         beforeIconActions={
           <ClubTeamSelect
             teams={teams}

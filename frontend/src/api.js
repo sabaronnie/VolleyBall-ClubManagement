@@ -217,9 +217,8 @@ export async function clearTrainingSession(sessionId) {
 }
 
 export async function confirmTrainingSession(sessionId, playerId) {
-  return authenticatedJson(`/api/training-sessions/${sessionId}/confirm/`, "POST", {
-    player_id: playerId,
-  });
+  const body = playerId != null ? { player_id: playerId } : {};
+  return authenticatedJson(`/api/training-sessions/${sessionId}/confirm/`, "POST", body);
 }
 
 export async function fetchNotifications(teamId) {

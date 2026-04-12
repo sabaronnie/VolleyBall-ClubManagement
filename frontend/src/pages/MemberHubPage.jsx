@@ -182,7 +182,11 @@ export default function MemberHubPage() {
   };
 
   return (
-    <ClubWorkspaceLayout activeTab="dashboard" viewerAccountRole={me?.user?.assigned_account_role || null}>
+    <ClubWorkspaceLayout
+      activeTab="dashboard"
+      viewerAccountRole={me?.user?.assigned_account_role || null}
+      showPlayerSessionsTab={playing.length > 0}
+    >
       <section className="vc-member-hub" style={{ padding: "1.5rem 1.75rem 2.5rem", maxWidth: 920, margin: "0 auto" }}>
         <header style={{ marginBottom: "1.5rem" }}>
           <h1 style={{ fontSize: "1.45rem", margin: "0 0 0.35rem", fontWeight: 700 }}>Dashboard</h1>
@@ -430,6 +434,13 @@ export default function MemberHubPage() {
                         onClick={() => setActiveTeamAndNavigate(team.id, "/schedule")}
                       >
                         View schedule
+                      </button>
+                      <button
+                        type="button"
+                        className="vc-action-btn"
+                        onClick={() => setActiveTeamAndNavigate(team.id, "/player/attendance")}
+                      >
+                        My sessions
                       </button>
                     </li>
                   ))}

@@ -58,6 +58,8 @@ export default function ClubWorkspaceLayout({
   beforeIconActions = null,
   heroOverlay = false,
   viewerAccountRole = null,
+  /** Show "My sessions" when the user has at least one player team (roster membership). */
+  showPlayerSessionsTab = false,
   children,
 }) {
   const accountWrapRef = useRef(null);
@@ -171,6 +173,15 @@ export default function ClubWorkspaceLayout({
             <button type="button" className={tabClass("schedule")} onClick={() => navigate("/schedule")}>
               Schedule
             </button>
+            {showPlayerSessionsTab ? (
+              <button
+                type="button"
+                className={tabClass("player-attendance")}
+                onClick={() => navigate("/player/attendance")}
+              >
+                My sessions
+              </button>
+            ) : null}
             {viewerAccountRole === "parent" ? (
               <button
                 type="button"
