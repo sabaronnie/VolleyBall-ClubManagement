@@ -2769,6 +2769,187 @@ class PlayerAttendanceConfirmationTests(TestCase):
         self.assertEqual(response.status_code, 403)
 
 
+class CoachTrainingSessionAttendanceTests(TestCase):
+    """EP-25: coach/director session attendance planning endpoint."""
+
+    def _fixture(self):
+        director = User.objects.create_user(email="ep25-dir@example.com", password="StrongPassword123!")
+        club = Club.objects.create_club(name="EP25 Club", director=director)
+        team_a = Team.objects.create(club=club, name="EP25 Team A")
+        team_b = Team.objects.create(club=club, name="EP25 Team B")
+        coach = User.objects.create_user(
+            email="ep25-coach@example.com",
+            password="StrongPassword123!",
+            assigned_account_role=AssignedAccountRole.COACH,
+        )
+        other_coach = User.objects.create_user(
+            email="ep25-coach-b@example.com",
+            password="StrongPassword123!",
+            assigned_account_role=AssignedAccountRole.COACH,
+        )
+        player = User.objects.create_user(
+            email="ep25-player@example.com",
+            password="StrongPassword123!",
+            assigned_account_role=AssignedAccountRole.PLAYER,
+            date_of_birth=date(2007, 1, 1),
+        )
+        player_b = User.objects.create_user(
+            email="ep25-player-b@example.com",
+            password="StrongPassword123!",
+            assigned_account_role=AssignedAccountRole.PLAYER,
+            date_of_birth=date(2007, 2, 1),
+        )
+        parent = User.objects.create_user(
+            email="ep25-parent@example.com",
+            password="StrongPassword123!",
+            assigned_account_role=AssignedAccountRole.PARENT,
+        )
+        TeamMembership.objects.add_member(user=coach, team=team_a, role=TeamRole.COACH)
+        TeamMembership.objects.add_member(user=other_coach, team=team_b, role=TeamRole.COACH)
+        TeamMembership.objects.add_member(user=player, team=team_a, role=TeamRole.PLAYER)
+        TeamMembership.objects.add_member(user=player_b, team=team_a, role=TeamRole.PLAYER)
+        ParentPlayerRelation.objects.link(parent=parent, player=player)
+        today = timezone.localdate()
+        session_future = TrainingSession.objects.create(
+            team=team_a,
+            title="Future practice",
+            session_type=TrainingSession.SessionType.TRAINING,
+            scheduled_date=today + timedelta(days=2),
+            start_time=time(18, 0),
+            end_time=time(19, 30),
+        )
+        session_past = TrainingSession.objects.create(
+            team=team_a,
+            title="Past practice",
+            session_type=TrainingSession.SessionType.TRAINING,
+            scheduled_date=today - timedelta(days=3),
+            start_time=time(18, 0),
+            end_time=time(19, 30),
+        )
+        PlayerProfile.objects.update_or_create(
+            user=player,
+            defaults={"jersey_number": 9, "primary_position": "Setter"},
+        )
+        return {
+            "director": director,
+            "club": club,
+            "team_a": team_a,
+            "team_b": team_b,
+            "coach": coach,
+            "other_coach": other_coach,
+            "player": player,
+            "player_b": player_b,
+            "parent": parent,
+            "session_future": session_future,
+            "session_past": session_past,
+        }
+
+    def test_coach_can_view_attendance_for_own_team_session(self):
+        fx = self._fixture()
+        TrainingSessionConfirmation.objects.create(
+            training_session=fx["session_future"],
+            player=fx["player"],
+            confirmed_by=fx["player"],
+        )
+        token = generate_auth_token(fx["coach"])
+        response = self.client.get(
+            reverse("core:coach-training-session-attendance", kwargs={"session_id": fx["session_future"].id}),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()["session"]
+        self.assertEqual(body["team"]["id"], fx["team_a"].id)
+        self.assertEqual(body["summary"]["roster_size"], 2)
+        self.assertEqual(body["summary"]["present_count"], 1)
+        self.assertEqual(body["summary"]["pending_count"], 1)
+        self.assertEqual(body["summary"]["absent_count"], 0)
+        by_id = {row["player_id"]: row for row in body["players"]}
+        self.assertEqual(by_id[fx["player"].id]["attendance_status"], "present")
+        self.assertEqual(by_id[fx["player_b"].id]["attendance_status"], "pending")
+        self.assertEqual(by_id[fx["player"].id]["jersey_number"], 9)
+        self.assertEqual(by_id[fx["player"].id]["primary_position"], "Setter")
+
+    def test_roster_players_listed_when_some_not_confirmed(self):
+        fx = self._fixture()
+        token = generate_auth_token(fx["coach"])
+        response = self.client.get(
+            reverse("core:coach-training-session-attendance", kwargs={"session_id": fx["session_future"].id}),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        players = response.json()["session"]["players"]
+        self.assertEqual(len(players), 2)
+        self.assertTrue(all(not p["is_confirmed"] for p in players))
+        self.assertEqual(response.json()["session"]["summary"]["pending_count"], 2)
+
+    def test_other_team_coach_forbidden(self):
+        fx = self._fixture()
+        token = generate_auth_token(fx["other_coach"])
+        response = self.client.get(
+            reverse("core:coach-training-session-attendance", kwargs={"session_id": fx["session_future"].id}),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_unauthenticated_rejected(self):
+        fx = self._fixture()
+        response = self.client.get(
+            reverse("core:coach-training-session-attendance", kwargs={"session_id": fx["session_future"].id}),
+        )
+        self.assertEqual(response.status_code, 401)
+
+    def test_player_forbidden(self):
+        fx = self._fixture()
+        token = generate_auth_token(fx["player"])
+        response = self.client.get(
+            reverse("core:coach-training-session-attendance", kwargs={"session_id": fx["session_future"].id}),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_parent_forbidden_even_when_linked(self):
+        fx = self._fixture()
+        token = generate_auth_token(fx["parent"])
+        response = self.client.get(
+            reverse("core:coach-training-session-attendance", kwargs={"session_id": fx["session_future"].id}),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_invalid_session_returns_404(self):
+        fx = self._fixture()
+        token = generate_auth_token(fx["coach"])
+        response = self.client.get(
+            reverse("core:coach-training-session-attendance", kwargs={"session_id": 999999}),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 404)
+
+    def test_session_with_no_confirmations_past_dates_are_absent(self):
+        fx = self._fixture()
+        token = generate_auth_token(fx["coach"])
+        response = self.client.get(
+            reverse("core:coach-training-session-attendance", kwargs={"session_id": fx["session_past"].id}),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        summary = response.json()["session"]["summary"]
+        self.assertEqual(summary["present_count"], 0)
+        self.assertEqual(summary["absent_count"], 2)
+        self.assertEqual(summary["pending_count"], 0)
+
+    def test_director_can_view_without_coach_membership(self):
+        fx = self._fixture()
+        TeamMembership.objects.filter(user=fx["coach"], team=fx["team_a"]).delete()
+        token = generate_auth_token(fx["director"])
+        response = self.client.get(
+            reverse("core:coach-training-session-attendance", kwargs={"session_id": fx["session_future"].id}),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["session"]["summary"]["roster_size"], 2)
+
+
 class CoachRosterRbacTests(TestCase):
     def test_coach_cannot_add_parent_assigned_user_as_player(self):
         director = User.objects.create_user(email="rb-dir@example.com", password="StrongPassword123!")

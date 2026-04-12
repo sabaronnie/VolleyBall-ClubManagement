@@ -7,6 +7,7 @@ from .views import (
     directors_pending_parent_links,
     directors_resolve_parent_link,
     clear_training_session,
+    coach_training_session_attendance,
     create_club,
     create_team,
     confirm_training_session,
@@ -205,6 +206,11 @@ urlpatterns = [
         "training-sessions/<int:session_id>/confirm/",
         confirm_training_session,
         name="confirm-training-session",
+    ),
+    path(
+        "training-sessions/<int:session_id>/attendance/",
+        coach_training_session_attendance,
+        name="coach-training-session-attendance",
     ),
     path(
         "training-sessions/<int:session_id>/clear/",

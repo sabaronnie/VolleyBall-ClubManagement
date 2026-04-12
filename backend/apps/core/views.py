@@ -292,6 +292,78 @@ def _serialize_training_session(session, viewer, team, player_memberships):
     }
 
 
+def _serialize_coach_training_session_attendance(session, team, player_memberships):
+    """
+    Coach/director planning view: full roster with present/pending/absent/cancelled labels,
+    confirmation metadata, optional jersey/position, and summary counts (EP-25).
+    """
+    confirmations_by_player_id = {
+        confirmation.player_id: confirmation
+        for confirmation in session.confirmations.select_related("confirmed_by", "player")
+    }
+    user_ids = [membership.user_id for membership in player_memberships]
+    profile_by_user_id = {
+        profile.user_id: profile
+        for profile in PlayerProfile.objects.filter(user_id__in=user_ids)
+    }
+    players_out = []
+    for membership in player_memberships:
+        player = membership.user
+        confirmation = confirmations_by_player_id.get(player.id)
+        is_confirmed = confirmation is not None
+        status_code, status_label = _parent_attendance_status(session, is_confirmed)
+        profile = profile_by_user_id.get(player.id)
+        players_out.append(
+            {
+                "player_id": player.id,
+                "player_name": _format_person_name(player),
+                "attendance_status": status_code,
+                "attendance_label": status_label,
+                "is_confirmed": is_confirmed,
+                "confirmed_at": (
+                    confirmation.confirmed_at.isoformat() if confirmation else None
+                ),
+                "confirmed_by_name": (
+                    _format_person_name(confirmation.confirmed_by)
+                    if confirmation and confirmation.confirmed_by
+                    else None
+                ),
+                "jersey_number": profile.jersey_number if profile else None,
+                "primary_position": (profile.primary_position if profile else "") or "",
+            }
+        )
+
+    def _count(code):
+        return sum(1 for row in players_out if row["attendance_status"] == code)
+
+    return {
+        "id": session.id,
+        "title": session.title,
+        "description": session.notes or "",
+        "session_type": session.session_type,
+        "session_type_label": session.get_session_type_display(),
+        "scheduled_date": session.scheduled_date.isoformat(),
+        "start_time": session.start_time.strftime("%H:%M"),
+        "end_time": session.end_time.strftime("%H:%M"),
+        "location": session.location,
+        "opponent": session.opponent,
+        "match_type": session.match_type,
+        "match_type_label": session.get_match_type_display() if session.match_type else "",
+        "notes": session.notes,
+        "status": session.status,
+        "status_label": session.get_status_display(),
+        "team": _serialize_team(team),
+        "players": players_out,
+        "summary": {
+            "roster_size": len(players_out),
+            "present_count": _count("present"),
+            "pending_count": _count("pending"),
+            "absent_count": _count("absent"),
+            "cancelled_count": _count("cancelled"),
+        },
+    }
+
+
 def _parse_training_session_payload(payload):
     if not isinstance(payload, dict):
         raise ValidationError({"body": "Invalid JSON payload."})
@@ -2031,6 +2103,43 @@ def confirm_training_session(request, session_id):
         {
             "message": "Attendance confirmed successfully.",
             "session": _serialize_training_session(session, request.user, team, player_memberships),
+        }
+    )
+
+
+@login_required
+@require_GET
+def coach_training_session_attendance(request, session_id):
+    """EP-25: session roster + attendance for coaches and club directors (planning)."""
+    session = get_object_or_404(
+        TrainingSession.objects.select_related("team__club")
+        .prefetch_related("confirmations__player", "confirmations__confirmed_by"),
+        pk=session_id,
+    )
+    team = session.team
+    if not can_manage_team(request.user, team):
+        return JsonResponse(
+            {
+                "errors": {
+                    "authorization": (
+                        "Only coaches or club directors for this team can view session attendance for planning."
+                    )
+                }
+            },
+            status=403,
+        )
+
+    player_memberships = list(
+        TeamMembership.objects.active()
+        .filter(team=team, role=TeamRole.PLAYER)
+        .select_related("user")
+        .order_by("user__first_name", "user__last_name", "user__email")
+    )
+    return JsonResponse(
+        {
+            "session": _serialize_coach_training_session_attendance(
+                session, team, player_memberships
+            ),
         }
     )
 
