@@ -1,4 +1,4 @@
-/* Volleyball club dashboard + director user management (prototype-aligned) */
+/* Volleyball club dashboard and director screens */
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap");
 
 .vc-app {
@@ -152,6 +152,17 @@
   color: #6b7580;
   font-size: 0.85rem;
   font-weight: 500;
+}
+
+.vc-profile-user-id {
+  display: inline-block;
+  margin-right: 0.35rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 6px;
+  background: #eef2f6;
+  color: #1a1d21;
+  font-size: 0.95rem;
+  font-weight: 600;
 }
 
 .vc-modal__head {
@@ -390,6 +401,27 @@
   gap: 1.25rem;
   box-shadow: 0 4px 24px rgba(15, 40, 60, 0.06);
   margin-bottom: 1.25rem;
+}
+
+.vc-dash-kpi-card--stack {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+}
+
+.vc-dash-kpi-card--stack > * + * {
+  margin-top: 0.85rem;
+}
+
+.vc-dash-kpi-card--stack .vc-payments-schedules-scroll {
+  margin-top: 0.65rem;
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.vc-dash-kpi-card--stack .vc-payments-schedules-scroll .vc-table {
+  min-width: 640px;
 }
 
 @media (max-width: 900px) {
@@ -849,6 +881,61 @@
   margin-bottom: 1rem;
 }
 
+.vc-director-success {
+  background: #ecfdf5;
+  color: #047857;
+  padding: 0.65rem 0.85rem;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  margin-bottom: 1rem;
+}
+
+.vc-dash-subnav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  max-width: 1180px;
+  margin: 0 auto 1rem;
+}
+
+.vc-dash-subnav__link {
+  border: 0;
+  background: transparent;
+  color: #0099cc;
+  font: inherit;
+  font-weight: 700;
+  font-size: 0.9rem;
+  cursor: pointer;
+  padding: 0.15rem 0;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.vc-dash-subnav__link:hover {
+  color: #007799;
+}
+
+.vc-dash-subnav__sep {
+  color: #9aa3ae;
+  user-select: none;
+}
+
+.vc-dash-help {
+  max-width: 1180px;
+  margin: 0 auto;
+  border: 1px solid #dbe3ea;
+  border-radius: 10px;
+  padding: 0.65rem 1rem;
+  background: #fff;
+}
+
+.vc-dash-help > summary {
+  cursor: pointer;
+  font-weight: 700;
+  color: #3d4a59;
+}
+
 .vc-director-loading {
   color: #6b7580;
   font-size: 0.88rem;
@@ -956,6 +1043,47 @@
 .vc-director-modal__btn:disabled {
   opacity: 0.65;
   cursor: not-allowed;
+}
+
+.vc-pay-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 1rem 1.5rem;
+  margin-bottom: 1.25rem;
+}
+
+.vc-pay-toolbar__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #6b7580;
+}
+
+.vc-pay-create-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 0.65rem;
+  align-items: end;
+  margin-top: 0.75rem;
+}
+
+.vc-pay-inline-form {
+  margin-top: 1rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid #eef2f6;
+}
+
+.vc-pay-inline-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  align-items: center;
+  margin-top: 0.5rem;
 }
 
 .vc-dashboard--hero-overlay {

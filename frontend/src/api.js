@@ -235,10 +235,197 @@ export async function fetchDirectorPendingUsers() {
   return authenticatedGet("/api/directors/pending-users/");
 }
 
+export async function fetchDirectorUserDirectory(limit) {
+  const q = limit ? `?limit=${encodeURIComponent(String(limit))}` : "";
+  return authenticatedGet(`/api/directors/users/directory/${q}`);
+}
+
+export async function directorSetUserAccountRole(userId, body) {
+  return authenticatedJson(`/api/directors/users/${userId}/account-role/`, "POST", body);
+}
+
 export async function directorVerifyUser(userId, body) {
   return authenticatedJson(`/api/directors/users/${userId}/verify/`, "POST", body || {});
 }
 
 export async function directorRejectUser(userId) {
   return authenticatedJson(`/api/directors/users/${userId}/reject/`, "POST", {});
+}
+
+export async function fetchDirectorPaymentOverview(clubId) {
+  return authenticatedGet(`/api/clubs/${clubId}/director/payments/overview/`);
+}
+
+export async function fetchDirectorPaymentLookupPlayer(clubId, playerId) {
+  const q = `?player_id=${encodeURIComponent(String(playerId))}`;
+  return authenticatedGet(`/api/clubs/${clubId}/director/payments/lookup-player/${q}`);
+}
+
+export async function downloadDirectorReceiptPdf(clubId, recordId) {
+  const token = localStorage.getItem(AUTH_TOKEN_KEY);
+  const path = `/api/clubs/${clubId}/director/payments/records/${recordId}/receipt.pdf/`;
+  let response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token || ""}` },
+    });
+  } catch {
+    throw new Error("Cannot reach backend. Make sure Django is running on port 8000.");
+  }
+  if (!response.ok) {
+    const ct = response.headers.get("Content-Type") || "";
+    let msg = "Could not download receipt PDF.";
+    if (ct.includes("application/json")) {
+      try {
+        const payload = await response.json();
+        msg = normalizeErrors(payload, msg);
+      } catch {
+        /* ignore */
+      }
+    }
+    throw new Error(msg);
+  }
+  let blob = await response.blob();
+  if (!blob.type || blob.type === "application/octet-stream") {
+    blob = new Blob([blob], { type: "application/pdf" });
+  }
+  return blob;
+}
+
+export async function fetchDirectorPaymentRows(clubId, status) {
+  const q = status ? `?status=${encodeURIComponent(status)}` : "";
+  return authenticatedGet(`/api/clubs/${clubId}/director/payments/rows/${q}`);
+}
+
+export async function fetchDirectorPaymentLogs(clubId, limit) {
+  const q = limit ? `?limit=${encodeURIComponent(String(limit))}` : "";
+  return authenticatedGet(`/api/clubs/${clubId}/director/payments/logs/${q}`);
+}
+
+export async function directorCreateFeeRecord(clubId, body) {
+  return authenticatedJson(`/api/clubs/${clubId}/director/payments/records/`, "POST", body);
+}
+
+export async function directorRecordFeePayment(clubId, recordId, body) {
+  return authenticatedJson(
+    `/api/clubs/${clubId}/director/payments/records/${recordId}/payment/`,
+    "POST",
+    body,
+  );
+}
+
+export async function directorSendPaymentReminder(clubId, recordId) {
+  return authenticatedJson(
+    `/api/clubs/${clubId}/director/payments/records/${recordId}/reminder/`,
+    "POST",
+    {},
+  );
+}
+
+export async function directorSendReceipt(clubId, recordId) {
+  return authenticatedJson(
+    `/api/clubs/${clubId}/director/payments/records/${recordId}/receipt/`,
+    "POST",
+    {},
+  );
+}
+
+export async function fetchDirectorRenewalsDueToday(clubId) {
+  return authenticatedGet(`/api/clubs/${clubId}/director/payments/renewals-today/`);
+}
+
+export async function directorMaterializeMonthlyFees(clubId, body) {
+  return authenticatedJson(
+    `/api/clubs/${clubId}/director/payments/materialize-month/`,
+    "POST",
+    body || {},
+  );
+}
+
+export async function directorBulkEmailRenewalsDueToday(clubId) {
+  return authenticatedJson(
+    `/api/clubs/${clubId}/director/payments/bulk-email-renewals-today/`,
+    "POST",
+    {},
+  );
+}
+
+export async function directorEmailOutstandingNoticeForFamily(clubId, playerId) {
+  return authenticatedJson(`/api/clubs/${clubId}/director/payments/outstanding-notice/`, "POST", {
+    player_id: playerId,
+  });
+}
+
+export async function directorEmailRenewalsDueTodayForFamily(clubId, playerId) {
+  return authenticatedJson(`/api/clubs/${clubId}/director/payments/renewals-today/email-player/`, "POST", {
+    player_id: playerId,
+  });
+}
+
+export async function directorCreateTeam(clubId, body) {
+  return authenticatedJson(`/api/clubs/${clubId}/teams/create/`, "POST", body);
+}
+
+export async function fetchTeamMembers(teamId) {
+  return authenticatedGet(`/api/teams/${teamId}/members/`);
+}
+
+export async function directorAddTeamMember(teamId, body) {
+  return authenticatedJson(`/api/teams/${teamId}/members/add/`, "POST", body);
+}
+
+export async function fetchTeamPlayerPayments(teamId) {
+  return authenticatedGet(`/api/teams/${teamId}/payments/`);
+}
+
+export async function fetchPlayerTeamPayments(teamId) {
+  return authenticatedGet(`/api/teams/${teamId}/player-payments/`);
+}
+
+export async function fetchMyFees() {
+  return authenticatedGet(`/api/my-fees/`);
+}
+
+export async function recordSelfPayment(recordId, body) {
+  return authenticatedJson(`/api/my-fees/${recordId}/pay/`, "POST", body);
+}
+
+export async function fetchPaymentSchedules(clubId) {
+  return authenticatedGet(`/api/clubs/${clubId}/payment-schedules/`);
+}
+
+export async function createPaymentSchedule(clubId, body) {
+  return authenticatedJson(`/api/clubs/${clubId}/payment-schedules/create/`, "POST", body);
+}
+
+export async function deactivatePaymentSchedule(clubId, scheduleId) {
+  return authenticatedJson(
+    `/api/clubs/${clubId}/payment-schedules/${scheduleId}/deactivate/`,
+    "POST",
+    {},
+  );
+}
+
+export async function deletePaymentSchedule(clubId, scheduleId) {
+  return authenticatedJson(
+    `/api/clubs/${clubId}/payment-schedules/${scheduleId}/delete/`,
+    "POST",
+    {},
+  );
+}
+
+export async function requestParentLinkToPlayer(playerId, body = {}) {
+  return authenticatedJson("/api/me/parent-link-request/", "POST", {
+    player_id: playerId,
+    ...body,
+  });
+}
+
+export async function fetchDirectorPendingParentLinks() {
+  return authenticatedGet("/api/directors/parent-link-requests/");
+}
+
+export async function directorResolveParentLink(relationId, action) {
+  return authenticatedJson(`/api/directors/parent-link-requests/${relationId}/`, "POST", { action });
 }

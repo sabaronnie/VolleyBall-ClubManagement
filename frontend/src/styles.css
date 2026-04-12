@@ -1182,12 +1182,14 @@ button {
   position: absolute;
   left: 0.55rem;
   right: 0.55rem;
+  min-width: 0;
   padding: 0.85rem 0.9rem;
   border-radius: 0.95rem;
   background: linear-gradient(135deg, #54dbe6, #3fa5d7);
   color: #fff;
   box-shadow: 0 14px 24px rgba(63, 165, 215, 0.2);
   overflow: hidden;
+  box-sizing: border-box;
 }
 
 .schedule-event--interactive {
@@ -1204,6 +1206,21 @@ button {
 
 .schedule-event:nth-child(3n) {
   background: linear-gradient(135deg, #6a88bf, #5870aa);
+}
+
+.schedule-event.schedule-event--team-colored {
+  background: var(--event-team-bg, #3fa5d7);
+  box-shadow: 0 14px 24px color-mix(in srgb, var(--event-team-bg, #3fa5d7) 32%, transparent);
+  border-left: none;
+}
+
+.schedule-event.schedule-event--team-colored:nth-child(2n),
+.schedule-event.schedule-event--team-colored:nth-child(3n) {
+  background: var(--event-team-bg, #3fa5d7);
+}
+
+.schedule-event.schedule-event--team-colored.schedule-event--interactive:hover {
+  box-shadow: 0 16px 28px color-mix(in srgb, var(--event-team-bg, #3fa5d7) 38%, transparent);
 }
 
 .schedule-event__time {
@@ -1226,6 +1243,43 @@ button {
   font-style: normal;
   font-size: 0.78rem;
   opacity: 0.92;
+}
+
+.schedule-hover-popover {
+  pointer-events: none;
+  max-width: min(280px, calc(100vw - 24px));
+  padding: 0.75rem 0.9rem;
+  border-radius: 0.75rem;
+  background: #1e293b;
+  color: #f8fafc;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.35);
+}
+
+.schedule-hover-popover__title {
+  font-weight: 700;
+  font-size: 0.95rem;
+  margin-bottom: 0.45rem;
+  color: #fff;
+}
+
+.schedule-hover-popover__row {
+  display: grid;
+  grid-template-columns: 4.5rem 1fr;
+  gap: 0.35rem 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.schedule-hover-popover__label {
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.schedule-hover-popover__muted {
+  margin-top: 0.4rem;
+  font-size: 0.75rem;
+  color: #94a3b8;
 }
 
 .schedule-editor-card__top {
