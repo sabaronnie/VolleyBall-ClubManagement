@@ -221,6 +221,10 @@ export async function confirmTrainingSession(sessionId, playerId) {
   return authenticatedJson(`/api/training-sessions/${sessionId}/confirm/`, "POST", body);
 }
 
+export async function fetchCoachTrainingSessionAttendance(sessionId) {
+  return authenticatedGet(`/api/training-sessions/${sessionId}/attendance/`);
+}
+
 export async function fetchNotifications(teamId) {
   const query = teamId ? `?team_id=${encodeURIComponent(teamId)}` : "";
   return authenticatedGet(`/api/notifications/${query}`);

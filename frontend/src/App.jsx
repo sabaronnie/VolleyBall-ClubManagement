@@ -18,6 +18,7 @@ import MemberHubPage from "./pages/MemberHubPage";
 import MyFeesPage from "./pages/MyFeesPage";
 import ParentAttendancePage from "./pages/ParentAttendancePage";
 import PlayerAttendancePage from "./pages/PlayerAttendancePage";
+import CoachSessionAttendancePage from "./pages/CoachSessionAttendancePage";
 import TeamRosterPage from "./pages/TeamRosterPage";
 import { ForgotPasswordPage, ResetPasswordPage } from "./pages/PasswordResetPages";
 import RegisterPage from "./pages/RegisterPage";
@@ -928,6 +929,9 @@ function App() {
 
   const showPlayerSessionsTab = playerTeamsOnly.length > 0;
 
+  const coachAttendanceTeams = useMemo(() => teams.filter((t) => t.canManageTraining), [teams]);
+  const showCoachAttendanceTab = coachAttendanceTeams.length > 0;
+
   const activeTeam = useMemo(() => {
     if (String(activeTeamId) === "__all__" && teams.length > 0) {
       return {
@@ -1142,6 +1146,22 @@ function App() {
     }
     return undefined;
   }, [pathname, isAuthenticated, playerTeamsOnly, activeTeamId]);
+
+  useEffect(() => {
+    if (pathname !== "/coach/attendance" && pathname !== "/coach/attendance/") {
+      return undefined;
+    }
+    if (!isAuthenticated || !coachAttendanceTeams.length) {
+      return undefined;
+    }
+    const ok = coachAttendanceTeams.some((t) => String(t.id) === String(activeTeamId));
+    if (!ok && coachAttendanceTeams[0]) {
+      const nextId = String(coachAttendanceTeams[0].id);
+      setActiveTeamId(nextId);
+      localStorage.setItem(ACTIVE_TEAM_KEY, nextId);
+    }
+    return undefined;
+  }, [pathname, isAuthenticated, coachAttendanceTeams, activeTeamId]);
 
   useEffect(() => {
     if (!teams.length) {
@@ -1529,8 +1549,50 @@ function App() {
         activeTab="parent-attendance"
         viewerAccountRole={viewerAccountRole}
         showPlayerSessionsTab={showPlayerSessionsTab}
+        showCoachAttendanceTab={showCoachAttendanceTab}
       >
         <ParentAttendancePage />
+      </ClubWorkspaceLayout>
+    );
+  }
+
+  if (pathname === "/coach/attendance" || pathname === "/coach/attendance/") {
+    if (!isAuthenticated) {
+      return <LoginPage />;
+    }
+    if (!showCoachAttendanceTab) {
+      return (
+        <ClubWorkspaceLayout
+          activeTab=""
+          viewerAccountRole={viewerAccountRole}
+          showPlayerSessionsTab={showPlayerSessionsTab}
+          showCoachAttendanceTab={showCoachAttendanceTab}
+        >
+          <section className="teams-page-shell" style={{ padding: "1.5rem" }}>
+            <h1 style={{ fontSize: "1.2rem" }}>Session attendance</h1>
+            <p className="vc-modal__muted" style={{ marginTop: "0.75rem" }}>
+              Only coaches and club directors with training access can view per-session attendance planning.
+            </p>
+          </section>
+        </ClubWorkspaceLayout>
+      );
+    }
+    return (
+      <ClubWorkspaceLayout
+        activeTab="coach-attendance"
+        viewerAccountRole={viewerAccountRole}
+        showPlayerSessionsTab={showPlayerSessionsTab}
+        showCoachAttendanceTab={showCoachAttendanceTab}
+        beforeIconActions={
+          <ClubTeamSelect
+            teams={coachAttendanceTeams}
+            activeTeamId={activeTeamId}
+            onChangeTeam={handleSelectTeam}
+            selectId="coach-attendance-team"
+          />
+        }
+      >
+        <CoachSessionAttendancePage activeTeam={activeTeam} />
       </ClubWorkspaceLayout>
     );
   }
@@ -1545,6 +1607,7 @@ function App() {
           activeTab="player-attendance"
           viewerAccountRole={viewerAccountRole}
           showPlayerSessionsTab={showPlayerSessionsTab}
+          showCoachAttendanceTab={showCoachAttendanceTab}
         >
           <section className="teams-page-shell" style={{ padding: "1.5rem" }}>
             <h1 style={{ fontSize: "1.2rem" }}>My sessions</h1>
@@ -1561,6 +1624,7 @@ function App() {
         activeTab="player-attendance"
         viewerAccountRole={viewerAccountRole}
         showPlayerSessionsTab={showPlayerSessionsTab}
+        showCoachAttendanceTab={showCoachAttendanceTab}
         beforeIconActions={
           <ClubTeamSelect
             teams={playerTeamsOnly}
@@ -1581,6 +1645,7 @@ function App() {
         activeTab=""
         viewerAccountRole={viewerAccountRole}
         showPlayerSessionsTab={showPlayerSessionsTab}
+        showCoachAttendanceTab={showCoachAttendanceTab}
         beforeIconActions={
           <ClubTeamSelect
             teams={teams}
@@ -1601,6 +1666,7 @@ function App() {
         activeTab=""
         viewerAccountRole={viewerAccountRole}
         showPlayerSessionsTab={showPlayerSessionsTab}
+        showCoachAttendanceTab={showCoachAttendanceTab}
         beforeIconActions={
           <ClubTeamSelect
             teams={teams}
@@ -1624,6 +1690,7 @@ function App() {
         activeTab=""
         viewerAccountRole={viewerAccountRole}
         showPlayerSessionsTab={showPlayerSessionsTab}
+        showCoachAttendanceTab={showCoachAttendanceTab}
         beforeIconActions={
           <ClubTeamSelect
             teams={teams}
@@ -1653,6 +1720,7 @@ function App() {
         activeTab=""
         viewerAccountRole={viewerAccountRole}
         showPlayerSessionsTab={showPlayerSessionsTab}
+        showCoachAttendanceTab={showCoachAttendanceTab}
         beforeIconActions={
           <ClubTeamSelect
             teams={teams}
@@ -1676,6 +1744,7 @@ function App() {
         activeTab="schedule"
         viewerAccountRole={viewerAccountRole}
         showPlayerSessionsTab={showPlayerSessionsTab}
+        showCoachAttendanceTab={showCoachAttendanceTab}
         beforeIconActions={
           <ClubTeamSelect
             teams={scheduleTeams}
@@ -2057,6 +2126,7 @@ function App() {
         activeTab="home"
         viewerAccountRole={viewerAccountRole}
         showPlayerSessionsTab={showPlayerSessionsTab}
+        showCoachAttendanceTab={showCoachAttendanceTab}
         beforeIconActions={
           <ClubTeamSelect
             teams={teams}

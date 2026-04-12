@@ -856,6 +856,24 @@ button {
   padding: 1rem;
 }
 
+.training-session-card--active {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.coach-attendance-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .coach-attendance-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
 .training-session-card__top {
   display: flex;
   justify-content: space-between;

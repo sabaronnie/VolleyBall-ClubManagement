@@ -60,6 +60,8 @@ export default function ClubWorkspaceLayout({
   viewerAccountRole = null,
   /** Show "My sessions" when the user has at least one player team (roster membership). */
   showPlayerSessionsTab = false,
+  /** Coach/director training: per-session attendance planning (EP-25). */
+  showCoachAttendanceTab = false,
   children,
 }) {
   const accountWrapRef = useRef(null);
@@ -180,6 +182,15 @@ export default function ClubWorkspaceLayout({
                 onClick={() => navigate("/player/attendance")}
               >
                 My sessions
+              </button>
+            ) : null}
+            {showCoachAttendanceTab ? (
+              <button
+                type="button"
+                className={tabClass("coach-attendance")}
+                onClick={() => navigate("/coach/attendance")}
+              >
+                Team attendance
               </button>
             ) : null}
             {viewerAccountRole === "parent" ? (

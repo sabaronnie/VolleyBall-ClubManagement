@@ -33,6 +33,7 @@ export default function DashboardPage() {
   const [successMessage, setSuccessMessage] = useState("");
   const [viewerAccountRole, setViewerAccountRole] = useState(null);
   const [hasPlayerTeams, setHasPlayerTeams] = useState(false);
+  const [showCoachAttendanceTab, setShowCoachAttendanceTab] = useState(false);
 
   useEffect(() => {
     if (!localStorage.getItem(AUTH_TOKEN_KEY)) {
@@ -44,6 +45,10 @@ export default function DashboardPage() {
     const me = await fetchCurrentUser();
     setViewerAccountRole(me.user?.assigned_account_role || null);
     setHasPlayerTeams(Array.isArray(me.player_teams) && me.player_teams.length > 0);
+    setShowCoachAttendanceTab(
+      (me.coached_teams || []).some((t) => t.can_manage_training) ||
+        (me.director_teams || []).some((t) => t.can_manage_training),
+    );
     const clubs = me.owned_clubs || [];
     setOwnedClubs(clubs);
     if (!clubs.length) {
@@ -103,6 +108,7 @@ export default function DashboardPage() {
       activeTab="dashboard"
       viewerAccountRole={viewerAccountRole}
       showPlayerSessionsTab={hasPlayerTeams}
+      showCoachAttendanceTab={showCoachAttendanceTab}
     >
       {ownedClubs.length ? (
         <nav className="vc-dash-subnav" aria-label="Director shortcuts">

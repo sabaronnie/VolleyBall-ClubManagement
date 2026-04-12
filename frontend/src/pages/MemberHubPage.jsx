@@ -181,11 +181,16 @@ export default function MemberHubPage() {
     }
   };
 
+  const showCoachAttendanceTab =
+    (me?.coached_teams || []).some((t) => t.can_manage_training) ||
+    (me?.director_teams || []).some((t) => t.can_manage_training);
+
   return (
     <ClubWorkspaceLayout
       activeTab="dashboard"
       viewerAccountRole={me?.user?.assigned_account_role || null}
       showPlayerSessionsTab={playing.length > 0}
+      showCoachAttendanceTab={showCoachAttendanceTab}
     >
       <section className="vc-member-hub" style={{ padding: "1.5rem 1.75rem 2.5rem", maxWidth: 920, margin: "0 auto" }}>
         <header style={{ marginBottom: "1.5rem" }}>
@@ -345,6 +350,13 @@ export default function MemberHubPage() {
                           onClick={() => setActiveTeamAndNavigate(team.id, "/schedule")}
                         >
                           Schedule
+                        </button>
+                        <button
+                          type="button"
+                          className="vc-action-btn"
+                          onClick={() => setActiveTeamAndNavigate(team.id, "/coach/attendance")}
+                        >
+                          Session attendance
                         </button>
                       </div>
                     </li>
