@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.apps import apps
 from django.db import models
 
@@ -33,6 +35,12 @@ class Club(models.Model):
     city = models.CharField(max_length=100, blank=True)
     address = models.CharField(max_length=255, blank=True)
     founded_year = models.PositiveIntegerField(blank=True, null=True)
+    default_monthly_player_fee = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal("75.00"),
+        help_text="Default amount for automatic monthly player dues (per team roster line).",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

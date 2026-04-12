@@ -10,11 +10,12 @@ class VerificationStatus(models.TextChoices):
 
 
 class AssignedAccountRole(models.TextChoices):
-    """Set by a director when approving registration (before full roster linking)."""
+    """Primary app role set by directors (kept in sync with club/team memberships where applicable)."""
 
     PLAYER = "player", "Player"
     PARENT = "parent", "Parent"
     COACH = "coach", "Coach"
+    DIRECTOR = "director", "Director"
 
 
 class UserManager(BaseUserManager):
@@ -60,7 +61,7 @@ class User(AbstractUser):
         choices=AssignedAccountRole.choices,
         blank=True,
         default="",
-        help_text="Role chosen by a director when approving this account.",
+        help_text="Primary app role set and maintained by club directors.",
     )
 
     USERNAME_FIELD = "email"
