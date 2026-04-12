@@ -2,6 +2,7 @@ import json
 import logging
 import secrets
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
@@ -10,6 +11,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from django.core.mail import send_mail
 from django.db import IntegrityError, transaction
+from django.db.models import Exists, OuterRef, Q
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -18,14 +20,18 @@ from django.views.decorators.http import require_GET
 from django.views.decorators.http import require_POST, require_http_methods
 
 from .decorators import login_required
+from .payment_views import ensure_monthly_fee_for_new_player
 from .models import (
+    AssignedAccountRole,
     Club,
     ClubMembership,
     ClubRole,
     Notification,
+    ParentLinkApprovalStatus,
     ParentPlayerRelation,
     PasswordResetOTP,
     PlayerAccessPolicy,
+    PlayerFeeRecord,
     PlayerProfile,
     Team,
     TeamMembership,
@@ -38,7 +44,10 @@ from .models import (
 from .permissions import (
     can_add_parent_association,
     can_add_team_member,
+    coach_may_add_user_to_team_roster,
     can_manage_club,
+    can_manage_player,
+    is_club_coach,
     can_manage_team,
     can_manage_team_member,
     can_player_confirm_attendance,
@@ -386,6 +395,7 @@ def _serialize_basic_user(user):
         "date_of_birth": user.date_of_birth.isoformat() if user.date_of_birth else None,
         "verification_status": user.verification_status,
         "assigned_account_role": user.assigned_account_role or None,
+        "role": _canonical_app_role(user) or None,
     }
 
 
@@ -397,9 +407,47 @@ def _account_roles_for_user(user):
         roles.append("coach")
     if TeamMembership.objects.active().filter(user=user, role=TeamRole.PLAYER).exists():
         roles.append("player")
-    if ParentPlayerRelation.objects.active().filter(parent=user).exists():
+    if ParentPlayerRelation.objects.approved().filter(parent=user).exists():
         roles.append("parent")
     return roles
+
+
+def _canonical_app_role(user) -> str:
+    """Single primary role for admin UI (membership-backed roles win over the stored label)."""
+    if ClubMembership.objects.active().filter(user=user, role=ClubRole.CLUB_DIRECTOR).exists():
+        return AssignedAccountRole.DIRECTOR
+    if TeamMembership.objects.active().filter(user=user, role=TeamRole.COACH).exists():
+        return AssignedAccountRole.COACH
+    if TeamMembership.objects.active().filter(user=user, role=TeamRole.PLAYER).exists():
+        return AssignedAccountRole.PLAYER
+    if ParentPlayerRelation.objects.approved().filter(parent=user).exists():
+        return AssignedAccountRole.PARENT
+    assigned = (user.assigned_account_role or "").strip().lower()
+    if assigned in AssignedAccountRole.values:
+        return assigned
+    return ""
+
+
+def _display_role_for_account(request_user):
+    """Single human-readable role line for profile (membership wins over approval-only label)."""
+    membership_roles = _account_roles_for_user(request_user)
+    labels = {
+        "director": "Club director",
+        "coach": "Coach",
+        "player": "Player",
+        "parent": "Parent",
+    }
+    order = ("director", "coach", "player", "parent")
+    if membership_roles:
+        ordered = [labels[r] for r in order if r in membership_roles]
+        extras = [r.replace("_", " ").strip().title() for r in membership_roles if r not in labels]
+        parts = ordered + extras
+        return ", ".join(parts) if parts else "Member"
+    assigned = (request_user.assigned_account_role or "").strip()
+    if assigned:
+        label = dict(AssignedAccountRole.choices).get(assigned) or assigned.replace("_", " ").strip().title()
+        return f"{label} (roster link pending)"
+    return "No club role yet"
 
 
 def _linked_parent_accounts(player_user):
@@ -410,6 +458,7 @@ def _linked_parent_accounts(player_user):
             "first_name": rel.parent.first_name,
             "last_name": rel.parent.last_name,
             "is_legal_guardian": rel.is_legal_guardian,
+            "approval_status": rel.approval_status,
         }
         for rel in ParentPlayerRelation.objects.active()
         .filter(player=player_user)
@@ -425,6 +474,7 @@ def _linked_children_accounts(parent_user):
             "first_name": rel.player.first_name,
             "last_name": rel.player.last_name,
             "is_legal_guardian": rel.is_legal_guardian,
+            "approval_status": rel.approval_status,
         }
         for rel in ParentPlayerRelation.objects.active()
         .filter(parent=parent_user)
@@ -432,18 +482,33 @@ def _linked_children_accounts(parent_user):
     ]
 
 
-def _pending_fees_summary(_user):
+def _pending_fees_summary(request_user):
+    records = (
+        PlayerFeeRecord.objects.filter(player=request_user)
+        .select_related("club")
+        .order_by("due_date", "id")
+    )
+    total_remaining = sum((r.remaining() for r in records if r.remaining() > 0), Decimal("0"))
+    items = []
+    for r in records:
+        rem = r.remaining()
+        if rem > 0:
+            items.append(
+                f"{r.club.name}: {r.description} — {r.currency} {rem} due {r.due_date.isoformat()}"
+            )
+    currency = records.first().currency if records.exists() else "USD"
     return {
-        "currency": "USD",
-        "total_due": 0.0,
-        "items": [],
-        "note": "No payment records are linked to this account yet.",
+        "currency": currency,
+        "total_due": float(total_remaining),
+        "items": items[:25],
+        "note": "" if items else "No outstanding club fee lines on your account.",
     }
 
 
 def _build_account_profile(request_user):
     return {
         "roles": _account_roles_for_user(request_user),
+        "display_role": _display_role_for_account(request_user),
         "pending_fees": _pending_fees_summary(request_user),
         "linked_parents": _linked_parent_accounts(request_user),
         "linked_children": _linked_children_accounts(request_user),
@@ -451,10 +516,10 @@ def _build_account_profile(request_user):
 
 
 def _send_registration_approved_email(user):
-    subject = "Your NetUp account was approved"
+    subject = "Your account was approved"
     body = (
         f"Hello {user.first_name or 'there'},\n\n"
-        "A club director has approved your registration. You can now sign in to NetUp "
+        "A club director has approved your registration. You can now sign in "
         "using the email address and password you chose when you registered.\n\n"
         "If you did not create an account, you can ignore this email.\n"
     )
@@ -498,10 +563,12 @@ def _serialize_team_member(membership):
 
 def _serialize_parent_relation(relation):
     return {
+        "id": relation.id,
         "parent": _serialize_basic_user(relation.parent),
         "player_id": relation.player_id,
         "is_legal_guardian": relation.is_legal_guardian,
         "is_active": relation.is_active,
+        "approval_status": relation.approval_status,
     }
 
 
@@ -551,7 +618,7 @@ def _get_team_notification_recipients(team, audience="all"):
         .values_list("user_id", flat=True)
     )
     parent_ids = set(
-        ParentPlayerRelation.objects.active()
+        ParentPlayerRelation.objects.approved()
         .filter(
             player__team_memberships__team=team,
             player__team_memberships__role=TeamRole.PLAYER,
@@ -638,14 +705,15 @@ def register(request):
         return JsonResponse({"errors": {"password": messages}}, status=400)
 
     try:
-        user = User.objects.create_user(
-            email=email,
-            password=password,
-            first_name=first_name,
-            last_name=last_name,
-            date_of_birth=date_of_birth,
-            verification_status=VerificationStatus.PENDING,
-        )
+        with transaction.atomic():
+            user = User.objects.create_user(
+                email=email,
+                password=password,
+                first_name=first_name,
+                last_name=last_name,
+                date_of_birth=date_of_birth,
+                verification_status=VerificationStatus.PENDING,
+            )
     except IntegrityError:
         return JsonResponse(
             {"errors": {"email": "An account with this email already exists."}},
@@ -882,6 +950,168 @@ def directors_reject_user(request, user_id):
     )
 
 
+def _serialize_user_directory_row(user):
+    return {
+        "id": user.id,
+        "email": user.email,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "verification_status": user.verification_status,
+        "role": _canonical_app_role(user) or None,
+        "assigned_account_role": user.assigned_account_role or None,
+        "is_staff": user.is_staff,
+    }
+
+
+@login_required
+@require_GET
+def directors_user_directory(request):
+    if not is_any_club_director(request.user):
+        return JsonResponse(
+            {"errors": {"authorization": "Only club directors can view the user directory."}},
+            status=403,
+        )
+
+    try:
+        limit = min(int(request.GET.get("limit", "500")), 2000)
+    except ValueError:
+        limit = 500
+
+    users = (
+        User.objects.filter(is_superuser=False)
+        .order_by("email", "id")[:limit]
+    )
+    rows = [_serialize_user_directory_row(u) for u in users]
+    return JsonResponse({"users": rows, "count": len(rows)})
+
+
+@login_required
+@csrf_exempt
+@require_POST
+def directors_set_user_account_role(request, user_id):
+    if not is_any_club_director(request.user):
+        return JsonResponse(
+            {"errors": {"authorization": "Only club directors can update account roles."}},
+            status=403,
+        )
+
+    target = get_object_or_404(User, pk=user_id)
+    if target.is_superuser:
+        return JsonResponse(
+            {"errors": {"user": "Cannot change roles for this account."}},
+            status=403,
+        )
+    if target.is_staff and not is_staff_user(request.user):
+        return JsonResponse(
+            {"errors": {"user": "Only platform staff can change roles for staff accounts."}},
+            status=403,
+        )
+
+    payload = _parse_json_request(request) or {}
+    raw = payload.get("role")
+    if raw is None:
+        raw = payload.get("assigned_account_role")
+    if raw is None or (isinstance(raw, str) and not str(raw).strip()):
+        return JsonResponse({"errors": {"role": "Role is required."}}, status=400)
+    new_role = str(raw).strip().lower()
+    if new_role not in AssignedAccountRole.values:
+        return JsonResponse(
+            {
+                "errors": {
+                    "role": "Must be one of: director, player, parent, coach.",
+                },
+            },
+            status=400,
+        )
+
+    manageable_club_ids = list(
+        Club.objects.filter(
+            memberships__user=request.user,
+            memberships__role=ClubRole.CLUB_DIRECTOR,
+            memberships__is_active=True,
+        )
+        .values_list("id", flat=True)
+        .distinct()
+    )
+
+    if target.id == request.user.id and new_role != AssignedAccountRole.DIRECTOR:
+        if ClubMembership.objects.active().filter(
+            user=target,
+            role=ClubRole.CLUB_DIRECTOR,
+        ).exists():
+            return JsonResponse(
+                {"errors": {"role": "You cannot remove your own director role."}},
+                status=403,
+            )
+
+    director_club = None
+    if new_role == AssignedAccountRole.DIRECTOR:
+        raw_club = payload.get("club_id")
+        club_id = None
+        if raw_club is not None and str(raw_club).strip() != "":
+            try:
+                club_id = int(raw_club)
+            except (TypeError, ValueError):
+                return JsonResponse(
+                    {"errors": {"club_id": "Invalid club id."}},
+                    status=400,
+                )
+        if club_id is None:
+            if len(manageable_club_ids) == 1:
+                club_id = manageable_club_ids[0]
+            else:
+                return JsonResponse(
+                    {
+                        "errors": {
+                            "club_id": (
+                                "club_id is required when promoting someone to director "
+                                "and you manage more than one club."
+                            ),
+                        },
+                    },
+                    status=400,
+                )
+        director_club = get_object_or_404(Club, pk=club_id)
+        if not can_manage_club(request.user, director_club):
+            return JsonResponse(
+                {"errors": {"club_id": "You cannot assign directors for this club."}},
+                status=403,
+            )
+
+    try:
+        with transaction.atomic():
+            if new_role == AssignedAccountRole.DIRECTOR:
+                ClubMembership.objects.assign_director(user=target, club=director_club)
+                User.objects.filter(pk=target.pk).update(
+                    assigned_account_role=AssignedAccountRole.DIRECTOR,
+                )
+            elif new_role in (
+                AssignedAccountRole.PLAYER,
+                AssignedAccountRole.PARENT,
+                AssignedAccountRole.COACH,
+            ):
+                for membership in ClubMembership.objects.active().filter(
+                    user=target,
+                    role=ClubRole.CLUB_DIRECTOR,
+                    club_id__in=manageable_club_ids,
+                ):
+                    ClubMembership.objects.deactivate(membership)
+                User.objects.filter(pk=target.pk).update(assigned_account_role=new_role)
+    except IntegrityError:
+        return JsonResponse(
+            {"errors": {"user": "Could not update role (data conflict). Try again."}},
+            status=400,
+        )
+
+    target.refresh_from_db()
+    canon = _canonical_app_role(target)
+    if canon and canon != (target.assigned_account_role or ""):
+        target.assigned_account_role = canon
+        target.save(update_fields=["assigned_account_role"])
+
+    return JsonResponse({"user": _serialize_basic_user(target)})
+
+
 @csrf_exempt
 @require_POST
 def password_reset_request(request):
@@ -1033,24 +1263,39 @@ def me(request):
     player_teams = [
         {
             **_serialize_team_summary(membership.team),
-            "can_manage_schedule": can_manage_team(request.user, membership.team),
-            "can_manage_training": can_manage_team(request.user, membership.team),
+            "can_manage_schedule": False,
+            "can_manage_training": False,
         }
         for membership in TeamMembership.objects.active()
         .filter(user=request.user, role=TeamRole.PLAYER)
         .select_related("team__club")
     ]
     children = []
-    parent_relations = ParentPlayerRelation.objects.active().filter(
-        parent=request.user,
-    ).select_related("player")
+    pending_parent_links = []
+    for rel in (
+        ParentPlayerRelation.objects.pending()
+        .filter(parent=request.user)
+        .select_related("player")
+    ):
+        pending_parent_links.append(
+            {
+                "relation_id": rel.id,
+                "player": _serialize_basic_user(rel.player),
+            }
+        )
+
+    parent_relations = (
+        ParentPlayerRelation.objects.approved()
+        .filter(parent=request.user)
+        .select_related("player")
+    )
 
     for relation in parent_relations:
         child_teams = [
             {
                 **_serialize_team_summary(membership.team),
-                "can_manage_schedule": can_manage_team(request.user, membership.team),
-                "can_manage_training": can_manage_team(request.user, membership.team),
+                "can_manage_schedule": False,
+                "can_manage_training": False,
             }
             for membership in TeamMembership.objects.active()
             .filter(user=relation.player, role=TeamRole.PLAYER)
@@ -1068,12 +1313,207 @@ def me(request):
             "user": _serialize_basic_user(request.user),
             "account_profile": _build_account_profile(request.user),
             "is_director_or_staff": is_any_club_director(request.user),
+            "viewer_is_staff": request.user.is_staff,
             "owned_clubs": owned_clubs,
             "director_teams": director_teams,
             "coached_teams": coached_teams,
             "player_teams": player_teams,
             "children": children,
+            "pending_parent_links": pending_parent_links,
         }
+    )
+
+
+def _director_managed_club_ids(user):
+    return set(
+        Club.objects.filter(
+            memberships__user=user,
+            memberships__role=ClubRole.CLUB_DIRECTOR,
+            memberships__is_active=True,
+        ).values_list("id", flat=True)
+    )
+
+
+def _pending_parent_links_queryset_for_director(user):
+    """Queryset of pending parent–player links for the director approval queue."""
+    base = ParentPlayerRelation.objects.pending().select_related("parent", "player")
+    club_ids = _director_managed_club_ids(user)
+
+    player_in_managed_club = TeamMembership.objects.filter(
+        user_id=OuterRef("player_id"),
+        is_active=True,
+        team__club_id__in=club_ids,
+    )
+    parent_in_managed_club = TeamMembership.objects.filter(
+        user_id=OuterRef("parent_id"),
+        is_active=True,
+        team__club_id__in=club_ids,
+    )
+    child_fees_in_managed_club = PlayerFeeRecord.objects.filter(
+        player_id=OuterRef("player_id"),
+        club_id__in=club_ids,
+    )
+
+    if club_ids:
+        return base.filter(
+            Q(Exists(player_in_managed_club))
+            | Q(Exists(parent_in_managed_club))
+            | Q(Exists(child_fees_in_managed_club)),
+        )
+
+    if is_staff_user(user):
+        p_tm = TeamMembership.objects.filter(user_id=OuterRef("player_id"), is_active=True)
+        par_tm = TeamMembership.objects.filter(user_id=OuterRef("parent_id"), is_active=True)
+        p_fee = PlayerFeeRecord.objects.filter(player_id=OuterRef("player_id"))
+        return base.filter(Q(Exists(p_tm)) | Q(Exists(par_tm)) | Q(Exists(p_fee)))
+
+    return ParentPlayerRelation.objects.none()
+
+
+def _director_may_resolve_parent_link_request(user, rel) -> bool:
+    """Whether this user may approve or reject the given pending link."""
+    if is_staff_user(user):
+        return (
+            TeamMembership.objects.active()
+            .filter(user_id__in=[rel.player_id, rel.parent_id])
+            .exists()
+            or PlayerFeeRecord.objects.filter(player_id=rel.player_id).exists()
+        )
+    club_ids = _director_managed_club_ids(user)
+    if not club_ids:
+        return False
+    if PlayerFeeRecord.objects.filter(player_id=rel.player_id, club_id__in=club_ids).exists():
+        return True
+    return TeamMembership.objects.active().filter(
+        user_id__in=[rel.player_id, rel.parent_id],
+        team__club_id__in=club_ids,
+    ).exists()
+
+
+def _context_team_for_parent_link_row(rel, club_ids, *, staff_viewer: bool):
+    """Club/team label for a pending row from memberships in scope."""
+    users = [rel.player_id, rel.parent_id]
+    qs = (
+        Team.objects.filter(memberships__user_id__in=users, memberships__is_active=True)
+        .select_related("club")
+        .distinct()
+    )
+    if club_ids:
+        qs = qs.filter(club_id__in=club_ids)
+    elif not staff_viewer:
+        return None
+    return qs.order_by("id").first()
+
+
+@login_required
+@require_GET
+def directors_pending_parent_links(request):
+    if not is_any_club_director(request.user):
+        return JsonResponse(
+            {"errors": {"authorization": "Only club directors can view parent link requests."}},
+            status=403,
+        )
+    rows = _pending_parent_links_queryset_for_director(request.user).order_by("id")
+    club_ids = _director_managed_club_ids(request.user)
+    staff = is_staff_user(request.user)
+    out = []
+    for rel in rows:
+        team = _context_team_for_parent_link_row(rel, club_ids, staff_viewer=staff)
+        out.append(
+            {
+                "relation": _serialize_parent_relation(rel),
+                "player": _serialize_basic_user(rel.player),
+                "club_name": team.club.name if team else None,
+                "team_name": team.name if team else None,
+            }
+        )
+    return JsonResponse({"requests": out})
+
+
+@login_required
+@csrf_exempt
+@require_POST
+def directors_resolve_parent_link(request, relation_id):
+    payload = _parse_json_request(request) or {}
+    action = (payload.get("action") or "").strip().lower()
+    if action not in ("approve", "reject"):
+        return JsonResponse(
+            {"errors": {"action": 'Send JSON {"action": "approve"} or {"action": "reject"}.'}},
+            status=400,
+        )
+    if not is_any_club_director(request.user):
+        return JsonResponse(
+            {"errors": {"authorization": "Only club directors can resolve parent link requests."}},
+            status=403,
+        )
+    rel = get_object_or_404(
+        ParentPlayerRelation.objects.pending().select_related("parent", "player"),
+        pk=relation_id,
+    )
+    if not _director_may_resolve_parent_link_request(request.user, rel):
+        return JsonResponse(
+            {"errors": {"authorization": "You cannot manage this link request."}},
+            status=403,
+        )
+    if action == "approve":
+        rel.approval_status = ParentLinkApprovalStatus.APPROVED
+        rel.save(update_fields=["approval_status"])
+    else:
+        rel.approval_status = ParentLinkApprovalStatus.REJECTED
+        rel.is_active = False
+        rel.save(update_fields=["approval_status", "is_active"])
+    return JsonResponse({"relation": _serialize_parent_relation(rel)})
+
+
+@login_required
+@csrf_exempt
+@require_POST
+def request_parent_link_to_player(request):
+    """Parent requests to be linked to a player (child); requires director approval."""
+    payload = _parse_json_request(request) or {}
+    raw = payload.get("player_id")
+    try:
+        player_id = int(raw)
+    except (TypeError, ValueError):
+        return JsonResponse({"errors": {"player_id": "A valid player user ID is required."}}, status=400)
+
+    player = get_object_or_404(User, pk=player_id)
+    if player.id == request.user.id:
+        return JsonResponse({"errors": {"player_id": "You cannot link to yourself as a parent."}}, status=400)
+
+    existing = ParentPlayerRelation.objects.filter(
+        parent=request.user,
+        player=player,
+    ).first()
+    if existing and existing.is_active and existing.approval_status == ParentLinkApprovalStatus.APPROVED:
+        return JsonResponse(
+            {"errors": {"player_id": "You are already linked to this player."}},
+            status=400,
+        )
+    if existing and existing.is_active and existing.approval_status == ParentLinkApprovalStatus.PENDING:
+        return JsonResponse(
+            {
+                "message": "Your link request is already pending director approval.",
+                "relation": _serialize_parent_relation(existing),
+            },
+            status=200,
+        )
+
+    relation, created = ParentPlayerRelation.objects.link(
+        parent=request.user,
+        player=player,
+        is_legal_guardian=bool(payload.get("is_legal_guardian", False)),
+        approval_status=ParentLinkApprovalStatus.PENDING,
+    )
+    return JsonResponse(
+        {
+            "message": (
+                "Your link request was submitted. A club director must approve it before you can manage that "
+                "player's payments."
+            ),
+            "relation": _serialize_parent_relation(relation),
+        },
+        status=201 if created else 200,
     )
 
 
@@ -1081,11 +1521,23 @@ def me(request):
 @require_GET
 def view_team_members(request, team_id):
     team = get_object_or_404(Team.objects.select_related("club"), pk=team_id)
+    if not can_view_team(request.user, team):
+        return JsonResponse({"errors": {"team": "You do not have access to this team."}}, status=403)
+
     memberships = (
         TeamMembership.objects.active()
         .filter(team=team)
         .select_related("user")
         .order_by("role", "user__first_name", "user__last_name", "user__email")
+    )
+    return JsonResponse(
+        {
+            "team": _serialize_team(team),
+            "members": [_serialize_team_member(m) for m in memberships],
+            "can_add_player": can_add_team_member(request.user, team, TeamRole.PLAYER),
+            "can_add_coach": can_add_team_member(request.user, team, TeamRole.COACH),
+            "can_manage_team": can_manage_team(request.user, team),
+        }
     )
 
 
@@ -1157,13 +1609,6 @@ def team_schedule(request, team_id):
             "can_manage_schedule": True,
             "week_start": week_start.isoformat(),
             "entries": [_serialize_schedule_entry(entry, week_start) for entry in saved_entries],
-        }
-    )
-
-    return JsonResponse(
-        {
-            "team": _serialize_team(team),
-            "members": [_serialize_team_member(membership) for membership in memberships],
         }
     )
 
@@ -1478,8 +1923,8 @@ def notifications(request):
 
     if team_id:
         try:
-            team = Team.objects.select_related("club").get(pk=team_id)
-        except Team.DoesNotExist:
+            team = Team.objects.select_related("club").get(pk=int(team_id))
+        except (Team.DoesNotExist, ValueError, TypeError):
             team = None
 
         if team and can_manage_team(request.user, team):
@@ -1597,11 +2042,26 @@ def add_team_member(request, team_id):
             status=403,
         )
 
+    if not coach_may_add_user_to_team_roster(request.user, team, target_user, role):
+        return JsonResponse(
+            {
+                "errors": {
+                    "authorization": (
+                        "Coaches may only add player accounts to the roster. "
+                        "Users assigned as parent or director cannot be added by a coach."
+                    )
+                },
+            },
+            status=403,
+        )
+
     membership = TeamMembership.objects.add_member(
         user=target_user,
         team=team,
         role=role,
     )
+    if role == TeamRole.PLAYER:
+        ensure_monthly_fee_for_new_player(team, target_user)
     return JsonResponse(
         {
             "message": "Team member added successfully.",
@@ -1751,19 +2211,32 @@ def add_parent_association(request, player_id):
             status=400,
         )
 
+    coach_or_director_adds_other_parent = can_manage_player(request.user, player) and request.user.id != parent.id
+    approval = (
+        ParentLinkApprovalStatus.APPROVED
+        if coach_or_director_adds_other_parent
+        else ParentLinkApprovalStatus.PENDING
+    )
     relation, created = ParentPlayerRelation.objects.link(
         parent=parent,
         player=player,
         is_legal_guardian=bool(payload.get("is_legal_guardian", False)),
+        approval_status=approval,
     )
+
+    if approval == ParentLinkApprovalStatus.PENDING:
+        msg = (
+            "Link request submitted. A club director must approve it before this parent can access the "
+            "player's payments."
+            if created
+            else "Parent association updated; approval is still pending."
+        )
+    else:
+        msg = "Parent linked successfully." if created else "Parent association saved successfully."
 
     return JsonResponse(
         {
-            "message": (
-                "Parent linked successfully."
-                if created
-                else "Parent association saved successfully."
-            ),
+            "message": msg,
             "relation": _serialize_parent_relation(relation),
         },
         status=201 if created else 200,
@@ -1939,7 +2412,7 @@ def create_team(request, club_id):
         return JsonResponse({"errors": {"body": "Invalid JSON."}}, status=400)
 
     club = get_object_or_404(Club, pk=club_id)
-    if not can_manage_club(request.user, club):
+    if not (can_manage_club(request.user, club) or is_club_coach(request.user, club)):
         return JsonResponse(
             {"errors": {"authorization": "You cannot create teams for this club."}},
             status=403,
@@ -1975,6 +2448,13 @@ def create_team(request, club_id):
         return JsonResponse(
             {"errors": {"name": "A team with this name already exists in this club."}},
             status=400,
+        )
+
+    if not can_manage_club(request.user, club):
+        TeamMembership.objects.add_member(
+            user=request.user,
+            team=team,
+            role=TeamRole.COACH,
         )
 
     return JsonResponse(

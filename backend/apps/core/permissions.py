@@ -1,6 +1,7 @@
 from django.utils import timezone
 
 from .models import (
+    AssignedAccountRole,
     ClubMembership,
     ClubRole,
     ParentPlayerRelation,
@@ -72,7 +73,7 @@ def is_parent_of_player(user, player_user) -> bool:
     if is_staff_user(user):
         return True
 
-    return ParentPlayerRelation.objects.active().filter(
+    return ParentPlayerRelation.objects.approved().filter(
         parent=user,
         player=player_user,
     ).exists()
@@ -82,7 +83,7 @@ def is_parent_of_team_player(user, team) -> bool:
     if is_staff_user(user):
         return True
 
-    return ParentPlayerRelation.objects.active().filter(
+    return ParentPlayerRelation.objects.approved().filter(
         parent=user,
         player__team_memberships__team=team,
         player__team_memberships__role=TeamRole.PLAYER,
@@ -94,7 +95,7 @@ def is_parent_of_player_on_team(user, player_user, team) -> bool:
     if is_staff_user(user):
         return True
 
-    return ParentPlayerRelation.objects.active().filter(
+    return ParentPlayerRelation.objects.approved().filter(
         parent=user,
         player=player_user,
         player__team_memberships__team=team,
@@ -109,6 +110,15 @@ def can_view_club(user, club) -> bool:
 
 def can_manage_club(user, club) -> bool:
     return is_club_director(user, club)
+
+
+def is_club_coach(user, club) -> bool:
+    """True if the user is an active coach on any team in this club (not necessarily club director)."""
+    return TeamMembership.objects.active().filter(
+        user=user,
+        team__club=club,
+        role=TeamRole.COACH,
+    ).exists()
 
 
 def can_view_team(user, team) -> bool:
@@ -142,6 +152,20 @@ def can_add_team_member(actor, team, role) -> bool:
         return role == TeamRole.PLAYER
 
     return False
+
+
+def coach_may_add_user_to_team_roster(actor, team, target_user, team_role: str) -> bool:
+    """Extra roster rule: coaches cannot add parent- or director-assigned users as players."""
+    if is_staff_user(actor) or is_club_director(actor, team.club):
+        return True
+    if team_role != TeamRole.PLAYER:
+        return False
+    if not is_team_coach(actor, team):
+        return True
+    assigned = (getattr(target_user, "assigned_account_role", None) or "").strip()
+    if assigned in (AssignedAccountRole.PARENT, AssignedAccountRole.DIRECTOR):
+        return False
+    return True
 
 
 def can_view_player(user, player_user) -> bool:
@@ -219,7 +243,7 @@ def is_player_parent_managed(player_user) -> bool:
     if is_user_adult(player_user):
         return False
 
-    if not ParentPlayerRelation.objects.active().filter(player=player_user).exists():
+    if not ParentPlayerRelation.objects.approved().filter(player=player_user).exists():
         return False
 
     policy = PlayerAccessPolicy.objects.for_player(player_user).first()
