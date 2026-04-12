@@ -63,15 +63,21 @@ async function authenticatedGet(path) {
     throw new Error("Cannot reach backend. Make sure Django is running on port 8000.");
   }
 
+  const text = await response.text();
   let payload = null;
-  try {
-    payload = await response.json();
-  } catch {
-    payload = null;
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      payload = { message: text.slice(0, 280) };
+    }
   }
 
   if (!response.ok) {
-    throw new Error(normalizeErrors(payload, "Request failed. Please try again."));
+    const fromApi = normalizeErrors(payload, "");
+    throw new Error(
+      fromApi || `Request failed (HTTP ${response.status}). Response was not JSON — is Django running on port 8000?`,
+    );
   }
 
   return payload;
@@ -223,6 +229,25 @@ export async function confirmTrainingSession(sessionId, playerId) {
 
 export async function fetchCoachTrainingSessionAttendance(sessionId) {
   return authenticatedGet(`/api/training-sessions/${sessionId}/attendance/`);
+}
+
+export async function fetchTeamAttendanceAnalytics(teamId, params = {}) {
+  const sp = new URLSearchParams();
+  if (params.startDate) {
+    sp.set("start_date", params.startDate);
+  }
+  if (params.endDate) {
+    sp.set("end_date", params.endDate);
+  }
+  if (params.grouping) {
+    sp.set("grouping", params.grouping);
+  }
+  if (params.lastNSessions != null && params.lastNSessions !== "") {
+    sp.set("last_n_sessions", String(params.lastNSessions));
+  }
+  const q = sp.toString();
+  const base = `/api/teams/${encodeURIComponent(String(teamId))}/attendance/trends/`;
+  return authenticatedGet(q ? `${base}?${q}` : base);
 }
 
 export async function fetchNotifications(teamId) {
