@@ -4,9 +4,12 @@ from django.contrib.auth.admin import UserAdmin
 from .models import (
     Club,
     ClubMembership,
+    DirectorPaymentAuditLog,
+    FeePaymentLedgerEntry,
     Notification,
     ParentPlayerRelation,
     PlayerAccessPolicy,
+    PlayerFeeRecord,
     PlayerProfile,
     TeamScheduleEntry,
     TrainingSession,
@@ -62,7 +65,7 @@ class CustomUserAdmin(UserAdmin):
 
 @admin.register(Club)
 class ClubAdmin(admin.ModelAdmin):
-    list_display = ("name", "short_name", "city", "country", "contact_email")
+    list_display = ("name", "short_name", "city", "country", "contact_email", "default_monthly_player_fee")
     search_fields = ("name", "short_name", "city", "country", "contact_email")
     list_filter = ("country", "city")
 
@@ -210,3 +213,24 @@ class TrainingSessionConfirmationAdmin(admin.ModelAdmin):
         "confirmed_by__email",
     )
     list_filter = ("training_session__team__club", "training_session__team", "training_session__scheduled_date")
+
+
+@admin.register(PlayerFeeRecord)
+class PlayerFeeRecordAdmin(admin.ModelAdmin):
+    list_display = ("club", "player", "amount_due", "amount_paid", "due_date", "currency", "description")
+    list_filter = ("club", "currency", "due_date")
+    search_fields = ("player__email", "player__first_name", "player__last_name", "description")
+    raw_id_fields = ("player", "team")
+
+
+@admin.register(FeePaymentLedgerEntry)
+class FeePaymentLedgerEntryAdmin(admin.ModelAdmin):
+    list_display = ("fee_record", "amount", "recorded_at", "note")
+    list_filter = ("recorded_at",)
+
+
+@admin.register(DirectorPaymentAuditLog)
+class DirectorPaymentAuditLogAdmin(admin.ModelAdmin):
+    list_display = ("created_at", "club", "actor", "action", "fee_record")
+    list_filter = ("club", "action", "created_at")
+    search_fields = ("detail", "actor__email")
