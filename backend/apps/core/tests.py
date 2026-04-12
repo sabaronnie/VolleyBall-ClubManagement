@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, time, timedelta
 from decimal import Decimal
 import json
 
@@ -26,6 +26,8 @@ from .models import (
     Team,
     TeamMembership,
     TeamRole,
+    TrainingSession,
+    TrainingSessionConfirmation,
     User,
     VerificationStatus,
 )
@@ -2452,6 +2454,159 @@ class ParentLinkDirectorQueueTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.json().get("requests", [])), 1)
+
+
+class ParentChildAttendanceHistoryTests(TestCase):
+    """EP-23: parent-only attendance history derived from training sessions and confirmations."""
+
+    def _setup_team_with_parent_child(self):
+        director = User.objects.create_user(email="att-dir@example.com", password="StrongPassword123!")
+        club = Club.objects.create_club(name="Att Club", director=director)
+        team = Team.objects.create(club=club, name="Att Team")
+        child = User.objects.create_user(
+            email="att-child@example.com",
+            password="StrongPassword123!",
+            assigned_account_role=AssignedAccountRole.PLAYER,
+        )
+        parent = User.objects.create_user(
+            email="att-par@example.com",
+            password="StrongPassword123!",
+            assigned_account_role=AssignedAccountRole.PARENT,
+        )
+        TeamMembership.objects.add_member(user=child, team=team, role=TeamRole.PLAYER)
+        ParentPlayerRelation.objects.link(parent=parent, player=child, approval_status=ParentLinkApprovalStatus.APPROVED)
+        return parent, child, team, club
+
+    def test_requires_authentication(self):
+        response = self.client.get(reverse("core:parent-child-attendance"))
+        self.assertEqual(response.status_code, 401)
+
+    def test_non_parent_forbidden(self):
+        director = User.objects.create_user(email="att-np-dir@example.com", password="StrongPassword123!")
+        Club.objects.create_club(name="Att NP Club", director=director)
+        token = generate_auth_token(director)
+        response = self.client.get(
+            reverse("core:parent-child-attendance"),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_parent_without_link_returns_empty_payload(self):
+        parent = User.objects.create_user(
+            email="att-nolink@example.com",
+            password="StrongPassword123!",
+            assigned_account_role=AssignedAccountRole.PARENT,
+        )
+        token = generate_auth_token(parent)
+        response = self.client.get(
+            reverse("core:parent-child-attendance"),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["records"], [])
+        self.assertEqual(data["linked_children"], [])
+        self.assertIn("message", data)
+
+    def test_parent_sees_attendance_for_linked_child(self):
+        parent, child, team, _club = self._setup_team_with_parent_child()
+        today = timezone.localdate()
+        past = today - timedelta(days=3)
+        future = today + timedelta(days=3)
+        session_past = TrainingSession.objects.create(
+            team=team,
+            title="Past practice",
+            session_type=TrainingSession.SessionType.TRAINING,
+            scheduled_date=past,
+            start_time=time(18, 0),
+            end_time=time(19, 30),
+            location="Main gym",
+        )
+        session_future = TrainingSession.objects.create(
+            team=team,
+            title="Future match",
+            session_type=TrainingSession.SessionType.MATCH,
+            scheduled_date=future,
+            start_time=time(10, 0),
+            end_time=time(12, 0),
+            opponent="Rivals",
+        )
+        TrainingSessionConfirmation.objects.create(
+            training_session=session_past,
+            player=child,
+            confirmed_by=parent,
+        )
+        token = generate_auth_token(parent)
+        response = self.client.get(
+            reverse("core:parent-child-attendance"),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(len(data["records"]), 2)
+        by_sid = {row["session_id"]: row for row in data["records"]}
+        self.assertEqual(by_sid[session_past.id]["attendance_status"], "present")
+        self.assertEqual(by_sid[session_past.id]["attendance_label"], "Present")
+        self.assertEqual(by_sid[session_future.id]["attendance_status"], "pending")
+        self.assertEqual(by_sid[session_future.id]["session_type"], "match")
+        self.assertEqual(by_sid[session_future.id]["child"]["id"], child.id)
+
+    def test_parent_does_not_see_unlinked_child_sessions(self):
+        director = User.objects.create_user(email="att-idor-dir@example.com", password="StrongPassword123!")
+        club = Club.objects.create_club(name="Att IDOR Club", director=director)
+        team = Team.objects.create(club=club, name="Att IDOR Team")
+        child_a = User.objects.create_user(
+            email="att-child-a@example.com",
+            password="StrongPassword123!",
+            assigned_account_role=AssignedAccountRole.PLAYER,
+        )
+        child_b = User.objects.create_user(
+            email="att-child-b@example.com",
+            password="StrongPassword123!",
+            assigned_account_role=AssignedAccountRole.PLAYER,
+        )
+        parent_a = User.objects.create_user(
+            email="att-par-a@example.com",
+            password="StrongPassword123!",
+            assigned_account_role=AssignedAccountRole.PARENT,
+        )
+        TeamMembership.objects.add_member(user=child_a, team=team, role=TeamRole.PLAYER)
+        TeamMembership.objects.add_member(user=child_b, team=team, role=TeamRole.PLAYER)
+        ParentPlayerRelation.objects.link(parent=parent_a, player=child_a, approval_status=ParentLinkApprovalStatus.APPROVED)
+        today = timezone.localdate()
+        session = TrainingSession.objects.create(
+            team=team,
+            title="Team session",
+            session_type=TrainingSession.SessionType.TRAINING,
+            scheduled_date=today,
+            start_time=time(18, 0),
+            end_time=time(19, 30),
+        )
+        TrainingSessionConfirmation.objects.create(
+            training_session=session,
+            player=child_b,
+            confirmed_by=parent_a,
+        )
+        token = generate_auth_token(parent_a)
+        response = self.client.get(
+            reverse("core:parent-child-attendance"),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        rows = response.json()["records"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["child"]["id"], child_a.id)
+        self.assertEqual(rows[0]["attendance_status"], "pending")
+
+    def test_empty_history_when_no_sessions(self):
+        parent, child, _team, _club = self._setup_team_with_parent_child()
+        token = generate_auth_token(parent)
+        response = self.client.get(
+            reverse("core:parent-child-attendance"),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["records"], [])
 
 
 class CoachRosterRbacTests(TestCase):

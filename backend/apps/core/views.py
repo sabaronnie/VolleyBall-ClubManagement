@@ -1,6 +1,7 @@
 import json
 import logging
 import secrets
+from collections import defaultdict
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
@@ -212,6 +213,18 @@ def _can_parent_confirm_training(parent_user, player_user, team):
 
 def _format_person_name(user):
     return f"{user.first_name} {user.last_name}".strip() or user.email
+
+
+def _parent_attendance_status(session, is_confirmed):
+    """Map session + confirmation to a stable status for parent history (EP-23)."""
+    if session.status == TrainingSession.Status.CANCELLED:
+        return "cancelled", "Cancelled"
+    if is_confirmed:
+        return "present", "Present"
+    today = timezone.localdate()
+    if session.scheduled_date >= today:
+        return "pending", "Pending"
+    return "absent", "Absent"
 
 
 def _serialize_training_session(session, viewer, team, player_memberships):
@@ -1320,6 +1333,113 @@ def me(request):
             "player_teams": player_teams,
             "children": children,
             "pending_parent_links": pending_parent_links,
+        }
+    )
+
+
+@login_required
+@require_GET
+def parent_child_attendance_history(request):
+    """EP-23: Linked children's training session attendance for assigned parent accounts only."""
+    assigned = (getattr(request.user, "assigned_account_role", None) or "").strip()
+    if assigned != AssignedAccountRole.PARENT:
+        return JsonResponse(
+            {"errors": {"authorization": "Only accounts with the parent role can view child attendance history."}},
+            status=403,
+        )
+
+    relations = list(
+        ParentPlayerRelation.objects.approved()
+        .filter(parent=request.user)
+        .select_related("player")
+        .order_by("player_id")
+    )
+    if not relations:
+        return JsonResponse(
+            {
+                "linked_children": [],
+                "records": [],
+                "message": "No approved parent link to a player account yet.",
+            }
+        )
+
+    child_users = [rel.player for rel in relations]
+    child_ids = [u.id for u in child_users]
+
+    memberships = (
+        TeamMembership.objects.active()
+        .filter(user_id__in=child_ids, role=TeamRole.PLAYER)
+        .values_list("user_id", "team_id")
+    )
+    teams_by_child = defaultdict(set)
+    for user_id, team_id in memberships:
+        teams_by_child[user_id].add(team_id)
+
+    all_team_ids = set()
+    for team_set in teams_by_child.values():
+        all_team_ids |= team_set
+    if not all_team_ids:
+        return JsonResponse(
+            {
+                "linked_children": [_serialize_basic_user(u) for u in child_users],
+                "records": [],
+                "message": "Linked players are not on an active team roster yet.",
+            }
+        )
+
+    sessions = (
+        TrainingSession.objects.filter(team_id__in=all_team_ids)
+        .select_related("team", "team__club")
+        .order_by("-scheduled_date", "-start_time", "-id")
+    )
+
+    session_list = list(sessions)
+    session_ids = [s.id for s in session_list]
+
+    confirmation_map = {}
+    if session_ids:
+        for conf in TrainingSessionConfirmation.objects.filter(
+            training_session_id__in=session_ids,
+            player_id__in=child_ids,
+        ).select_related("confirmed_by"):
+            confirmation_map[(conf.training_session_id, conf.player_id)] = conf
+
+    records = []
+    for session in session_list:
+        for child in child_users:
+            if session.team_id not in teams_by_child[child.id]:
+                continue
+            conf = confirmation_map.get((session.id, child.id))
+            status_code, status_label = _parent_attendance_status(session, conf is not None)
+            records.append(
+                {
+                    "session_id": session.id,
+                    "team": {
+                        "id": session.team_id,
+                        "name": session.team.name,
+                        "club_name": session.team.club.name if session.team.club_id else "",
+                    },
+                    "child": _serialize_basic_user(child),
+                    "scheduled_date": session.scheduled_date.isoformat(),
+                    "start_time": session.start_time.strftime("%H:%M"),
+                    "end_time": session.end_time.strftime("%H:%M"),
+                    "location": session.location,
+                    "title": session.title,
+                    "description": session.notes or "",
+                    "session_type": session.session_type,
+                    "session_type_label": session.get_session_type_display(),
+                    "session_status": session.status,
+                    "session_status_label": session.get_status_display(),
+                    "attendance_status": status_code,
+                    "attendance_label": status_label,
+                    "confirmed_at": conf.confirmed_at.isoformat() if conf else None,
+                }
+            )
+
+    return JsonResponse(
+        {
+            "linked_children": [_serialize_basic_user(u) for u in child_users],
+            "records": records,
         }
     )
 
