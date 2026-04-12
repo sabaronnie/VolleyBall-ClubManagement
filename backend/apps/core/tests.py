@@ -2950,6 +2950,308 @@ class CoachTrainingSessionAttendanceTests(TestCase):
         self.assertEqual(response.json()["session"]["summary"]["roster_size"], 2)
 
 
+class CoachTeamAttendanceAnalyticsTests(TestCase):
+    """EP-26: attendance rates over time for coaches / directors who can manage the team."""
+
+    def _fixture_teams(self):
+        director = User.objects.create_user(email="ep26-dir@example.com", password="StrongPassword123!")
+        club = Club.objects.create_club(name="EP26 Club", director=director)
+        team_a = Team.objects.create(club=club, name="EP26 Team A")
+        team_b = Team.objects.create(club=club, name="EP26 Team B")
+        coach = User.objects.create_user(
+            email="ep26-coach@example.com",
+            password="StrongPassword123!",
+            assigned_account_role=AssignedAccountRole.COACH,
+        )
+        other_coach = User.objects.create_user(
+            email="ep26-coach-b@example.com",
+            password="StrongPassword123!",
+            assigned_account_role=AssignedAccountRole.COACH,
+        )
+        player = User.objects.create_user(
+            email="ep26-player@example.com",
+            password="StrongPassword123!",
+            assigned_account_role=AssignedAccountRole.PLAYER,
+            date_of_birth=date(2007, 1, 1),
+        )
+        parent = User.objects.create_user(
+            email="ep26-parent@example.com",
+            password="StrongPassword123!",
+            assigned_account_role=AssignedAccountRole.PARENT,
+        )
+        TeamMembership.objects.add_member(user=coach, team=team_a, role=TeamRole.COACH)
+        TeamMembership.objects.add_member(user=other_coach, team=team_b, role=TeamRole.COACH)
+        TeamMembership.objects.add_member(user=player, team=team_a, role=TeamRole.PLAYER)
+        return {
+            "director": director,
+            "club": club,
+            "team_a": team_a,
+            "team_b": team_b,
+            "coach": coach,
+            "other_coach": other_coach,
+            "player": player,
+            "parent": parent,
+        }
+
+    def test_coach_can_view_analytics_for_own_team(self):
+        fx = self._fixture_teams()
+        today = timezone.localdate()
+        TrainingSession.objects.create(
+            team=fx["team_a"],
+            title="Old",
+            session_type=TrainingSession.SessionType.TRAINING,
+            scheduled_date=today - timedelta(days=3),
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+        )
+        token = generate_auth_token(fx["coach"])
+        url = reverse("core:team-attendance-trends", kwargs={"team_id": fx["team_a"].id})
+        response = self.client.get(
+            url,
+            {"start_date": (today - timedelta(days=30)).isoformat(), "end_date": today.isoformat()},
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["team"]["id"], fx["team_a"].id)
+        self.assertIn("players", body)
+        self.assertGreaterEqual(body["closed_sessions_in_scope"], 1)
+
+    def test_other_team_coach_forbidden(self):
+        fx = self._fixture_teams()
+        today = timezone.localdate()
+        TrainingSession.objects.create(
+            team=fx["team_a"],
+            title="A",
+            session_type=TrainingSession.SessionType.TRAINING,
+            scheduled_date=today - timedelta(days=1),
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+        )
+        token = generate_auth_token(fx["other_coach"])
+        url = reverse("core:team-attendance-trends", kwargs={"team_id": fx["team_a"].id})
+        response = self.client.get(url, HTTP_AUTHORIZATION=f"Bearer {token}")
+        self.assertEqual(response.status_code, 403)
+
+    def test_unauthenticated_rejected(self):
+        fx = self._fixture_teams()
+        url = reverse("core:team-attendance-trends", kwargs={"team_id": fx["team_a"].id})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 401)
+
+    def test_player_forbidden(self):
+        fx = self._fixture_teams()
+        token = generate_auth_token(fx["player"])
+        url = reverse("core:team-attendance-trends", kwargs={"team_id": fx["team_a"].id})
+        response = self.client.get(url, HTTP_AUTHORIZATION=f"Bearer {token}")
+        self.assertEqual(response.status_code, 403)
+
+    def test_parent_forbidden(self):
+        fx = self._fixture_teams()
+        token = generate_auth_token(fx["parent"])
+        url = reverse("core:team-attendance-trends", kwargs={"team_id": fx["team_a"].id})
+        response = self.client.get(url, HTTP_AUTHORIZATION=f"Bearer {token}")
+        self.assertEqual(response.status_code, 403)
+
+    def test_director_can_view_without_coach_membership(self):
+        fx = self._fixture_teams()
+        today = timezone.localdate()
+        TrainingSession.objects.create(
+            team=fx["team_a"],
+            title="P",
+            session_type=TrainingSession.SessionType.TRAINING,
+            scheduled_date=today - timedelta(days=2),
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+        )
+        token = generate_auth_token(fx["director"])
+        url = reverse("core:team-attendance-trends", kwargs={"team_id": fx["team_a"].id})
+        response = self.client.get(url, HTTP_AUTHORIZATION=f"Bearer {token}")
+        self.assertEqual(response.status_code, 200)
+
+    def test_attendance_percentages_correct(self):
+        fx = self._fixture_teams()
+        today = timezone.localdate()
+        s1 = TrainingSession.objects.create(
+            team=fx["team_a"],
+            title="S1",
+            session_type=TrainingSession.SessionType.TRAINING,
+            scheduled_date=today - timedelta(days=10),
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+        )
+        s2 = TrainingSession.objects.create(
+            team=fx["team_a"],
+            title="S2",
+            session_type=TrainingSession.SessionType.TRAINING,
+            scheduled_date=today - timedelta(days=5),
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+        )
+        TrainingSessionConfirmation.objects.create(
+            training_session=s1,
+            player=fx["player"],
+            confirmed_by=fx["player"],
+        )
+        token = generate_auth_token(fx["coach"])
+        url = reverse("core:team-attendance-trends", kwargs={"team_id": fx["team_a"].id})
+        response = self.client.get(
+            url,
+            {
+                "start_date": (today - timedelta(days=30)).isoformat(),
+                "end_date": today.isoformat(),
+            },
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        players = response.json()["players"]
+        row = next(p for p in players if p["player_id"] == fx["player"].id)
+        self.assertEqual(row["sessions_counted_for_rate"], 2)
+        self.assertEqual(row["attended_sessions"], 1)
+        self.assertEqual(row["absent_sessions"], 1)
+        self.assertEqual(row["attendance_rate_percent"], 50.0)
+
+    def test_empty_closed_sessions_handled(self):
+        fx = self._fixture_teams()
+        today = timezone.localdate()
+        TrainingSession.objects.create(
+            team=fx["team_a"],
+            title="Future only",
+            session_type=TrainingSession.SessionType.TRAINING,
+            scheduled_date=today + timedelta(days=1),
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+        )
+        token = generate_auth_token(fx["coach"])
+        url = reverse("core:team-attendance-trends", kwargs={"team_id": fx["team_a"].id})
+        response = self.client.get(
+            url,
+            {
+                "start_date": today.isoformat(),
+                "end_date": (today + timedelta(days=7)).isoformat(),
+            },
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["closed_sessions_in_scope"], 0)
+        row = next(p for p in body["players"] if p["player_id"] == fx["player"].id)
+        self.assertIsNone(row["attendance_rate_percent"])
+        self.assertEqual(row["pending_sessions"], 1)
+
+    def test_pending_future_excluded_from_rate_denominator(self):
+        fx = self._fixture_teams()
+        today = timezone.localdate()
+        past = TrainingSession.objects.create(
+            team=fx["team_a"],
+            title="Past",
+            session_type=TrainingSession.SessionType.TRAINING,
+            scheduled_date=today - timedelta(days=4),
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+        )
+        TrainingSession.objects.create(
+            team=fx["team_a"],
+            title="Future",
+            session_type=TrainingSession.SessionType.TRAINING,
+            scheduled_date=today + timedelta(days=3),
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+        )
+        TrainingSessionConfirmation.objects.create(
+            training_session=past,
+            player=fx["player"],
+            confirmed_by=fx["player"],
+        )
+        token = generate_auth_token(fx["coach"])
+        url = reverse("core:team-attendance-trends", kwargs={"team_id": fx["team_a"].id})
+        response = self.client.get(
+            url,
+            {
+                "start_date": (today - timedelta(days=30)).isoformat(),
+                "end_date": (today + timedelta(days=30)).isoformat(),
+            },
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        row = next(p for p in response.json()["players"] if p["player_id"] == fx["player"].id)
+        self.assertEqual(row["sessions_counted_for_rate"], 1)
+        self.assertEqual(row["attended_sessions"], 1)
+        self.assertEqual(row["absent_sessions"], 0)
+        self.assertEqual(row["attendance_rate_percent"], 100.0)
+        self.assertEqual(row["pending_sessions"], 1)
+
+    def test_date_range_filters_sessions(self):
+        fx = self._fixture_teams()
+        today = timezone.localdate()
+        inside = TrainingSession.objects.create(
+            team=fx["team_a"],
+            title="Inside",
+            session_type=TrainingSession.SessionType.TRAINING,
+            scheduled_date=today - timedelta(days=5),
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+        )
+        TrainingSession.objects.create(
+            team=fx["team_a"],
+            title="Outside",
+            session_type=TrainingSession.SessionType.TRAINING,
+            scheduled_date=today - timedelta(days=40),
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+        )
+        TrainingSessionConfirmation.objects.create(
+            training_session=inside,
+            player=fx["player"],
+            confirmed_by=fx["player"],
+        )
+        token = generate_auth_token(fx["coach"])
+        url = reverse("core:team-attendance-trends", kwargs={"team_id": fx["team_a"].id})
+        response = self.client.get(
+            url,
+            {
+                "start_date": (today - timedelta(days=14)).isoformat(),
+                "end_date": today.isoformat(),
+            },
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["closed_sessions_in_scope"], 1)
+
+    def test_last_n_sessions_limits_closed_set(self):
+        fx = self._fixture_teams()
+        today = timezone.localdate()
+        for off in (20, 15, 10):
+            TrainingSession.objects.create(
+                team=fx["team_a"],
+                title=f"T{off}",
+                session_type=TrainingSession.SessionType.TRAINING,
+                scheduled_date=today - timedelta(days=off),
+                start_time=time(18, 0),
+                end_time=time(19, 0),
+            )
+        token = generate_auth_token(fx["coach"])
+        url = reverse("core:team-attendance-trends", kwargs={"team_id": fx["team_a"].id})
+        response = self.client.get(
+            url,
+            {
+                "start_date": (today - timedelta(days=60)).isoformat(),
+                "end_date": today.isoformat(),
+                "last_n_sessions": "2",
+            },
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["closed_sessions_in_scope"], 2)
+
+    def test_invalid_start_date_400(self):
+        fx = self._fixture_teams()
+        token = generate_auth_token(fx["coach"])
+        url = reverse("core:team-attendance-trends", kwargs={"team_id": fx["team_a"].id})
+        response = self.client.get(url, {"start_date": "not-a-date"}, HTTP_AUTHORIZATION=f"Bearer {token}")
+        self.assertEqual(response.status_code, 400)
+
+
 class CoachRosterRbacTests(TestCase):
     def test_coach_cannot_add_parent_assigned_user_as_player(self):
         director = User.objects.create_user(email="rb-dir@example.com", password="StrongPassword123!")

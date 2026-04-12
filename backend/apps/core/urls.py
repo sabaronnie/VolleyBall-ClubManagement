@@ -32,6 +32,7 @@ from .views import (
     register,
     send_team_notification,
     set_team_captain,
+    team_attendance_analytics,
     team_schedule,
     team_training_sessions,
     update_team_details,
@@ -196,6 +197,11 @@ urlpatterns = [
         "teams/<int:team_id>/training-sessions/",
         team_training_sessions,
         name="team-training-sessions",
+    ),
+    path(
+        "teams/<int:team_id>/attendance/trends/",
+        team_attendance_analytics,
+        name="team-attendance-trends",
     ),
     path(
         "training-sessions/<int:session_id>/",

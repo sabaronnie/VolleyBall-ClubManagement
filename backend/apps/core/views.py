@@ -2144,6 +2144,295 @@ def coach_training_session_attendance(request, session_id):
     )
 
 
+def _build_team_attendance_analytics(
+    team,
+    *,
+    start_date: date,
+    end_date: date,
+    grouping,
+    last_n_sessions,
+):
+    """
+    EP-26 — Coach attendance analytics (rates over time).
+
+    Rules (aligned with _parent_attendance_status / EP-23–EP-25):
+    - Cancelled sessions are excluded from every statistic.
+    - A session counts toward attendance_rate only when it is **closed**: scheduled_date
+      is strictly before today's local date.
+    - Closed sessions with a confirmation count as attended; without confirmation as absent.
+    - Sessions on or after today: without confirmation are **pending** (excluded from the
+      rate). With confirmation they are **present** in the UI sense but still excluded
+      from attendance_rate_percent until the session date has passed (engagement rate is
+      based on completed session days only).
+    - Future sessions without a confirmation are **pending** and excluded from the rate.
+
+    attendance_rate_percent = 100 * attended / (attended + absent) when (attended + absent) > 0;
+    otherwise null (no closed sessions in scope for that player).
+    """
+    today = timezone.localdate()
+
+    sessions_qs = (
+        TrainingSession.objects.filter(team=team)
+        .exclude(status=TrainingSession.Status.CANCELLED)
+        .filter(scheduled_date__gte=start_date, scheduled_date__lte=end_date)
+        .order_by("scheduled_date", "start_time", "id")
+    )
+    sessions = list(sessions_qs)
+    session_ids = [s.id for s in sessions]
+
+    player_memberships = list(
+        TeamMembership.objects.active()
+        .filter(team=team, role=TeamRole.PLAYER)
+        .select_related("user")
+        .order_by("user__first_name", "user__last_name", "user__email")
+    )
+    players = [m.user for m in player_memberships]
+
+    conf_pairs = set()
+    if session_ids:
+        conf_pairs = set(
+            TrainingSessionConfirmation.objects.filter(training_session_id__in=session_ids).values_list(
+                "training_session_id",
+                "player_id",
+            )
+        )
+
+    closed_sessions = [s for s in sessions if s.scheduled_date < today]
+    if last_n_sessions is not None and last_n_sessions > 0:
+        closed_sessions = sorted(closed_sessions, key=lambda s: (s.scheduled_date, s.start_time, s.id), reverse=True)[
+            : last_n_sessions
+        ]
+        closed_sessions.sort(key=lambda s: (s.scheduled_date, s.start_time, s.id))
+        closed_session_ids = {s.id for s in closed_sessions}
+        sessions_for_players = [s for s in sessions if s.id in closed_session_ids or s.scheduled_date >= today]
+    else:
+        sessions_for_players = sessions
+        closed_session_ids = {s.id for s in closed_sessions}
+
+    def classify(session, player_id):
+        is_confirmed = (session.id, player_id) in conf_pairs
+        return _parent_attendance_status(session, is_confirmed)[0]
+
+    players_out = []
+    total_attended_slots = 0
+    total_closed_slots = 0
+
+    for membership in player_memberships:
+        player = membership.user
+        attended = absent = pending = upcoming_confirmed = 0
+        sessions_non_cancelled = 0
+        for session in sessions_for_players:
+            if session.status == TrainingSession.Status.CANCELLED:
+                continue
+            sessions_non_cancelled += 1
+            code = classify(session, player.id)
+            if session.scheduled_date < today:
+                if code == "present":
+                    attended += 1
+                elif code == "absent":
+                    absent += 1
+            elif code == "pending":
+                pending += 1
+            elif code == "present":
+                upcoming_confirmed += 1
+
+        counted = attended + absent
+        rate = (100.0 * attended / counted) if counted else None
+
+        for session in closed_sessions:
+            code = classify(session, player.id)
+            if code == "present":
+                total_attended_slots += 1
+                total_closed_slots += 1
+            elif code == "absent":
+                total_closed_slots += 1
+
+        if rate is None:
+            flag = "insufficient_data"
+        elif counted < 2:
+            flag = "insufficient_data"
+        elif rate < 65.0:
+            flag = "low"
+        elif rate >= 85.0:
+            flag = "high"
+        else:
+            flag = "medium"
+
+        players_out.append(
+            {
+                "player_id": player.id,
+                "player_name": _format_person_name(player),
+                "sessions_in_date_range": sessions_non_cancelled,
+                "sessions_counted_for_rate": counted,
+                "attended_sessions": attended,
+                "absent_sessions": absent,
+                "pending_sessions": pending,
+                "upcoming_confirmed_sessions": upcoming_confirmed,
+                "attendance_rate_percent": None if rate is None else round(rate, 2),
+                "engagement_flag": flag,
+            }
+        )
+
+    team_avg = (
+        (100.0 * total_attended_slots / total_closed_slots) if total_closed_slots else None
+    )
+
+    trend = []
+    grouping = (grouping or "week").strip().lower()
+    if grouping not in ("week", "session"):
+        grouping = "week"
+
+    if grouping == "session":
+        for session in closed_sessions:
+            present_slots = 0
+            absent_slots = 0
+            for membership in player_memberships:
+                code = classify(session, membership.user_id)
+                if code == "present":
+                    present_slots += 1
+                elif code == "absent":
+                    absent_slots += 1
+            denom = present_slots + absent_slots
+            trend.append(
+                {
+                    "period_key": f"session-{session.id}",
+                    "period_start": session.scheduled_date.isoformat(),
+                    "period_end": session.scheduled_date.isoformat(),
+                    "label": session.scheduled_date.isoformat(),
+                    "session_id": session.id,
+                    "session_title": session.title,
+                    "closed_sessions": 1,
+                    "present_slots": present_slots,
+                    "absent_slots": absent_slots,
+                    "attendance_rate_percent": (
+                        round(100.0 * present_slots / denom, 2) if denom else None
+                    ),
+                }
+            )
+    else:
+        week_buckets = defaultdict(lambda: {"present": 0, "absent": 0, "sessions": 0})
+        for session in closed_sessions:
+            iso = session.scheduled_date.isocalendar()
+            key = (iso[0], iso[1])
+            week_buckets[key]["sessions"] += 1
+            for membership in player_memberships:
+                code = classify(session, membership.user_id)
+                if code == "present":
+                    week_buckets[key]["present"] += 1
+                elif code == "absent":
+                    week_buckets[key]["absent"] += 1
+
+        for (year, week) in sorted(week_buckets.keys()):
+            bucket = week_buckets[(year, week)]
+            monday = date.fromisocalendar(year, week, 1)
+            sunday = monday + timedelta(days=6)
+            denom = bucket["present"] + bucket["absent"]
+            trend.append(
+                {
+                    "period_key": f"{year}-W{week:02d}",
+                    "period_start": monday.isoformat(),
+                    "period_end": sunday.isoformat(),
+                    "label": f"{year} W{week:02d}",
+                    "closed_sessions": bucket["sessions"],
+                    "present_slots": bucket["present"],
+                    "absent_slots": bucket["absent"],
+                    "attendance_rate_percent": (
+                        round(100.0 * bucket["present"] / denom, 2) if denom else None
+                    ),
+                }
+            )
+
+    return {
+        "team": _serialize_team(team),
+        "filters": {
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "grouping": grouping,
+            "last_n_sessions": last_n_sessions,
+        },
+        "calculation_summary": (
+            "Cancelled sessions are excluded. Attendance % uses only sessions with "
+            "scheduled_date before today: confirmations count as attended; no confirmation "
+            "counts as absent. Sessions on today or in the future are excluded from the "
+            "percentage; unconfirmed ones are counted as pending."
+        ),
+        "today": today.isoformat(),
+        "roster_player_count": len(players),
+        "sessions_total_non_cancelled": len([s for s in sessions if s.status != TrainingSession.Status.CANCELLED]),
+        "closed_sessions_in_scope": len(closed_sessions),
+        "team_average_attendance_rate_percent": (
+            None if team_avg is None else round(team_avg, 2)
+        ),
+        "players": players_out,
+        "trend": trend,
+    }
+
+
+@login_required
+@require_GET
+def team_attendance_analytics(request, team_id):
+    """EP-26: attendance rates over time for coaches / directors who can manage the team."""
+    team = get_object_or_404(Team.objects.select_related("club"), pk=team_id)
+    if not can_manage_team(request.user, team):
+        return JsonResponse(
+            {
+                "errors": {
+                    "authorization": (
+                        "Only coaches or club directors for this team can view attendance analytics."
+                    )
+                }
+            },
+            status=403,
+        )
+
+    today = timezone.localdate()
+    start_date = end_date = last_n_sessions = None
+
+    start_raw = (request.GET.get("start_date") or "").strip()
+    end_raw = (request.GET.get("end_date") or "").strip()
+    if start_raw:
+        try:
+            start_date = date.fromisoformat(start_raw)
+        except ValueError:
+            return JsonResponse({"errors": {"start_date": "Use YYYY-MM-DD."}}, status=400)
+    if end_raw:
+        try:
+            end_date = date.fromisoformat(end_raw)
+        except ValueError:
+            return JsonResponse({"errors": {"end_date": "Use YYYY-MM-DD."}}, status=400)
+
+    last_n_raw = (request.GET.get("last_n_sessions") or "").strip()
+    if last_n_raw:
+        try:
+            last_n_sessions = int(last_n_raw)
+        except ValueError:
+            return JsonResponse({"errors": {"last_n_sessions": "Must be an integer."}}, status=400)
+        if last_n_sessions < 1 or last_n_sessions > 500:
+            return JsonResponse(
+                {"errors": {"last_n_sessions": "Use a value between 1 and 500."}},
+                status=400,
+            )
+
+    grouping = (request.GET.get("grouping") or "week").strip()
+
+    eff_start = start_date if start_date is not None else today - timedelta(days=84)
+    eff_end = end_date if end_date is not None else today
+    if eff_start > eff_end:
+        return JsonResponse(
+            {"errors": {"start_date": "start_date must be on or before end_date."}},
+            status=400,
+        )
+
+    payload = _build_team_attendance_analytics(
+        team,
+        start_date=eff_start,
+        end_date=eff_end,
+        grouping=grouping,
+        last_n_sessions=last_n_sessions,
+    )
+    return JsonResponse(payload)
+
+
 @login_required
 @require_GET
 def notifications(request):
