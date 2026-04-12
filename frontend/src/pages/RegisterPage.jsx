@@ -76,8 +76,8 @@ export default function RegisterPage() {
           </div>
           <img src="/auth/logo-ball.png" alt="" />
         </div>
-        <h2>Sign in</h2>
-        <p>Join NetUp and manage your volleyball experience</p>
+        <h2>Register</h2>
+        <p>Create an account so a club director can approve your registration.</p>
 
         <form className="auth-form auth-form--register" onSubmit={onSubmit}>
           <label htmlFor="register-first-name">First Name</label>
