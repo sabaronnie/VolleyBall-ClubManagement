@@ -55,9 +55,7 @@ function buildTeamAssignmentLines(me) {
 
 export default function ClubWorkspaceLayout({
   activeTab,
-  trainingEnabled = true,
   beforeIconActions = null,
-  notificationsSlot = null,
   heroOverlay = false,
   children,
 }) {
@@ -68,6 +66,28 @@ export default function ClubWorkspaceLayout({
   const [profileMe, setProfileMe] = useState(null);
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState("");
+  const [directorToolsVisible, setDirectorToolsVisible] = useState(false);
+
+  useEffect(() => {
+    if (!localStorage.getItem(AUTH_TOKEN_KEY)) {
+      return undefined;
+    }
+    let cancelled = false;
+    fetchCurrentUser()
+      .then((me) => {
+        if (!cancelled) {
+          setDirectorToolsVisible(Boolean(me.is_director_or_staff));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDirectorToolsVisible(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const loadProfile = useCallback(async () => {
     setProfileLoading(true);
@@ -150,26 +170,8 @@ export default function ClubWorkspaceLayout({
             <button type="button" className={tabClass("schedule")} onClick={() => navigate("/schedule")}>
               Schedule
             </button>
-            <button type="button" className={tabClass("statistics")} onClick={() => navigate("/teams")}>
+            <button type="button" className={tabClass("statistics")} disabled>
               Statistics
-            </button>
-            <button
-              type="button"
-              className={tabClass("training")}
-              disabled={!trainingEnabled}
-              onClick={() => {
-                if (trainingEnabled) {
-                  navigate("/training");
-                }
-              }}
-            >
-              Training
-            </button>
-            <button type="button" className="vc-dash-tab" disabled title="Coming soon">
-              Tapes
-            </button>
-            <button type="button" className="vc-dash-tab" disabled title="Coming soon">
-              Tournament
             </button>
           </nav>
         </div>
@@ -178,13 +180,6 @@ export default function ClubWorkspaceLayout({
           <button type="button" className="vc-dash-icon-btn" aria-label="Settings" disabled>
             {"\u2699\uFE0F"}
           </button>
-          {notificationsSlot ? (
-            <div className="vc-dash-notification-slot nav-notification-stack">{notificationsSlot}</div>
-          ) : (
-            <button type="button" className="vc-dash-icon-btn" aria-label="Notifications">
-              {"\u{1F514}"}
-            </button>
-          )}
           <div className="vc-account-wrap" ref={accountWrapRef}>
             <button
               type="button"
@@ -201,6 +196,50 @@ export default function ClubWorkspaceLayout({
                 <button type="button" role="menuitem" onClick={openProfile}>
                   Profile
                 </button>
+                {directorToolsVisible ? (
+                  <>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setAccountMenuOpen(false);
+                        navigate("/director/payments");
+                      }}
+                    >
+                      Payments & fees
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setAccountMenuOpen(false);
+                        navigate("/director/users");
+                      }}
+                    >
+                      Registration
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setAccountMenuOpen(false);
+                        navigate("/director/teams");
+                      }}
+                    >
+                      Teams & roster
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setAccountMenuOpen(false);
+                        navigate("/payments");
+                      }}
+                    >
+                      Payment schedule
+                    </button>
+                  </>
+                ) : null}
                 <button
                   type="button"
                   role="menuitem"
@@ -242,6 +281,13 @@ export default function ClubWorkspaceLayout({
                 const user = profileMe?.user || profileUser;
                 const account = profileMe?.account_profile || {};
                 const roles = account.roles || [];
+                const roleLine =
+                  account.display_role ||
+                  (roles.length ? roles.map((r) => formatRoleWord(r)).join(", ") : "") ||
+                  (user.assigned_account_role
+                    ? `${formatRoleWord(user.assigned_account_role)} (roster link pending)`
+                    : "") ||
+                  "\u2014";
                 const teamLines = buildTeamAssignmentLines(profileMe);
                 const parents = account.linked_parents || [];
                 const children = account.linked_children || [];
@@ -261,6 +307,13 @@ export default function ClubWorkspaceLayout({
                       <dd>{user.email || "\u2014"}</dd>
                     </div>
                     <div>
+                      <dt>User ID</dt>
+                      <dd>
+                        <code className="vc-profile-user-id">{user.id != null ? String(user.id) : "\u2014"}</code>
+                        <span className="vc-profile-note">Your unique account number.</span>
+                      </dd>
+                    </div>
+                    <div>
                       <dt>Date of birth</dt>
                       <dd>
                         {user.date_of_birth
@@ -277,20 +330,8 @@ export default function ClubWorkspaceLayout({
                       <dd>{formatVerificationStatus(user.verification_status)}</dd>
                     </div>
                     <div>
-                      <dt>Role at approval</dt>
-                      <dd>
-                        {user.assigned_account_role
-                          ? formatRoleWord(user.assigned_account_role)
-                          : "\u2014"}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Roles in the club</dt>
-                      <dd>
-                        {roles.length
-                          ? roles.map((r) => formatRoleWord(r)).join(", ")
-                          : "No director, coach, player, or parent role assigned yet."}
-                      </dd>
+                      <dt>Role</dt>
+                      <dd>{roleLine}</dd>
                     </div>
                     <div>
                       <dt>Teams</dt>
@@ -380,7 +421,13 @@ export default function ClubWorkspaceLayout({
   );
 }
 
-export function ClubTeamSelect({ teams, activeTeamId, onChangeTeam, selectId }) {
+export function ClubTeamSelect({
+  teams,
+  activeTeamId,
+  onChangeTeam,
+  selectId,
+  includeAllTeamsOption = true,
+}) {
   return (
     <div className="vc-dash-team-field">
       <label className="vc-dash-team-field__label" htmlFor={selectId}>
@@ -391,21 +438,24 @@ export function ClubTeamSelect({ teams, activeTeamId, onChangeTeam, selectId }) 
         className="vc-dash-team-select"
         value={activeTeamId}
         onChange={(event) => {
-          const selected = teams.find((team) => String(team.id) === event.target.value);
+          const val = event.target.value;
+          if (val === "__all__") {
+            onChangeTeam({ id: "__all__", name: "View all", canManageSchedule: false, canManageTraining: false });
+            return;
+          }
+          const selected = teams.find((team) => String(team.id) === val);
           if (selected) {
             onChangeTeam(selected);
           }
         }}
       >
-        {teams.length ? (
-          teams.map((team) => (
-            <option key={team.id} value={String(team.id)}>
-              {team.name}
-            </option>
-          ))
-        ) : (
-          <option value="">No teams linked</option>
-        )}
+        <option value="">Select a team…</option>
+        {includeAllTeamsOption && teams.length > 1 ? <option value="__all__">View all</option> : null}
+        {teams.map((team) => (
+          <option key={team.id} value={String(team.id)}>
+            {team.name}
+          </option>
+        ))}
       </select>
     </div>
   );

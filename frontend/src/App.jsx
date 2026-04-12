@@ -1,28 +1,29 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  cancelTrainingSession,
-  clearTrainingSession,
-  confirmTrainingSession,
-  createTeamTrainingSession,
   fetchCurrentUser,
-  fetchNotifications,
+  fetchPlayerTeamPayments,
   fetchTeamSchedule,
-  fetchTeamTrainingSessions,
-  markNotificationsRead,
   saveTeamSchedule,
-  sendTeamNotification,
-  updateTrainingSession,
 } from "./api";
 import ClubWorkspaceLayout, { ClubTeamSelect } from "./components/ClubWorkspaceLayout";
 import { navigate } from "./navigation";
 import DashboardPage from "./pages/DashboardPage";
+import DirectorPaymentLogsPage from "./pages/DirectorPaymentLogsPage";
+import DirectorPaymentsPage from "./pages/DirectorPaymentsPage";
+import DirectorTeamSetupPage from "./pages/DirectorTeamSetupPage";
 import DirectorUserManagementPage from "./pages/DirectorUserManagementPage";
+import CoachPaymentsPage from "./pages/CoachPaymentsPage";
 import LoginPage from "./pages/LoginPage";
+import MemberHubPage from "./pages/MemberHubPage";
+import MyFeesPage from "./pages/MyFeesPage";
+import TeamRosterPage from "./pages/TeamRosterPage";
 import { ForgotPasswordPage, ResetPasswordPage } from "./pages/PasswordResetPages";
 import RegisterPage from "./pages/RegisterPage";
 
 const AUTH_TOKEN_KEY = "netup.auth.token";
 const ACTIVE_TEAM_KEY = "netup.active.team";
+
+const ALL_TEAMS_COLORS = ["#0d9488", "#2563eb", "#d97706", "#7c3aed", "#db2777", "#4d7c0f", "#0891b2", "#ea580c"];
 
 const homepageImages = {
   hero: "/homepage/hero-volleyball.png",
@@ -204,14 +205,6 @@ function usePathname() {
   return pathname;
 }
 
-function formatCoachName(team) {
-  if (team.coachNames?.length) {
-    return team.coachNames.join(", ");
-  }
-
-  return "No coach assigned";
-}
-
 function buildRelatedTeams(payload) {
   const teamsById = new Map();
   const attachChildToTeam = (existingTeam, child) => {
@@ -237,6 +230,7 @@ function buildRelatedTeams(payload) {
       id: team.id,
       name: team.name,
       source: "Director",
+      scheduleTier: "elevated",
       coachNames: team.coach_names || [],
       primaryCoachName: team.primary_coach_name || null,
       playerCount: team.player_count ?? null,
@@ -254,6 +248,7 @@ function buildRelatedTeams(payload) {
       id: team.id,
       name: team.name,
       source: "Coach",
+      scheduleTier: "elevated",
       coachNames: team.coach_names || [],
       primaryCoachName: team.primary_coach_name || null,
       playerCount: team.player_count ?? null,
@@ -272,6 +267,7 @@ function buildRelatedTeams(payload) {
         id: team.id,
         name: team.name,
         source: "Player",
+        scheduleTier: "member",
         coachNames: team.coach_names || [],
         primaryCoachName: team.primary_coach_name || null,
         playerCount: team.player_count ?? null,
@@ -292,6 +288,7 @@ function buildRelatedTeams(payload) {
           id: team.id,
           name: team.name,
           source: `${child.user?.first_name || "Child"}'s team`,
+          scheduleTier: "member",
           coachNames: team.coach_names || [],
           primaryCoachName: team.primary_coach_name || null,
           playerCount: team.player_count ?? null,
@@ -309,18 +306,6 @@ function buildRelatedTeams(payload) {
   });
 
   return Array.from(teamsById.values());
-}
-
-function buildChildTeamLabel(linkedChildren) {
-  if (!linkedChildren?.length) {
-    return "";
-  }
-
-  if (linkedChildren.length === 1) {
-    return `${linkedChildren[0].firstName}'s team`;
-  }
-
-  return linkedChildren.map((child) => child.firstName).join(", ");
 }
 
 function getWeekLabel(weekStartIso) {
@@ -371,44 +356,6 @@ function emptyScheduleEntry() {
   };
 }
 
-function todayIsoDate() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function emptyTrainingDraft() {
-  return {
-    title: "",
-    session_type: "training",
-    scheduled_date: todayIsoDate(),
-    start_time: "18:00",
-    end_time: "19:30",
-    location: "",
-    opponent: "",
-    match_type: "friendly",
-    notes: "",
-  };
-}
-
-function emptyManualNotificationDraft() {
-  return {
-    audience: "all",
-    title: "",
-    message: "",
-  };
-}
-
-function formatTrainingDateLabel(dateValue) {
-  if (!dateValue) {
-    return "";
-  }
-
-  return new Intl.DateTimeFormat("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  }).format(new Date(`${dateValue}T00:00:00`));
-}
-
 const SCHEDULE_START_HOUR = 6;
 const SCHEDULE_END_HOUR = 21;
 const SCHEDULE_HOUR_HEIGHT = 64;
@@ -452,37 +399,122 @@ function normalizeScheduleEntries(entries) {
       start_time: entry.start_time,
       end_time: entry.end_time,
       location: entry.location || "",
+      teamColor: entry.teamColor,
+      teamName: entry.teamName,
+      isTrainingSession: entry.isTrainingSession,
     }));
 }
 
-function mapTrainingSessionsToScheduleEntries(weekStartIso, sessions) {
-  if (!weekStartIso) {
+function scheduleIntervalsOverlap(startA, endA, startB, endB) {
+  return startA < endB && endA > startB;
+}
+
+function clusterOverlappingScheduleEntries(dayEntries) {
+  const n = dayEntries.length;
+  if (!n) {
     return [];
   }
+  const adj = Array.from({ length: n }, () => []);
+  for (let i = 0; i < n; i += 1) {
+    for (let j = i + 1; j < n; j += 1) {
+      const a = dayEntries[i];
+      const b = dayEntries[j];
+      const as = parseTimeToMinutes(a.start_time);
+      const ae = parseTimeToMinutes(a.end_time);
+      const bs = parseTimeToMinutes(b.start_time);
+      const be = parseTimeToMinutes(b.end_time);
+      if (scheduleIntervalsOverlap(as, ae, bs, be)) {
+        adj[i].push(j);
+        adj[j].push(i);
+      }
+    }
+  }
+  const visited = new Set();
+  const clusters = [];
+  for (let i = 0; i < n; i += 1) {
+    if (visited.has(i)) {
+      continue;
+    }
+    const stack = [i];
+    const indices = [];
+    visited.add(i);
+    while (stack.length) {
+      const u = stack.pop();
+      indices.push(u);
+      for (const v of adj[u]) {
+        if (!visited.has(v)) {
+          visited.add(v);
+          stack.push(v);
+        }
+      }
+    }
+    clusters.push(indices.map((idx) => dayEntries[idx]));
+  }
+  return clusters;
+}
 
-  const weekStartDate = new Date(`${weekStartIso}T00:00:00`);
-  const weekEndDate = new Date(weekStartDate);
-  weekEndDate.setDate(weekStartDate.getDate() + 6);
+function layoutScheduleOverlapCluster(cluster) {
+  const layout = new Map();
+  if (!cluster.length) {
+    return layout;
+  }
+  const sorted = [...cluster].sort(
+    (a, b) => parseTimeToMinutes(a.start_time) - parseTimeToMinutes(b.start_time),
+  );
+  const active = [];
+  let maxCols = 0;
+  for (const e of sorted) {
+    const start = parseTimeToMinutes(e.start_time);
+    const end = parseTimeToMinutes(e.end_time);
+    for (let i = active.length - 1; i >= 0; i -= 1) {
+      if (active[i].end <= start) {
+        active.splice(i, 1);
+      }
+    }
+    const usedCols = new Set(active.map((row) => row.col));
+    let col = 0;
+    while (usedCols.has(col)) {
+      col += 1;
+    }
+    active.push({ end, col });
+    maxCols = Math.max(maxCols, active.length);
+    layout.set(e.id, { col, maxCols: 0 });
+  }
+  for (const e of cluster) {
+    const row = layout.get(e.id);
+    if (row) {
+      row.maxCols = maxCols;
+    }
+  }
+  return layout;
+}
 
-  return (sessions || [])
-    .filter((session) => session.status !== "cancelled")
-    .filter((session) => {
-      const sessionDate = new Date(`${session.scheduled_date}T00:00:00`);
-      return sessionDate >= weekStartDate && sessionDate <= weekEndDate;
-    })
-    .map((session) => {
-      const sessionDate = new Date(`${session.scheduled_date}T00:00:00`);
-      return {
-        id: `training-${session.id}`,
-        trainingSessionId: session.id,
-        isTrainingSession: true,
-        weekday: (sessionDate.getDay() + 6) % 7,
-        activity_name: session.title,
-        start_time: session.start_time,
-        end_time: session.end_time,
-        location: session.location || "",
-      };
-    });
+function buildScheduleOverlapLayoutByEntryId(dayEntries) {
+  const combined = new Map();
+  if (!dayEntries?.length) {
+    return combined;
+  }
+  for (const cluster of clusterOverlappingScheduleEntries(dayEntries)) {
+    const partial = layoutScheduleOverlapCluster(cluster);
+    partial.forEach((value, key) => combined.set(key, value));
+  }
+  return combined;
+}
+
+function scheduleEventHorizontalStyle(layout, entryId) {
+  const slot = layout.get(entryId);
+  const maxCols = slot?.maxCols ?? 1;
+  const col = slot?.col ?? 0;
+  if (maxCols <= 1) {
+    return { left: "0.55rem", right: "0.55rem" };
+  }
+  const gapPx = 4;
+  const slice = `(100% - 1.1rem - ${(maxCols - 1) * gapPx}px) / ${maxCols}`;
+  return {
+    left: `calc(0.55rem + ${col} * (${slice} + ${gapPx}px))`,
+    width: `calc(${slice})`,
+    right: "auto",
+  };
 }
 
 function ScheduleEditor({ draftEntries, onChangeEntry, onAddEntry, onRemoveEntry, onSave, isSaving }) {
@@ -490,8 +522,8 @@ function ScheduleEditor({ draftEntries, onChangeEntry, onAddEntry, onRemoveEntry
     <section className="schedule-editor-card">
       <div className="schedule-editor-card__top">
         <div>
-          <p className="teams-page-kicker">Coach Controls</p>
-          <h2>Edit Team Schedule</h2>
+          <p className="teams-page-kicker" style={{ fontSize: "0.7rem", marginBottom: "0.15rem" }}>Coach Controls</p>
+          <h2 style={{ fontSize: "1.1rem", margin: 0 }}>Edit Team Schedule</h2>
         </div>
         <button type="button" className="team-card__button team-card__button--ghost" onClick={onAddEntry}>
           Add Activity
@@ -551,7 +583,9 @@ function ScheduleEditor({ draftEntries, onChangeEntry, onAddEntry, onRemoveEntry
   );
 }
 
-function WeeklyScheduleBoard({ weekStart, entries, onSelectEntry }) {
+function WeeklyScheduleBoard({ weekStart, entries, onSelectEntry, legendTeams }) {
+  const [hoverTip, setHoverTip] = useState(null);
+
   const weekDays = buildWeekDays(weekStart);
   const scheduleHours = buildScheduleHours();
   const scheduleRows = buildScheduleRows();
@@ -569,11 +603,43 @@ function WeeklyScheduleBoard({ weekStart, entries, onSelectEntry }) {
     );
   });
 
+  const soleLegendColor = legendTeams?.length === 1 ? legendTeams[0].color : null;
+
   return (
     <section className="weekly-schedule-card">
       <div className="weekly-schedule-card__header">
         <h2>Week of {getWeekLabel(weekStart)}</h2>
       </div>
+
+      {legendTeams?.length ? (
+        <div
+          aria-label="Team colors"
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: "0.65rem",
+            margin: "0.35rem 0 1rem",
+            fontSize: "0.85rem",
+            color: "#4a5563",
+          }}
+        >
+          {legendTeams.map((row) => (
+            <span key={row.id} style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}>
+              <span
+                style={{
+                  width: 12,
+                  height: 12,
+                  borderRadius: 3,
+                  backgroundColor: row.color,
+                  flexShrink: 0,
+                }}
+                aria-hidden="true"
+              />
+              {row.name}
+            </span>
+          ))}
+        </div>
+      ) : null}
 
       <div className="weekly-schedule-layout">
         <div className="weekly-schedule-times">
@@ -585,11 +651,17 @@ function WeeklyScheduleBoard({ weekStart, entries, onSelectEntry }) {
         </div>
 
         <div className="weekly-schedule-grid">
-          {weekDays.map((day) => (
+          {weekDays.map((day) => {
+            const dayEntries = entriesByWeekday[day.weekday] || [];
+            const overlapLayout = buildScheduleOverlapLayoutByEntryId(dayEntries);
+            return (
             <div key={day.iso} className="weekly-schedule-day">
-              <header className="weekly-schedule-day__header">
+              <header
+                className="weekly-schedule-day__header"
+                style={soleLegendColor ? { borderTop: `3px solid ${soleLegendColor}` } : undefined}
+              >
                 <span>{day.label}</span>
-                <strong>{day.dayNumber}</strong>
+                <strong style={soleLegendColor ? { color: soleLegendColor } : undefined}>{day.dayNumber}</strong>
               </header>
 
               <div className="weekly-schedule-day__track">
@@ -597,21 +669,47 @@ function WeeklyScheduleBoard({ weekStart, entries, onSelectEntry }) {
                   <div key={`${day.iso}-${hour}`} className="weekly-schedule-day__hour-line" />
                 ))}
 
-                {entriesByWeekday[day.weekday]?.map((entry) => {
+                {dayEntries.map((entry) => {
                   const startMinutes = parseTimeToMinutes(entry.start_time);
                   const endMinutes = parseTimeToMinutes(entry.end_time);
                   const clippedStartMinutes = Math.max(startMinutes, SCHEDULE_START_HOUR * 60);
                   const clippedEndMinutes = Math.min(endMinutes, SCHEDULE_END_HOUR * 60);
                   const minutesFromTop = clippedStartMinutes - SCHEDULE_START_HOUR * 60;
                   const durationMinutes = Math.max(clippedEndMinutes - clippedStartMinutes, 30);
+                  const hz = scheduleEventHorizontalStyle(overlapLayout, entry.id);
+                  const entryKey = String(entry.id);
+                  const isHoverTarget = hoverTip && String(hoverTip.entry?.id) === entryKey;
 
                   return (
                     <article
                       key={entry.id}
-                      className={`schedule-event${entry.isTrainingSession ? " schedule-event--interactive" : ""}`}
+                      className={`schedule-event${entry.isTrainingSession ? " schedule-event--interactive" : ""}${
+                        entry.teamColor ? " schedule-event--team-colored" : ""
+                      }`}
                       style={{
                         top: `${(minutesFromTop / 60) * SCHEDULE_HOUR_HEIGHT}px`,
                         height: `${(durationMinutes / 60) * SCHEDULE_HOUR_HEIGHT}px`,
+                        boxSizing: "border-box",
+                        zIndex: isHoverTarget ? 12 : 2,
+                        ...hz,
+                        ...(entry.teamColor
+                          ? {
+                              "--event-team-bg": entry.teamColor,
+                            }
+                          : {}),
+                      }}
+                      onPointerEnter={(e) => {
+                        setHoverTip({ entry, x: e.clientX + 12, y: e.clientY + 10 });
+                      }}
+                      onPointerMove={(e) => {
+                        setHoverTip((prev) =>
+                          prev && String(prev.entry?.id) === entryKey
+                            ? { entry, x: e.clientX + 12, y: e.clientY + 10 }
+                            : prev,
+                        );
+                      }}
+                      onPointerLeave={() => {
+                        setHoverTip((prev) => (prev && String(prev.entry?.id) === entryKey ? null : prev));
                       }}
                       onClick={() => {
                         if (onSelectEntry) {
@@ -623,708 +721,178 @@ function WeeklyScheduleBoard({ weekStart, entries, onSelectEntry }) {
                         {entry.start_time} - {entry.end_time}
                       </span>
                       <strong>{entry.activity_name}</strong>
+                      {entry.teamName ? (
+                        <span style={{ display: "block", fontSize: "0.72rem", opacity: 0.9 }}>{entry.teamName}</span>
+                      ) : null}
                       {entry.location ? <em>{entry.location}</em> : null}
                     </article>
                   );
                 })}
 
-                {entriesByWeekday[day.weekday]?.length ? null : (
+                {dayEntries.length ? null : (
                   <p className="weekly-schedule-day__empty">No activity</p>
                 )}
               </div>
             </div>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function TrainingManagerForm({
-  draft,
-  onChange,
-  onSave,
-  onReset,
-  onCancelEdit,
-  isSaving,
-  editingSessionId,
-}) {
-  const isMatch = draft.session_type === "match";
-
-  return (
-    <section className="training-form-card">
-      <div className="training-form-card__top">
-        <div>
-          <p className="teams-page-kicker">Session</p>
-          <h3>{editingSessionId ? "Edit Session" : "Create Session"}</h3>
-        </div>
-        <div className="training-form-card__top-actions">
-          {editingSessionId ? (
-            <button
-              type="button"
-              className="team-card__button team-card__button--ghost"
-              onClick={onCancelEdit}
-            >
-              Cancel
-            </button>
-          ) : null}
-          <button
-            type="button"
-            className="team-card__button team-card__button--ghost"
-            onClick={onReset}
-          >
-            New Session
-          </button>
-        </div>
-      </div>
-
-      <div className="session-type-switch" role="tablist" aria-label="Session type">
-        <button
-          type="button"
-          className={`session-type-switch__button${!isMatch ? " is-active" : ""}`}
-          onClick={() => {
-            onChange("session_type", "training");
-            onChange("opponent", "");
-            onChange("match_type", "friendly");
-          }}
-        >
-          Practice
-        </button>
-        <button
-          type="button"
-          className={`session-type-switch__button${isMatch ? " is-active" : ""}`}
-          onClick={() => {
-            onChange("session_type", "match");
-            onChange("match_type", draft.match_type || "friendly");
-          }}
-        >
-          Match
-        </button>
-      </div>
-
-      <div className="training-form-grid">
-        <input
-          type="text"
-          placeholder={isMatch ? "Match title" : "Practice title"}
-          value={draft.title}
-          onChange={(event) => onChange("title", event.target.value)}
-        />
-        <input
-          type="date"
-          value={draft.scheduled_date}
-          onChange={(event) => onChange("scheduled_date", event.target.value)}
-        />
-        <input
-          type="time"
-          value={draft.start_time}
-          onChange={(event) => onChange("start_time", event.target.value)}
-        />
-        <input
-          type="time"
-          value={draft.end_time}
-          onChange={(event) => onChange("end_time", event.target.value)}
-        />
-        <input
-          type="text"
-          placeholder="Location"
-          value={draft.location}
-          onChange={(event) => onChange("location", event.target.value)}
-        />
-        {isMatch ? (
-          <>
-            <input
-              type="text"
-              placeholder="Opponent"
-              value={draft.opponent}
-              onChange={(event) => onChange("opponent", event.target.value)}
-            />
-            <select
-              value={draft.match_type}
-              onChange={(event) => onChange("match_type", event.target.value)}
-            >
-              <option value="friendly">Friendly</option>
-              <option value="league">League</option>
-              <option value="tournament">Tournament</option>
-              <option value="scrimmage">Scrimmage</option>
-            </select>
-          </>
-        ) : null}
-        <textarea
-          placeholder="Notes for the team"
-          value={draft.notes}
-          onChange={(event) => onChange("notes", event.target.value)}
-        />
-      </div>
-
-      <div className="training-form-card__actions">
-        <button type="button" className="team-card__button" onClick={onSave} disabled={isSaving}>
-          {isSaving ? "Saving..." : editingSessionId ? "Save Changes" : "Create Session"}
-        </button>
-      </div>
-    </section>
-  );
-}
-
-function TrainingSessionList({
-  sessions,
-  canManageTraining,
-  onEdit,
-  onCancel,
-  onClear,
-  onConfirm,
-  confirmingKey,
-  hideCancelled,
-  selectedChildId,
-}) {
-  const [expandedSessionIds, setExpandedSessionIds] = useState({});
-  const visibleSessions = hideCancelled
-    ? sessions.filter((session) => session.status !== "cancelled")
-    : sessions;
-
-  const toggleConfirmationDetails = (sessionId) => {
-    setExpandedSessionIds((currentState) => ({
-      ...currentState,
-      [sessionId]: !currentState[sessionId],
-    }));
-  };
-
-  if (!visibleSessions.length) {
-    return (
-      <section className="training-empty-state">
-        <h3>No scheduled training</h3>
-        <p>There are no scheduled training sessions for this team right now.</p>
-      </section>
-    );
-  }
-
-  return (
-    <div className="training-session-list">
-      {visibleSessions.map((session) => (
-        <article key={session.id} className="training-session-card">
-          <div className="training-session-card__top">
-            <div>
-              <div className="training-session-card__meta">
-                <span>{session.session_type_label}</span>
-                <span>{formatTrainingDateLabel(session.scheduled_date)}</span>
-                <span>{session.start_time} - {session.end_time}</span>
-              </div>
-              <h3>{session.title}</h3>
-              <p className="training-session-card__location">
-                {session.location || "Location to be confirmed"}
-              </p>
-              {session.session_type === "match" && session.opponent ? (
-                <p className="training-session-card__match-meta">
-                  Opponent: {session.opponent}
-                  {session.match_type_label ? ` | ${session.match_type_label}` : ""}
-                </p>
-              ) : null}
-              {session.notes ? (
-                <p className="training-session-card__notes">{session.notes}</p>
-              ) : null}
-            </div>
-
-            <div className="training-session-card__status">
-              <span
-                className={`training-status-badge${
-                  session.status === "cancelled" ? " training-status-badge--cancelled" : ""
-                }`}
-              >
-                {session.status_label}
-              </span>
-            </div>
-          </div>
-
-          {canManageTraining ? (
-            <div className="training-confirmation-summary">
-              <span>Confirmed: {session.confirmed_count ?? 0}</span>
-              <span>Not confirmed: {session.pending_count ?? 0}</span>
-              <button
-                type="button"
-                className="training-summary-toggle"
-                onClick={() => toggleConfirmationDetails(session.id)}
-              >
-                {expandedSessionIds[session.id] ? "Hide Confirmation" : "Show Confirmation"}
-              </button>
-            </div>
-          ) : null}
-
-          {canManageTraining ? (
-            <div className="training-session-card__manager-actions">
-              <button
-                type="button"
-                className="team-card__button team-card__button--ghost"
-                onClick={() => onEdit(session)}
-              >
-                Edit
-              </button>
-              {session.can_cancel ? (
-                <button
-                  type="button"
-                  className="training-cancel-button"
-                  onClick={() => onCancel(session.id)}
-                >
-                  Cancel Session
-                </button>
-              ) : null}
-              {session.status === "cancelled" ? (
-                <button
-                  type="button"
-                  className="training-clear-button"
-                  onClick={() => onClear(session.id)}
-                >
-                  Clear
-                </button>
-              ) : null}
-            </div>
-          ) : null}
-
-          {!canManageTraining ? (
-            <div className="training-confirmation-summary">
-              <span>Confirmed: {session.confirmed_count ?? 0}</span>
-              <span>Not confirmed: {session.pending_count ?? 0}</span>
-              <button
-                type="button"
-                className="training-summary-toggle"
-                onClick={() => toggleConfirmationDetails(session.id)}
-              >
-                {expandedSessionIds[session.id] ? "Hide Confirmation" : "Show Confirmation"}
-              </button>
-            </div>
-          ) : null}
-
-          {canManageTraining && expandedSessionIds[session.id] ? (
-            <div className="training-attendance-table">
-              <div className="training-attendance-table__header">
-                <span>Player</span>
-                <span>Status</span>
-              </div>
-              {session.player_confirmations.map((confirmation) => (
-                <div key={`${session.id}-${confirmation.player_id}`} className="training-attendance-table__row">
-                  <span>{confirmation.player_name}</span>
-                  <strong>
-                    {confirmation.is_confirmed
-                      ? `Confirmed${confirmation.confirmed_by_name ? ` by ${confirmation.confirmed_by_name}` : ""}`
-                      : "Not confirmed"}
-                  </strong>
-                </div>
-              ))}
-            </div>
-          ) : null}
-
-          {!canManageTraining && expandedSessionIds[session.id] ? (
-            <div className="training-confirm-list">
-              {session.player_confirmations
-                .filter((confirmation) => {
-                  if (selectedChildId && confirmation.player_id !== selectedChildId) {
-                    return false;
-                  }
-
-                  return confirmation.can_confirm || confirmation.is_confirmed;
-                })
-                .map((confirmation) => {
-                  const confirmKey = `${session.id}-${confirmation.player_id}`;
-                  return (
-                    <div key={confirmKey} className="training-confirm-list__item">
-                      <div>
-                        <strong>{confirmation.player_name}</strong>
-                        <p>
-                          {confirmation.is_confirmed
-                            ? "Attendance confirmed"
-                            : "Attendance not confirmed yet"}
-                        </p>
-                      </div>
-                      {confirmation.can_confirm && !confirmation.is_confirmed ? (
-                        <button
-                          type="button"
-                          className="team-card__button"
-                          onClick={() => onConfirm(session.id, confirmation.player_id)}
-                          disabled={confirmingKey === confirmKey}
-                        >
-                          {confirmingKey === confirmKey ? "Confirming..." : "Confirm"}
-                        </button>
-                      ) : null}
-                    </div>
-                  );
-                })}
-            </div>
-          ) : null}
-        </article>
-      ))}
-    </div>
-  );
-}
-
-function TrainingPage({
-  team,
-  trainingState,
-  onLoad,
-  onDraftChange,
-  onCreateOrUpdate,
-  onEditSession,
-  onResetDraft,
-  onCancelEdit,
-  onCancelSession,
-  onClearSession,
-  onConfirmSession,
-  selectedChildId,
-  onSelectChild,
-}) {
-  const state = trainingState || {};
-  const sessions = state.sessions || [];
-  const draft = state.draft || emptyTrainingDraft();
-
-  return (
-    <section className="teams-page-shell">
-      <header className="teams-page-header">
-        <div className="teams-page-heading">
-          <p className="teams-page-kicker">Training</p>
-          <h1>{team ? `${team.name} Sessions` : "Team Sessions"}</h1>
-          <p className="teams-page-subtitle">
-            {team?.canManageTraining
-              ? "Create practice or match sessions, update details, and track confirmations for this team."
-              : team
-                ? `See the scheduled sessions for ${team.name}.`
-                : "Choose a team to view its sessions."}
-          </p>
-          {team?.linkedChildren?.length > 1 ? (
-            <div className="child-context-picker">
-              <label htmlFor="training-child-select">Child</label>
-              <select
-                id="training-child-select"
-                value={selectedChildId || ""}
-                onChange={(event) => onSelectChild(event.target.value)}
-              >
-                {team.linkedChildren.map((child) => (
-                  <option key={child.id} value={String(child.id)}>
-                    {child.fullName}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ) : null}
-        </div>
-      </header>
-
-      <section className="team-training-panel">
-      <div className="team-training-panel__header">
-        <button
-          type="button"
-          className="team-card__button team-card__button--ghost"
-          onClick={onLoad}
-          disabled={Boolean(state.loading)}
-        >
-          {state.loading ? "Refreshing..." : "Refresh"}
-        </button>
-      </div>
-
-      {state.error ? <p className="schedule-feedback schedule-feedback--error">{state.error}</p> : null}
-
-      {team.canManageTraining ? (
-        <TrainingManagerForm
-          draft={draft}
-          onChange={onDraftChange}
-          onSave={onCreateOrUpdate}
-          onReset={onResetDraft}
-          onCancelEdit={onCancelEdit}
-          isSaving={Boolean(state.saving)}
-          editingSessionId={state.editingSessionId}
-        />
-      ) : null}
-
-      <TrainingSessionList
-        sessions={sessions}
-        canManageTraining={Boolean(team?.canManageTraining)}
-        onEdit={onEditSession}
-        onCancel={onCancelSession}
-        onClear={onClearSession}
-        onConfirm={onConfirmSession}
-        confirmingKey={state.confirmingKey}
-        hideCancelled={!team?.canManageTraining}
-        selectedChildId={selectedChildId}
-      />
-      </section>
-    </section>
-  );
-}
-
-function ScheduleTrainingSessions({ sessions, onEditSession }) {
-  const visibleSessions = (sessions || []).filter((session) => session.status !== "cancelled");
-
-  if (!visibleSessions.length) {
-    return null;
-  }
-
-  return (
-    <section className="schedule-training-card">
-      <div className="schedule-training-card__top">
-        <div>
-          <p className="teams-page-kicker">Sessions</p>
-          <h2>Edit Sessions</h2>
-        </div>
-      </div>
-
-      <div className="schedule-training-list">
-        {visibleSessions.map((session) => (
-          <article key={session.id} className="schedule-training-item">
-            <div>
-              <strong>{session.title}</strong>
-              <p>
-                {formatTrainingDateLabel(session.scheduled_date)} · {session.start_time} - {session.end_time}
-                {session.location ? ` · ${session.location}` : ""}
-              </p>
-            </div>
-
-            <button
-              type="button"
-              className="team-card__button team-card__button--ghost"
-              onClick={() => onEditSession(session)}
-            >
-              Edit In Training
-            </button>
-          </article>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function NotificationBell({
-  unreadCount,
-  isOpen,
-  onToggle,
-  isLight,
-  className = "",
-}) {
-  return (
-    <button
-      type="button"
-      className={`notification-bell${isLight ? " notification-bell--light" : ""}${
-        isOpen ? " is-open" : ""
-      }${className ? ` ${className}` : ""}`}
-      onClick={onToggle}
-      aria-label="Notifications"
-    >
-      <span className="notification-bell__icon" aria-hidden="true">
-        {"\u{1F514}"}
-      </span>
-      {unreadCount ? <span className="notification-bell__badge">{unreadCount}</span> : null}
-    </button>
-  );
-}
-
-function NotificationPanel({
-  isOpen,
-  notifications,
-  sentNotifications,
-  loading,
-  error,
-  canSend,
-  manualDraft,
-  onManualChange,
-  onManualSend,
-  isSendingManual,
-}) {
-  if (!isOpen) {
-    return null;
-  }
-
-  const unreadNotifications = (notifications || []).filter((item) => !item.is_read);
-  const readNotifications = (notifications || []).filter((item) => item.is_read);
-  const sentItems = sentNotifications || [];
-  const hasAnyNotifications =
-    unreadNotifications.length || readNotifications.length || sentItems.length;
-
-  return (
-    <section className="notification-panel">
-      <div className="notification-panel__header">
-        <div>
-          <p className="teams-page-kicker">Notifications</p>
-          <h2>Inbox</h2>
-        </div>
-      </div>
-
-      {canSend ? (
-        <div className="notification-compose-card">
-          <h3>Send Notification</h3>
-          <div className="notification-compose-grid">
-            <select
-              value={manualDraft.audience}
-              onChange={(event) => onManualChange("audience", event.target.value)}
-            >
-              <option value="all">Players and parents</option>
-              <option value="players">Players only</option>
-              <option value="parents">Parents only</option>
-            </select>
-            <input
-              type="text"
-              placeholder="Notification title"
-              value={manualDraft.title}
-              onChange={(event) => onManualChange("title", event.target.value)}
-            />
-            <textarea
-              placeholder="Write your message"
-              value={manualDraft.message}
-              onChange={(event) => onManualChange("message", event.target.value)}
-            />
-          </div>
-          <div className="notification-compose-card__actions">
-            <button
-              type="button"
-              className="team-card__button"
-              onClick={onManualSend}
-              disabled={isSendingManual}
-            >
-              {isSendingManual ? "Sending..." : "Send Notification"}
-            </button>
-          </div>
-        </div>
-      ) : null}
-
-      {loading ? <p className="notification-empty-state">Loading notifications...</p> : null}
-      {error ? <p className="schedule-feedback schedule-feedback--error">{error}</p> : null}
-      {!loading && !hasAnyNotifications ? (
-        <p className="notification-empty-state">No notifications.</p>
-      ) : null}
-
-      {!loading && hasAnyNotifications ? (
-        <div className="notification-list">
-          {unreadNotifications.length ? (
-            <>
-              <div className="notification-divider">
-                <span>New Messages</span>
-              </div>
-              {unreadNotifications.map((item) => (
-                <article key={item.id} className="notification-item notification-item--new">
-                  <strong>{item.title}</strong>
-                  <p>{item.message}</p>
-                  {item.team_name ? (
-                    <span className="notification-item__meta">{item.team_name}</span>
-                  ) : null}
-                </article>
-              ))}
-            </>
-          ) : null}
-
-          {readNotifications.length ? (
-            <>
-              <div className="notification-divider">
-                <span>Earlier</span>
-              </div>
-              {readNotifications.map((item) => (
-                <article key={item.id} className="notification-item">
-                  <strong>{item.title}</strong>
-                  <p>{item.message}</p>
-                  {item.team_name ? (
-                    <span className="notification-item__meta">{item.team_name}</span>
-                  ) : null}
-                </article>
-              ))}
-            </>
-          ) : null}
-
-          {canSend && sentItems.length ? (
-            <>
-              <div className="notification-divider">
-                <span>Sent Messages</span>
-              </div>
-              {sentItems.map((item) => (
-                <article key={item.id} className="notification-item notification-item--sent">
-                  <strong>{item.title}</strong>
-                  <p>{item.message}</p>
-                  <span className="notification-item__meta">
-                    {item.team_name ? `${item.team_name} · ` : ""}
-                    Sent to {item.recipient_count} recipient{item.recipient_count === 1 ? "" : "s"}
-                  </span>
-                </article>
-              ))}
-            </>
-          ) : null}
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-function TeamsPage({ teams, activeTeamId, onSelectTeam, onOpenSchedule }) {
-  return (
-    <section className="teams-page-shell">
-      <header className="teams-page-header">
-        <div className="teams-page-heading">
-          <p className="teams-page-kicker">Team Setup</p>
-          <h1>Choose Your Team Space</h1>
-          <p className="teams-page-subtitle">
-            Pick the team you want to work in right now. We&apos;ll use that as the
-            active team for upcoming team-specific features.
-          </p>
-        </div>
-      </header>
-
-      <section className="teams-grid">
-        {teams.length ? (
-          teams.map((team) => {
-            const isActive = String(team.id) === String(activeTeamId);
-
-            return (
-              <article key={team.id} className={`team-card${isActive ? " team-card--active" : ""}`}>
-                <div className="team-card__top">
-                  <div>
-                    <span className="team-card__label">{team.source}</span>
-                    <h2>{team.name}</h2>
-                    <p className="team-card__coach">Coach: {formatCoachName(team)}</p>
-                    {team.linkedChildren?.length ? (
-                      <p className="team-card__children">
-                        Child{team.linkedChildren.length > 1 ? "ren" : ""}: {buildChildTeamLabel(team.linkedChildren)}
-                      </p>
-                    ) : null}
-                  </div>
-                  <div className="team-card__top-right">
-                    {isActive ? <span className="team-card__badge">Active</span> : null}
-                    <details className="team-card__details">
-                      <summary>Details</summary>
-                      <div className="team-card__details-panel">
-                        <div className="team-card__detail-row">
-                          <span>Players</span>
-                          <strong>{team.playerCount ?? 0}</strong>
-                        </div>
-                        <div className="team-card__detail-row">
-                          <span>Coaches</span>
-                          <strong>{team.coachCount ?? 0}</strong>
-                        </div>
-                        <div className="team-card__detail-row">
-                          <span>Captains</span>
-                          <strong>
-                            {team.captainNames?.length
-                              ? team.captainNames.join(", ")
-                              : "None assigned"}
-                          </strong>
-                        </div>
-                      </div>
-                    </details>
-                  </div>
-                </div>
-
-                <div className="team-card__actions">
-                  <button type="button" className="team-card__button" onClick={() => onSelectTeam(team)}>
-                    {isActive ? "Selected Team" : "Select Team"}
-                  </button>
-                  <button
-                    type="button"
-                    className="team-card__button team-card__button--ghost"
-                    onClick={() => onOpenSchedule(team)}
-                  >
-                    {team.canManageSchedule ? "Manage Schedule" : "View Schedule"}
-                  </button>
-                </div>
-              </article>
             );
-          })
-        ) : (
-          <article className="teams-empty-state">
-            <h2>No teams linked yet</h2>
-            <p>This account does not have any team memberships available right now.</p>
-          </article>
-        )}
-      </section>
+          })}
+        </div>
+      </div>
+
+      {hoverTip ? (
+        <div
+          className="schedule-hover-popover"
+          style={{
+            position: "fixed",
+            left: `${Math.min(
+              Math.max(12, hoverTip.x),
+              typeof window !== "undefined" ? window.innerWidth - 300 : hoverTip.x,
+            )}px`,
+            top: `${Math.min(
+              hoverTip.y,
+              typeof window !== "undefined" ? window.innerHeight - 220 : hoverTip.y,
+            )}px`,
+            zIndex: 10060,
+          }}
+          role="tooltip"
+        >
+          <div className="schedule-hover-popover__title">{hoverTip.entry.activity_name}</div>
+          {hoverTip.entry.teamName ? (
+            <div className="schedule-hover-popover__row">
+              <span className="schedule-hover-popover__label">Team</span>
+              <span>{hoverTip.entry.teamName}</span>
+            </div>
+          ) : null}
+          <div className="schedule-hover-popover__row">
+            <span className="schedule-hover-popover__label">Time</span>
+            <span>
+              {hoverTip.entry.start_time} – {hoverTip.entry.end_time}
+            </span>
+          </div>
+          {hoverTip.entry.location ? (
+            <div className="schedule-hover-popover__row">
+              <span className="schedule-hover-popover__label">Location</span>
+              <span>{hoverTip.entry.location}</span>
+            </div>
+          ) : null}
+          {hoverTip.entry.isTrainingSession ? (
+            <div className="schedule-hover-popover__muted">Training session (tap for details if available)</div>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function SchedulePaymentEntries({ activeTeamId, teams }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!activeTeamId) {
+      setRows([]);
+      return;
+    }
+    setLoading(true);
+    try {
+      if (activeTeamId === "__all__") {
+        if (!teams.length) {
+          setRows([]);
+          return;
+        }
+        const results = await Promise.all(teams.map((t) => fetchPlayerTeamPayments(t.id)));
+        const merged = [];
+        teams.forEach((team, i) => {
+          const color = ALL_TEAMS_COLORS[i % ALL_TEAMS_COLORS.length];
+          for (const r of results[i]?.fee_rows || []) {
+            if (r.status === "paid") continue;
+            merged.push({ ...r, _teamName: team.name, _teamColor: color });
+          }
+        });
+        setRows(merged);
+        return;
+      }
+      const data = await fetchPlayerTeamPayments(activeTeamId);
+      setRows((data.fee_rows || []).filter((r) => r.status !== "paid"));
+    } catch {
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [activeTeamId, teams]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  if (!activeTeamId || loading || !rows.length) return null;
+
+  const showTeam = activeTeamId === "__all__";
+
+  return (
+    <section className="schedule-payments-section" style={{ marginTop: "1.5rem", padding: "0 0.5rem" }}>
+      <h2 style={{ fontSize: "1.05rem", marginBottom: "0.5rem" }}>Upcoming payments</h2>
+      <div style={{ overflowX: "auto" }}>
+        <table className="vc-table" style={{ fontSize: "0.9rem" }}>
+          <thead>
+            <tr>
+              {showTeam ? <th>Team</th> : null}
+              <th>Description</th>
+              <th>Amount</th>
+              <th>Due date</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={`${r._teamName || ""}-${r.id}`}>
+                {showTeam ? (
+                  <td>
+                    <span
+                      style={{
+                        display: "inline-block",
+                        width: 10,
+                        height: 10,
+                        borderRadius: 2,
+                        marginRight: 6,
+                        verticalAlign: "middle",
+                        backgroundColor: r._teamColor,
+                      }}
+                      aria-hidden="true"
+                    />
+                    {r._teamName}
+                  </td>
+                ) : null}
+                <td>{r.description}</td>
+                <td>
+                  {r.currency} {r.remaining}
+                </td>
+                <td>{r.due_date}</td>
+                <td>
+                  {r.status === "overdue" ? (
+                    <span className="vc-status-overdue">Overdue</span>
+                  ) : (
+                    <span className="vc-status-pending">Pending</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function TeamsPage() {
+  return (
+    <section style={{ padding: "3rem 2rem", maxWidth: 640, margin: "0 auto", textAlign: "center" }}>
+      <h1 style={{ fontSize: "1.5rem", marginBottom: "0.75rem" }}>Statistics</h1>
+      <p style={{ color: "#5c6570", lineHeight: 1.55, maxWidth: 420, margin: "0 auto" }}>
+        Team and player statistics will appear here in a future update.
+        Use the team selector in the toolbar to pick your active team, then
+        visit Schedule, Training, or Roster for team-specific views.
+      </p>
     </section>
   );
 }
@@ -1335,25 +903,47 @@ function App() {
     Boolean(localStorage.getItem(AUTH_TOKEN_KEY)),
   );
   const [teams, setTeams] = useState([]);
+  const [scheduleAccessElevated, setScheduleAccessElevated] = useState(false);
   const [activeTeamId, setActiveTeamId] = useState(() => localStorage.getItem(ACTIVE_TEAM_KEY) || "");
   const [schedulePayload, setSchedulePayload] = useState(null);
   const [scheduleLoading, setScheduleLoading] = useState(false);
   const [scheduleError, setScheduleError] = useState("");
   const [draftEntries, setDraftEntries] = useState([]);
   const [isSavingSchedule, setIsSavingSchedule] = useState(false);
-  const [trainingStateByTeam, setTrainingStateByTeam] = useState({});
-  const [pendingTrainingEditId, setPendingTrainingEditId] = useState(null);
   const [selectedChildIdByTeam, setSelectedChildIdByTeam] = useState({});
-  const [notifications, setNotifications] = useState([]);
-  const [sentNotifications, setSentNotifications] = useState([]);
-  const [notificationUnreadCount, setNotificationUnreadCount] = useState(0);
-  const [isNotificationPanelOpen, setIsNotificationPanelOpen] = useState(false);
-  const [notificationsLoading, setNotificationsLoading] = useState(false);
-  const [notificationsError, setNotificationsError] = useState("");
-  const [manualNotificationDraft, setManualNotificationDraft] = useState(emptyManualNotificationDraft());
-  const [isSendingManualNotification, setIsSendingManualNotification] = useState(false);
   const [directorDashboardAllowed, setDirectorDashboardAllowed] = useState(null);
-  const activeTeam = teams.find((team) => String(team.id) === String(activeTeamId)) || null;
+  const [teamsRefreshKey, setTeamsRefreshKey] = useState(0);
+  const scheduleTeams = useMemo(
+    () => (scheduleAccessElevated ? teams : teams.filter((t) => t.scheduleTier === "member")),
+    [teams, scheduleAccessElevated],
+  );
+
+  const activeTeam = useMemo(() => {
+    if (String(activeTeamId) === "__all__" && teams.length > 0) {
+      return {
+        id: "__all__",
+        name: "View all",
+        canManageSchedule: false,
+        canManageTraining: false,
+        linkedChildren: [],
+      };
+    }
+    return teams.find((team) => String(team.id) === String(activeTeamId)) || null;
+  }, [activeTeamId, teams]);
+
+  useEffect(() => {
+    const onSetActiveTeam = (event) => {
+      const raw = event?.detail?.teamId;
+      if (raw == null || raw === "") {
+        return;
+      }
+      const nextTeamId = String(raw);
+      setActiveTeamId(nextTeamId);
+      localStorage.setItem(ACTIVE_TEAM_KEY, nextTeamId);
+    };
+    window.addEventListener("netup-set-active-team", onSetActiveTeam);
+    return () => window.removeEventListener("netup-set-active-team", onSetActiveTeam);
+  }, []);
 
   useEffect(() => {
     if (pathname !== "/") {
@@ -1430,9 +1020,9 @@ function App() {
     async function loadTeams() {
       if (!isAuthenticated) {
         setDirectorDashboardAllowed(null);
+        setScheduleAccessElevated(false);
         setTeams([]);
         setActiveTeamId("");
-        setTrainingStateByTeam({});
         localStorage.removeItem(ACTIVE_TEAM_KEY);
         return;
       }
@@ -1449,6 +1039,10 @@ function App() {
             : (payload.owned_clubs || []).length > 0;
         setDirectorDashboardAllowed(Boolean(allowed));
 
+        const elevated =
+          (payload.director_teams || []).length > 0 || (payload.coached_teams || []).length > 0;
+        setScheduleAccessElevated(Boolean(elevated));
+
         const relatedTeams = buildRelatedTeams(payload);
         setTeams(relatedTeams);
       } catch {
@@ -1456,9 +1050,9 @@ function App() {
           return;
         }
         setDirectorDashboardAllowed(false);
+        setScheduleAccessElevated(false);
         setTeams([]);
         setActiveTeamId("");
-        setTrainingStateByTeam({});
       }
     }
 
@@ -1467,46 +1061,13 @@ function App() {
     return () => {
       isMounted = false;
     };
-  }, [isAuthenticated]);
+  }, [isAuthenticated, teamsRefreshKey]);
 
   useEffect(() => {
-    if (!isAuthenticated) {
-      setNotifications([]);
-      setSentNotifications([]);
-      setNotificationUnreadCount(0);
-      setIsNotificationPanelOpen(false);
-      setManualNotificationDraft(emptyManualNotificationDraft());
-      return;
-    }
-
-    let isMounted = true;
-
-    async function loadNotificationsSilently() {
-      try {
-        const payload = await fetchNotifications(activeTeamId);
-        if (!isMounted) {
-          return;
-        }
-
-        setNotifications(payload.items || []);
-        setSentNotifications(payload.sent_items || []);
-        setNotificationUnreadCount(payload.unread_count || 0);
-      } catch {
-        if (!isMounted) {
-          return;
-        }
-        setNotifications([]);
-        setSentNotifications([]);
-        setNotificationUnreadCount(0);
-      }
-    }
-
-    loadNotificationsSilently();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [activeTeamId, isAuthenticated]);
+    const bump = () => setTeamsRefreshKey((k) => k + 1);
+    window.addEventListener("netup-teams-changed", bump);
+    return () => window.removeEventListener("netup-teams-changed", bump);
+  }, []);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -1519,14 +1080,38 @@ function App() {
       return;
     }
 
-    const hasValidSelectedTeam = teams.some((team) => String(team.id) === String(activeTeamId));
+    const hasValidSelectedTeam =
+      (String(activeTeamId) === "__all__" && teams.length > 0) ||
+      teams.some((team) => String(team.id) === String(activeTeamId));
 
     if (!hasValidSelectedTeam) {
-      const firstTeamId = String(teams[0].id);
-      setActiveTeamId(firstTeamId);
-      localStorage.setItem(ACTIVE_TEAM_KEY, firstTeamId);
+      setActiveTeamId("");
+      localStorage.removeItem(ACTIVE_TEAM_KEY);
     }
   }, [activeTeamId, isAuthenticated, teams]);
+
+  useEffect(() => {
+    if (pathname !== "/schedule" || !isAuthenticated) {
+      return undefined;
+    }
+    if (String(activeTeamId) === "__all__" && scheduleTeams.length <= 1) {
+      setActiveTeamId("");
+      localStorage.removeItem(ACTIVE_TEAM_KEY);
+      return undefined;
+    }
+    if (!activeTeamId) {
+      return undefined;
+    }
+    if (String(activeTeamId) === "__all__") {
+      return undefined;
+    }
+    const ok = scheduleTeams.some((t) => String(t.id) === String(activeTeamId));
+    if (!ok) {
+      setActiveTeamId("");
+      localStorage.removeItem(ACTIVE_TEAM_KEY);
+    }
+    return undefined;
+  }, [pathname, activeTeamId, scheduleTeams, isAuthenticated]);
 
   useEffect(() => {
     if (!teams.length) {
@@ -1560,8 +1145,14 @@ function App() {
   }, [teams]);
 
   useEffect(() => {
-    if (pathname !== "/schedule" || !activeTeamId) {
-      return;
+    if (pathname !== "/schedule") {
+      return undefined;
+    }
+    if (!activeTeamId) {
+      setSchedulePayload(null);
+      setScheduleError("");
+      setScheduleLoading(false);
+      return undefined;
     }
 
     let isMounted = true;
@@ -1571,23 +1162,54 @@ function App() {
       setScheduleError("");
 
       try {
-        const payload = await fetchTeamSchedule(activeTeamId);
-        if (!isMounted) {
-          return;
-        }
+        if (String(activeTeamId) === "__all__") {
+          if (!scheduleTeams.length) {
+            if (!isMounted) return;
+            setSchedulePayload(null);
+            setDraftEntries([emptyScheduleEntry()]);
+            return;
+          }
+          const payloads = await Promise.all(scheduleTeams.map((t) => fetchTeamSchedule(t.id)));
+          if (!isMounted) return;
+          const weekStart = payloads[0]?.week_start ?? null;
+          const legend = scheduleTeams.map((t, i) => ({
+            id: t.id,
+            name: t.name,
+            color: ALL_TEAMS_COLORS[i % ALL_TEAMS_COLORS.length],
+          }));
+          const mergedEntries = [];
+          scheduleTeams.forEach((team, i) => {
+            const color = legend[i].color;
+            for (const e of payloads[i]?.entries || []) {
+              mergedEntries.push({
+                ...e,
+                teamColor: color,
+                teamName: team.name,
+                id: `${team.id}-${e.id}`,
+              });
+            }
+          });
+          setSchedulePayload({ week_start: weekStart, entries: mergedEntries, legend });
+          setDraftEntries([emptyScheduleEntry()]);
+        } else {
+          const payload = await fetchTeamSchedule(activeTeamId);
+          if (!isMounted) {
+            return;
+          }
 
-        setSchedulePayload(payload);
-        setDraftEntries(
-          payload.entries.length
-            ? payload.entries.map((entry) => ({
-                weekday: String(entry.weekday),
-                activity_name: entry.activity_name,
-                start_time: entry.start_time,
-                end_time: entry.end_time,
-                location: entry.location || "",
-              }))
-            : [emptyScheduleEntry()],
-        );
+          setSchedulePayload(payload);
+          setDraftEntries(
+            payload.entries.length
+              ? payload.entries.map((entry) => ({
+                  weekday: String(entry.weekday),
+                  activity_name: entry.activity_name,
+                  start_time: entry.start_time,
+                  end_time: entry.end_time,
+                  location: entry.location || "",
+                }))
+              : [emptyScheduleEntry()],
+          );
+        }
       } catch (error) {
         if (!isMounted) {
           return;
@@ -1601,131 +1223,16 @@ function App() {
       }
     }
 
-    loadSchedule();
+    void loadSchedule();
 
     return () => {
       isMounted = false;
     };
-  }, [activeTeamId, pathname]);
-
-  useEffect(() => {
-    if (pathname !== "/training" || !activeTeamId) {
-      return;
-    }
-
-    const existingState = trainingStateByTeam[String(activeTeamId)];
-    if (existingState?.sessions || existingState?.loading) {
-      return;
-    }
-
-    loadTrainingSessions(activeTeamId);
-  }, [activeTeamId, pathname, trainingStateByTeam]);
-
-  useEffect(() => {
-    if (pathname !== "/training" || !activeTeamId || !pendingTrainingEditId) {
-      return;
-    }
-
-    const activeTrainingState = trainingStateByTeam[String(activeTeamId)];
-    if (!activeTrainingState || activeTrainingState.loading) {
-      return;
-    }
-
-    const matchingSession = (activeTrainingState.sessions || []).find(
-      (session) => session.id === pendingTrainingEditId,
-    );
-
-    if (matchingSession) {
-      editTrainingSessionDraft(activeTeamId, matchingSession);
-    }
-
-    setPendingTrainingEditId(null);
-  }, [activeTeamId, pathname, pendingTrainingEditId, trainingStateByTeam]);
-
-  useEffect(() => {
-    if (pathname !== "/schedule" || !activeTeamId) {
-      return;
-    }
-
-    const existingState = trainingStateByTeam[String(activeTeamId)];
-    if (existingState?.sessions || existingState?.loading) {
-      return;
-    }
-
-    loadTrainingSessions(activeTeamId);
-  }, [activeTeamId, pathname, trainingStateByTeam]);
-
-  const setTeamTrainingState = (teamId, updater) => {
-    const teamKey = String(teamId);
-    setTrainingStateByTeam((currentState) => {
-      const previousState = currentState[teamKey] || {
-        sessions: [],
-        draft: emptyTrainingDraft(),
-        editingSessionId: null,
-        loading: false,
-        saving: false,
-        error: "",
-        confirmingKey: "",
-      };
-      const nextPartialState =
-        typeof updater === "function" ? updater(previousState) : updater;
-
-      return {
-        ...currentState,
-        [teamKey]: {
-          ...previousState,
-          ...nextPartialState,
-        },
-      };
-    });
-  };
+  }, [activeTeamId, pathname, scheduleTeams]);
 
   const selectedChildId = activeTeam?.linkedChildren?.length
     ? Number(selectedChildIdByTeam[String(activeTeamId)] || activeTeam.linkedChildren[0].id)
     : null;
-
-  const loadNotifications = async ({ markRead = false } = {}) => {
-    setNotificationsLoading(true);
-    setNotificationsError("");
-
-    try {
-      const payload = await fetchNotifications(activeTeamId);
-      setNotifications(payload.items || []);
-      setSentNotifications(payload.sent_items || []);
-      setNotificationUnreadCount(payload.unread_count || 0);
-
-      if (markRead && (payload.unread_count || 0) > 0) {
-        await markNotificationsRead();
-        setNotifications((currentNotifications) =>
-          currentNotifications.map((item) => ({ ...item, is_read: true })),
-        );
-        setNotificationUnreadCount(0);
-      }
-    } catch (error) {
-      setNotificationsError(error.message || "Failed to load notifications.");
-    } finally {
-      setNotificationsLoading(false);
-    }
-  };
-
-  const loadTrainingSessions = async (teamId) => {
-    setTeamTrainingState(teamId, { loading: true, error: "" });
-
-    try {
-      const payload = await fetchTeamTrainingSessions(teamId);
-      setTeamTrainingState(teamId, (previousState) => ({
-        loading: false,
-        error: "",
-        sessions: payload.sessions || [],
-        draft: previousState.draft || emptyTrainingDraft(),
-      }));
-    } catch (error) {
-      setTeamTrainingState(teamId, {
-        loading: false,
-        error: error.message || "Failed to load training sessions.",
-      });
-    }
-  };
 
   const scrollToSection = (sectionId) => {
     const section = document.getElementById(sectionId);
@@ -1741,15 +1248,6 @@ function App() {
     const nextTeamId = String(team.id);
     setActiveTeamId(nextTeamId);
     localStorage.setItem(ACTIVE_TEAM_KEY, nextTeamId);
-  };
-
-  const toggleNotificationPanel = async () => {
-    const nextIsOpen = !isNotificationPanelOpen;
-    setIsNotificationPanelOpen(nextIsOpen);
-
-    if (nextIsOpen) {
-      await loadNotifications({ markRead: true });
-    }
   };
 
   const openTeamSchedule = (team) => {
@@ -1777,7 +1275,7 @@ function App() {
   };
 
   const handleSaveSchedule = async () => {
-    if (!activeTeamId) {
+    if (!activeTeamId || String(activeTeamId) === "__all__") {
       return;
     }
 
@@ -1809,186 +1307,10 @@ function App() {
             }))
           : [emptyScheduleEntry()],
       );
-      await loadNotifications();
     } catch (error) {
       setScheduleError(error.message || "Failed to save schedule.");
     } finally {
       setIsSavingSchedule(false);
-    }
-  };
-
-  const updateTrainingDraft = (teamId, field, value) => {
-    setTeamTrainingState(teamId, (previousState) => ({
-      draft: {
-        ...(previousState.draft || emptyTrainingDraft()),
-        [field]:
-          field === "session_type" && value === "match"
-            ? value
-            : field === "match_type" && !value
-              ? "friendly"
-              : value,
-        ...(field === "session_type" && value === "match"
-          ? {
-              match_type: previousState.draft?.match_type || "friendly",
-            }
-          : {}),
-      },
-      error: "",
-    }));
-  };
-
-  const resetTrainingDraft = (teamId) => {
-    setTeamTrainingState(teamId, {
-      draft: emptyTrainingDraft(),
-      editingSessionId: null,
-      error: "",
-    });
-  };
-
-  const editTrainingSessionDraft = (teamId, session) => {
-    setTeamTrainingState(teamId, {
-      draft: {
-        title: session.title,
-        session_type: session.session_type,
-        scheduled_date: session.scheduled_date,
-        start_time: session.start_time,
-        end_time: session.end_time,
-        location: session.location || "",
-        opponent: session.opponent || "",
-        match_type: session.match_type || "friendly",
-        notes: session.notes || "",
-        notify_players: Boolean(session.notify_players),
-        notify_parents: Boolean(session.notify_parents),
-      },
-      editingSessionId: session.id,
-      error: "",
-    });
-  };
-
-  const saveTrainingSession = async (teamId) => {
-    const teamKey = String(teamId);
-    const teamState = trainingStateByTeam[teamKey] || {};
-    const draft = teamState.draft || emptyTrainingDraft();
-
-    setTeamTrainingState(teamId, { saving: true, error: "" });
-
-    try {
-      const response = teamState.editingSessionId
-        ? await updateTrainingSession(teamState.editingSessionId, draft)
-        : await createTeamTrainingSession(teamId, draft);
-      const savedSession = response.session;
-
-      setTeamTrainingState(teamId, (previousState) => {
-        const nextSessions = previousState.editingSessionId
-          ? (previousState.sessions || []).map((session) =>
-              session.id === savedSession.id ? savedSession : session,
-            )
-          : [...(previousState.sessions || []), savedSession].sort((left, right) => {
-              const leftKey = `${left.scheduled_date} ${left.start_time}`;
-              const rightKey = `${right.scheduled_date} ${right.start_time}`;
-              return leftKey.localeCompare(rightKey);
-            });
-
-        return {
-          saving: false,
-          error: "",
-          sessions: nextSessions,
-          draft: emptyTrainingDraft(),
-          editingSessionId: null,
-        };
-      });
-    } catch (error) {
-      setTeamTrainingState(teamId, {
-        saving: false,
-        error: error.message || "Failed to save training session.",
-      });
-    }
-  };
-
-  const handleCancelTrainingSession = async (teamId, sessionId) => {
-    setTeamTrainingState(teamId, { error: "" });
-
-    try {
-      const response = await cancelTrainingSession(sessionId);
-      const cancelledSession = response.session;
-
-      setTeamTrainingState(teamId, (previousState) => ({
-        sessions: (previousState.sessions || []).map((session) =>
-          session.id === cancelledSession.id ? cancelledSession : session,
-        ),
-      }));
-    } catch (error) {
-      setTeamTrainingState(teamId, {
-        error: error.message || "Failed to cancel training session.",
-      });
-    }
-  };
-
-  const handleClearTrainingSession = async (teamId, sessionId) => {
-    setTeamTrainingState(teamId, { error: "" });
-
-    try {
-      await clearTrainingSession(sessionId);
-      setTeamTrainingState(teamId, (previousState) => ({
-        sessions: (previousState.sessions || []).filter((session) => session.id !== sessionId),
-      }));
-    } catch (error) {
-      setTeamTrainingState(teamId, {
-        error: error.message || "Failed to clear session.",
-      });
-    }
-  };
-
-  const updateManualNotificationDraft = (field, value) => {
-    setManualNotificationDraft((currentDraft) => ({
-      ...currentDraft,
-      [field]: value,
-    }));
-  };
-
-  const handleSendManualNotification = async () => {
-    if (!activeTeamId) {
-      return;
-    }
-
-    setIsSendingManualNotification(true);
-    setNotificationsError("");
-
-    try {
-      await sendTeamNotification({
-        team_id: Number(activeTeamId),
-        audience: manualNotificationDraft.audience,
-        title: manualNotificationDraft.title.trim(),
-        message: manualNotificationDraft.message.trim(),
-      });
-      setManualNotificationDraft(emptyManualNotificationDraft());
-      await loadNotifications();
-    } catch (error) {
-      setNotificationsError(error.message || "Failed to send notification.");
-    } finally {
-      setIsSendingManualNotification(false);
-    }
-  };
-
-  const handleConfirmTrainingSession = async (teamId, sessionId, playerId) => {
-    const confirmingKey = `${sessionId}-${playerId}`;
-    setTeamTrainingState(teamId, { confirmingKey, error: "" });
-
-    try {
-      const response = await confirmTrainingSession(sessionId, playerId);
-      const confirmedSession = response.session;
-
-      setTeamTrainingState(teamId, (previousState) => ({
-        confirmingKey: "",
-        sessions: (previousState.sessions || []).map((session) =>
-          session.id === confirmedSession.id ? confirmedSession : session,
-        ),
-      }));
-    } catch (error) {
-      setTeamTrainingState(teamId, {
-        confirmingKey: "",
-        error: error.message || "Failed to confirm training attendance.",
-      });
     }
   };
 
@@ -2001,24 +1323,6 @@ function App() {
       ...currentState,
       [String(activeTeamId)]: String(childId),
     }));
-  };
-
-  const handleScheduleEntrySelect = (entry) => {
-    if (!entry?.isTrainingSession || !activeTeam?.canManageTraining) {
-      return;
-    }
-
-    setPendingTrainingEditId(entry.trainingSessionId);
-    navigate("/training");
-  };
-
-  const handleEditTrainingFromSchedule = (session) => {
-    if (!session || !activeTeam?.canManageTraining) {
-      return;
-    }
-
-    setPendingTrainingEditId(session.id);
-    navigate("/training");
   };
 
   if (pathname === "/login") {
@@ -2037,7 +1341,7 @@ function App() {
     return <RegisterPage />;
   }
 
-  if (pathname === "/dashboard") {
+  if (pathname === "/dashboard" || pathname === "/club" || pathname === "/club/") {
     if (!isAuthenticated) {
       return <LoginPage />;
     }
@@ -2048,27 +1352,10 @@ function App() {
         </div>
       );
     }
-    if (!directorDashboardAllowed) {
-      return (
-        <div className="vc-app vc-dashboard" style={{ padding: "3rem", maxWidth: 520, margin: "0 auto" }}>
-          <h1 style={{ fontSize: "1.25rem", marginBottom: "0.75rem" }}>Club director dashboard</h1>
-          <p style={{ color: "#5c6570", lineHeight: 1.55 }}>
-            The operations dashboard (registration overview, revenue summaries, and director tools) is only
-            available to club directors and platform staff.
-          </p>
-          <button
-            type="button"
-            className="vc-action-btn"
-            style={{ marginTop: "1.25rem" }}
-            onClick={() => navigate("/teams")}
-          >
-            <span>Go to your teams</span>
-            <span aria-hidden="true">›</span>
-          </button>
-        </div>
-      );
+    if (directorDashboardAllowed) {
+      return <DashboardPage />;
     }
-    return <DashboardPage />;
+    return <MemberHubPage />;
   }
 
   if (pathname === "/director/users") {
@@ -2093,9 +1380,9 @@ function App() {
             type="button"
             className="vc-action-btn"
             style={{ marginTop: "1.25rem" }}
-            onClick={() => navigate("/teams")}
+            onClick={() => navigate("/dashboard")}
           >
-            <span>Go to your teams</span>
+            <span>Back to dashboard</span>
             <span aria-hidden="true">›</span>
           </button>
         </div>
@@ -2104,11 +1391,109 @@ function App() {
     return <DirectorUserManagementPage />;
   }
 
+  if (pathname === "/director/teams" || pathname === "/director/teams/") {
+    if (!isAuthenticated) {
+      return <LoginPage />;
+    }
+    if (directorDashboardAllowed === null) {
+      return (
+        <div className="vc-app vc-dashboard" style={{ padding: "3rem", textAlign: "center" }}>
+          <p className="vc-modal__muted">Loading…</p>
+        </div>
+      );
+    }
+    if (!directorDashboardAllowed) {
+      return (
+        <div className="vc-app vc-dashboard" style={{ padding: "3rem", maxWidth: 520, margin: "0 auto" }}>
+          <h1 style={{ fontSize: "1.25rem", marginBottom: "0.75rem" }}>Director tools</h1>
+          <p style={{ color: "#5c6570", lineHeight: 1.55 }}>
+            Creating teams and roster is limited to club directors and platform staff.
+          </p>
+          <button
+            type="button"
+            className="vc-action-btn"
+            style={{ marginTop: "1.25rem" }}
+            onClick={() => navigate("/dashboard")}
+          >
+            <span>Back to dashboard</span>
+            <span aria-hidden="true">›</span>
+          </button>
+        </div>
+      );
+    }
+    return <DirectorTeamSetupPage />;
+  }
+
+  if (pathname === "/director/payments" || pathname === "/director/payments/") {
+    if (!isAuthenticated) {
+      return <LoginPage />;
+    }
+    if (directorDashboardAllowed === null) {
+      return (
+        <div className="vc-app vc-dashboard" style={{ padding: "3rem", textAlign: "center" }}>
+          <p className="vc-modal__muted">Loading…</p>
+        </div>
+      );
+    }
+    if (!directorDashboardAllowed) {
+      return (
+        <div className="vc-app vc-dashboard" style={{ padding: "3rem", maxWidth: 520, margin: "0 auto" }}>
+          <h1 style={{ fontSize: "1.25rem", marginBottom: "0.75rem" }}>Director tools</h1>
+          <p style={{ color: "#5c6570", lineHeight: 1.55 }}>
+            Payment management is only available to club directors and platform staff.
+          </p>
+          <button
+            type="button"
+            className="vc-action-btn"
+            style={{ marginTop: "1.25rem" }}
+            onClick={() => navigate("/dashboard")}
+          >
+            <span>Back to dashboard</span>
+            <span aria-hidden="true">›</span>
+          </button>
+        </div>
+      );
+    }
+    return <DirectorPaymentsPage />;
+  }
+
+  if (pathname === "/director/payments/logs" || pathname === "/director/payments/logs/") {
+    if (!isAuthenticated) {
+      return <LoginPage />;
+    }
+    if (directorDashboardAllowed === null) {
+      return (
+        <div className="vc-app vc-dashboard" style={{ padding: "3rem", textAlign: "center" }}>
+          <p className="vc-modal__muted">Loading…</p>
+        </div>
+      );
+    }
+    if (!directorDashboardAllowed) {
+      return (
+        <div className="vc-app vc-dashboard" style={{ padding: "3rem", maxWidth: 520, margin: "0 auto" }}>
+          <h1 style={{ fontSize: "1.25rem", marginBottom: "0.75rem" }}>Director tools</h1>
+          <p style={{ color: "#5c6570", lineHeight: 1.55 }}>
+            Payment logs are only available to club directors and platform staff.
+          </p>
+          <button
+            type="button"
+            className="vc-action-btn"
+            style={{ marginTop: "1.25rem" }}
+            onClick={() => navigate("/dashboard")}
+          >
+            <span>Back to dashboard</span>
+            <span aria-hidden="true">›</span>
+          </button>
+        </div>
+      );
+    }
+    return <DirectorPaymentLogsPage />;
+  }
+
   if (pathname === "/teams") {
     return (
       <ClubWorkspaceLayout
-        activeTab="statistics"
-        trainingEnabled={Boolean(activeTeam)}
+        activeTab=""
         beforeIconActions={
           <ClubTeamSelect
             teams={teams}
@@ -2117,86 +1502,93 @@ function App() {
             selectId="teams-workspace-team"
           />
         }
-        notificationsSlot={
-          <>
-            <NotificationBell
-              unreadCount={notificationUnreadCount}
-              isOpen={isNotificationPanelOpen}
-              onToggle={toggleNotificationPanel}
-              isLight
-              className="notification-bell--vc-toolbar"
-            />
-            <NotificationPanel
-              isOpen={isNotificationPanelOpen}
-              notifications={notifications}
-              sentNotifications={sentNotifications}
-              loading={notificationsLoading}
-              error={notificationsError}
-              canSend={Boolean(activeTeam?.canManageTraining)}
-              manualDraft={manualNotificationDraft}
-              onManualChange={updateManualNotificationDraft}
-              onManualSend={handleSendManualNotification}
-              isSendingManual={isSendingManualNotification}
-            />
-          </>
+      >
+        <TeamsPage />
+      </ClubWorkspaceLayout>
+    );
+  }
+
+  if (pathname === "/roster" || pathname === "/roster/") {
+    return (
+      <ClubWorkspaceLayout
+        activeTab=""
+        beforeIconActions={
+          <ClubTeamSelect
+            teams={teams}
+            activeTeamId={activeTeamId}
+            onChangeTeam={handleSelectTeam}
+            selectId="roster-workspace-team"
+          />
         }
       >
-        <TeamsPage
-          teams={teams}
-          activeTeamId={activeTeamId}
-          onSelectTeam={handleSelectTeam}
-          onOpenSchedule={openTeamSchedule}
-        />
+        <TeamRosterPage team={activeTeam} />
+      </ClubWorkspaceLayout>
+    );
+  }
+
+  if (pathname === "/payments" || pathname === "/payments/") {
+    if (!isAuthenticated) {
+      return <LoginPage />;
+    }
+    return (
+      <ClubWorkspaceLayout
+        activeTab=""
+        beforeIconActions={
+          <ClubTeamSelect
+            teams={teams}
+            activeTeamId={activeTeamId}
+            onChangeTeam={handleSelectTeam}
+            selectId="payments-workspace-team"
+          />
+        }
+      >
+        {directorDashboardAllowed ||
+        teams.some((t) => t.source === "Coach") ||
+        activeTeam?.canManageSchedule ? (
+          <CoachPaymentsPage team={activeTeam} />
+        ) : (
+          <MyFeesPage />
+        )}
+      </ClubWorkspaceLayout>
+    );
+  }
+
+  if (pathname === "/my-fees" || pathname === "/my-fees/") {
+    if (!isAuthenticated) {
+      return <LoginPage />;
+    }
+    return (
+      <ClubWorkspaceLayout
+        activeTab=""
+        beforeIconActions={
+          <ClubTeamSelect
+            teams={teams}
+            activeTeamId={activeTeamId}
+            onChangeTeam={handleSelectTeam}
+            selectId="myfees-workspace-team"
+          />
+        }
+      >
+        <MyFeesPage />
       </ClubWorkspaceLayout>
     );
   }
 
   if (pathname === "/schedule") {
     const canManageSchedule = Boolean(activeTeam?.canManageSchedule);
-    const activeTrainingSessions = trainingStateByTeam[String(activeTeamId)]?.sessions || [];
-    const trainingEntries = mapTrainingSessionsToScheduleEntries(
-      schedulePayload?.week_start,
-      activeTrainingSessions,
-    );
-    const scheduleEntries = [
-      ...(canManageSchedule ? draftEntries : schedulePayload?.entries || []),
-      ...trainingEntries,
-    ];
+    const scheduleEntries = canManageSchedule ? draftEntries : (schedulePayload?.entries || []);
 
     return (
       <ClubWorkspaceLayout
         activeTab="schedule"
-        trainingEnabled={Boolean(activeTeam)}
         beforeIconActions={
           <ClubTeamSelect
-            teams={teams}
+            teams={scheduleTeams}
             activeTeamId={activeTeamId}
             onChangeTeam={handleSelectTeam}
             selectId="schedule-workspace-team"
+            includeAllTeamsOption={scheduleTeams.length > 1}
           />
-        }
-        notificationsSlot={
-          <>
-            <NotificationBell
-              unreadCount={notificationUnreadCount}
-              isOpen={isNotificationPanelOpen}
-              onToggle={toggleNotificationPanel}
-              isLight
-              className="notification-bell--vc-toolbar"
-            />
-            <NotificationPanel
-              isOpen={isNotificationPanelOpen}
-              notifications={notifications}
-              sentNotifications={sentNotifications}
-              loading={notificationsLoading}
-              error={notificationsError}
-              canSend={Boolean(activeTeam?.canManageTraining)}
-              manualDraft={manualNotificationDraft}
-              onManualChange={updateManualNotificationDraft}
-              onManualSend={handleSendManualNotification}
-              isSendingManual={isSendingManualNotification}
-            />
-          </>
         }
       >
         <section className="teams-page-shell">
@@ -2205,14 +1597,16 @@ function App() {
                 <p className="teams-page-kicker">Schedule</p>
                 <h1>{activeTeam ? `${activeTeam.name} Schedule` : "Team Schedule"}</h1>
                 <p className="teams-page-subtitle">
-                  {activeTeam
-                    ? activeTeam.linkedChildren?.length && selectedChildId
-                      ? `Schedule of ${
-                          activeTeam.linkedChildren.find((child) => child.id === selectedChildId)?.fullName ||
-                          activeTeam.name
-                        } in ${activeTeam.name}.`
-                      : `Schedule of ${activeTeam.name}.`
-                    : "Choose a team to view its schedule."}
+                  {activeTeam?.id === "__all__"
+                    ? "Combined schedule for every team you are allowed to see. Colors match the legend."
+                    : activeTeam
+                      ? activeTeam.linkedChildren?.length && selectedChildId
+                        ? `Schedule of ${
+                            activeTeam.linkedChildren.find((child) => child.id === selectedChildId)?.fullName ||
+                            activeTeam.name
+                          } in ${activeTeam.name}.`
+                        : `Schedule of ${activeTeam.name}.`
+                      : "Choose a team to view its schedule."}
                 </p>
                 {activeTeam?.linkedChildren?.length > 1 ? (
                   <div className="child-context-picker">
@@ -2243,25 +1637,24 @@ function App() {
               <WeeklyScheduleBoard
                 weekStart={schedulePayload?.week_start}
                 entries={scheduleEntries}
-                onSelectEntry={handleScheduleEntrySelect}
+                legendTeams={schedulePayload?.legend}
               />
             ) : (
               <section className="schedule-empty-card">
                 <h2>No schedule</h2>
                 <p>
-                  {activeTeam
-                    ? `There is no schedule for ${activeTeam.name} yet.`
-                    : "There is no selected team schedule yet."}
+                  {!scheduleTeams.length
+                    ? "You are not assigned to a team yet, so there is no schedule to show. Ask your club to add you to a roster."
+                    : activeTeam?.id === "__all__"
+                      ? "No activities on any team schedule for this week yet."
+                      : activeTeam
+                        ? `There is no schedule for ${activeTeam.name} yet.`
+                        : "Select your team above to view its schedule."}
                 </p>
               </section>
             )}
 
-            {canManageSchedule ? (
-              <ScheduleTrainingSessions
-                sessions={activeTrainingSessions}
-                onEditSession={handleEditTrainingFromSchedule}
-              />
-            ) : null}
+            <SchedulePaymentEntries activeTeamId={activeTeamId} teams={scheduleTeams} />
 
             {canManageSchedule ? (
               <ScheduleEditor
@@ -2274,73 +1667,6 @@ function App() {
               />
             ) : null}
         </section>
-      </ClubWorkspaceLayout>
-    );
-  }
-
-  if (pathname === "/training") {
-    const activeTrainingState = trainingStateByTeam[String(activeTeamId)] || {};
-
-    return (
-      <ClubWorkspaceLayout
-        activeTab="training"
-        trainingEnabled={Boolean(activeTeam)}
-        beforeIconActions={
-          <ClubTeamSelect
-            teams={teams}
-            activeTeamId={activeTeamId}
-            onChangeTeam={handleSelectTeam}
-            selectId="training-workspace-team"
-          />
-        }
-        notificationsSlot={
-          <>
-            <NotificationBell
-              unreadCount={notificationUnreadCount}
-              isOpen={isNotificationPanelOpen}
-              onToggle={toggleNotificationPanel}
-              isLight
-              className="notification-bell--vc-toolbar"
-            />
-            <NotificationPanel
-              isOpen={isNotificationPanelOpen}
-              notifications={notifications}
-              sentNotifications={sentNotifications}
-              loading={notificationsLoading}
-              error={notificationsError}
-              canSend={Boolean(activeTeam?.canManageTraining)}
-              manualDraft={manualNotificationDraft}
-              onManualChange={updateManualNotificationDraft}
-              onManualSend={handleSendManualNotification}
-              isSendingManual={isSendingManualNotification}
-            />
-          </>
-        }
-      >
-        {activeTeam ? (
-            <TrainingPage
-              team={activeTeam}
-              trainingState={activeTrainingState}
-              onLoad={() => loadTrainingSessions(activeTeam.id)}
-              onDraftChange={(field, value) => updateTrainingDraft(activeTeam.id, field, value)}
-              onCreateOrUpdate={() => saveTrainingSession(activeTeam.id)}
-              onEditSession={(session) => editTrainingSessionDraft(activeTeam.id, session)}
-              onResetDraft={() => resetTrainingDraft(activeTeam.id)}
-              onCancelEdit={() => resetTrainingDraft(activeTeam.id)}
-              onCancelSession={(sessionId) => handleCancelTrainingSession(activeTeam.id, sessionId)}
-              onClearSession={(sessionId) => handleClearTrainingSession(activeTeam.id, sessionId)}
-              onConfirmSession={(sessionId, playerId) =>
-                handleConfirmTrainingSession(activeTeam.id, sessionId, playerId)
-              }
-              selectedChildId={selectedChildId}
-              onSelectChild={handleSelectChildForActiveTeam}
-            />
-          ) : (
-            <section className="schedule-empty-card">
-              <h2>No team selected</h2>
-              <p>Select a team first to view training sessions.</p>
-            </section>
-          )}
       </ClubWorkspaceLayout>
     );
   }
@@ -2634,7 +1960,6 @@ function App() {
     return (
       <ClubWorkspaceLayout
         activeTab="home"
-        trainingEnabled={Boolean(activeTeam)}
         beforeIconActions={
           <ClubTeamSelect
             teams={teams}
@@ -2642,29 +1967,6 @@ function App() {
             onChangeTeam={handleSelectTeam}
             selectId="home-workspace-team"
           />
-        }
-        notificationsSlot={
-          <>
-            <NotificationBell
-              unreadCount={notificationUnreadCount}
-              isOpen={isNotificationPanelOpen}
-              onToggle={toggleNotificationPanel}
-              isLight
-              className="notification-bell--vc-toolbar"
-            />
-            <NotificationPanel
-              isOpen={isNotificationPanelOpen}
-              notifications={notifications}
-              sentNotifications={sentNotifications}
-              loading={notificationsLoading}
-              error={notificationsError}
-              canSend={Boolean(activeTeam?.canManageTraining)}
-              manualDraft={manualNotificationDraft}
-              onManualChange={updateManualNotificationDraft}
-              onManualSend={handleSendManualNotification}
-              isSendingManual={isSendingManualNotification}
-            />
-          </>
         }
       >
         {renderHomepageMarketing({ withSiteNav: false })}
