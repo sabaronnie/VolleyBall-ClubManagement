@@ -111,6 +111,14 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 
 AUTH_TOKEN_MAX_AGE = int(os.getenv("AUTH_TOKEN_MAX_AGE", 60 * 60 * 24))
 
+# Payments: require an active player team membership in the club before manual fee lookup / fee creation.
+# Set DJANGO_PAYMENTS_REQUIRE_TEAM_ROSTER=false to test without roster (not recommended in production).
+def _env_bool(name: str, default: str = "true") -> bool:
+    return os.getenv(name, default).strip().lower() in ("1", "true", "yes", "on")
+
+
+PAYMENTS_REQUIRE_TEAM_ROSTER = _env_bool("DJANGO_PAYMENTS_REQUIRE_TEAM_ROSTER", "true")
+
 PASSWORD_RESET_OTP_MINUTES = int(os.getenv("PASSWORD_RESET_OTP_MINUTES", "15"))
 
 EMAIL_BACKEND = os.getenv(
