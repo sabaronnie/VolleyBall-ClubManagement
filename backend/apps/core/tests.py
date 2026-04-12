@@ -11,12 +11,17 @@ from django.http import JsonResponse
 from django.test import RequestFactory
 
 from .decorators import admin_required
+from .attendance_reminders import (
+    sweep_incomplete_attendance_reminders,
+    sync_incomplete_attendance_notifications_for_session_id,
+)
 from .models import (
     AssignedAccountRole,
     Club,
     ClubMembership,
     ClubRole,
     DirectorPaymentAuditLog,
+    Notification,
     ParentLinkApprovalStatus,
     ParentPlayerRelation,
     PaymentSchedule,
@@ -2506,6 +2511,7 @@ class ParentChildAttendanceHistoryTests(TestCase):
         data = response.json()
         self.assertEqual(data["records"], [])
         self.assertEqual(data["linked_children"], [])
+        self.assertEqual(data.get("attendance_summaries", []), [])
         self.assertIn("message", data)
 
     def test_parent_sees_attendance_for_linked_child(self):
@@ -2550,6 +2556,13 @@ class ParentChildAttendanceHistoryTests(TestCase):
         self.assertEqual(by_sid[session_future.id]["attendance_status"], "pending")
         self.assertEqual(by_sid[session_future.id]["session_type"], "match")
         self.assertEqual(by_sid[session_future.id]["child"]["id"], child.id)
+        summaries = data.get("attendance_summaries") or []
+        self.assertEqual(len(summaries), 1)
+        self.assertEqual(summaries[0]["child"]["id"], child.id)
+        self.assertEqual(summaries[0]["team"]["id"], team.id)
+        self.assertIn("metrics", summaries[0])
+        self.assertEqual(summaries[0]["metrics"]["attended_sessions"], 1)
+        self.assertEqual(summaries[0]["metrics"]["pending_sessions"], 1)
 
     def test_parent_does_not_see_unlinked_child_sessions(self):
         director = User.objects.create_user(email="att-idor-dir@example.com", password="StrongPassword123!")
@@ -2606,7 +2619,11 @@ class ParentChildAttendanceHistoryTests(TestCase):
             HTTP_AUTHORIZATION=f"Bearer {token}",
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["records"], [])
+        body = response.json()
+        self.assertEqual(body["records"], [])
+        summaries = body.get("attendance_summaries") or []
+        self.assertEqual(len(summaries), 1)
+        self.assertEqual(summaries[0]["metrics"]["sessions_in_date_range"], 0)
 
 
 class PlayerAttendanceConfirmationTests(TestCase):
@@ -2950,6 +2967,157 @@ class CoachTrainingSessionAttendanceTests(TestCase):
         self.assertEqual(response.json()["session"]["summary"]["roster_size"], 2)
 
 
+class RemindUnconfirmedAttendanceTests(TestCase):
+    """Targeted session reminders: only unconfirmed roster; no parents for past/cancelled."""
+
+    def setUp(self):
+        director = User.objects.create_user(email="rua-dir@example.com", password="StrongPassword123!")
+        self.club = Club.objects.create_club(name="RUA Club", director=director)
+        self.team = Team.objects.create(club=self.club, name="RUA Team")
+        self.coach = User.objects.create_user(email="rua-coach@example.com", password="StrongPassword123!")
+        TeamMembership.objects.add_member(user=self.coach, team=self.team, role=TeamRole.COACH)
+        self.p1 = User.objects.create_user(
+            email="rua-p1@example.com",
+            password="StrongPassword123!",
+            date_of_birth=date(2008, 1, 1),
+        )
+        self.p2 = User.objects.create_user(
+            email="rua-p2@example.com",
+            password="StrongPassword123!",
+            date_of_birth=date(2008, 2, 1),
+        )
+        self.parent = User.objects.create_user(
+            email="rua-par@example.com",
+            password="StrongPassword123!",
+            assigned_account_role=AssignedAccountRole.PARENT,
+        )
+        TeamMembership.objects.add_member(user=self.p1, team=self.team, role=TeamRole.PLAYER)
+        TeamMembership.objects.add_member(user=self.p2, team=self.team, role=TeamRole.PLAYER)
+        ParentPlayerRelation.objects.link(parent=self.parent, player=self.p1)
+        ParentPlayerRelation.objects.link(parent=self.parent, player=self.p2)
+        today = timezone.localdate()
+        future = today + timedelta(days=5)
+        past = today - timedelta(days=5)
+        self.session_future = TrainingSession.objects.create(
+            team=self.team,
+            title="Future pr",
+            session_type=TrainingSession.SessionType.TRAINING,
+            scheduled_date=future,
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+        )
+        self.session_past = TrainingSession.objects.create(
+            team=self.team,
+            title="Past pr",
+            session_type=TrainingSession.SessionType.TRAINING,
+            scheduled_date=past,
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+        )
+        self.session_cancel = TrainingSession.objects.create(
+            team=self.team,
+            title="Cancelled",
+            session_type=TrainingSession.SessionType.TRAINING,
+            scheduled_date=future,
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+            status=TrainingSession.Status.CANCELLED,
+        )
+
+    def test_players_only_unconfirmed(self):
+        TrainingSessionConfirmation.objects.create(
+            training_session=self.session_future,
+            player=self.p1,
+            confirmed_by=self.parent,
+        )
+        token = generate_auth_token(self.coach)
+        url = reverse("core:remind-unconfirmed-training-session", kwargs={"session_id": self.session_future.id})
+        response = self.client.post(
+            url,
+            data=json.dumps({"audience": "players"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 201)
+        data = response.json()
+        self.assertEqual(data["player_recipient_count"], 1)
+        self.assertEqual(data["parent_recipient_count"], 0)
+        self.assertEqual(Notification.objects.filter(recipient=self.p2).count(), 1)
+        self.assertEqual(Notification.objects.filter(recipient=self.p1).count(), 0)
+
+    def test_parents_only_future_linked_to_unconfirmed_player(self):
+        TrainingSessionConfirmation.objects.create(
+            training_session=self.session_future,
+            player=self.p1,
+            confirmed_by=self.parent,
+        )
+        token = generate_auth_token(self.coach)
+        url = reverse("core:remind-unconfirmed-training-session", kwargs={"session_id": self.session_future.id})
+        response = self.client.post(
+            url,
+            data=json.dumps({"audience": "parents"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()["parent_recipient_count"], 1)
+        self.assertEqual(Notification.objects.filter(recipient=self.parent).count(), 1)
+
+    def test_parents_past_session_no_recipients(self):
+        token = generate_auth_token(self.coach)
+        url = reverse("core:remind-unconfirmed-training-session", kwargs={"session_id": self.session_past.id})
+        response = self.client.post(
+            url,
+            data=json.dumps({"audience": "parents"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["recipient_count"], 0)
+
+    def test_all_past_session_notifies_players_only_not_parents(self):
+        token = generate_auth_token(self.coach)
+        url = reverse("core:remind-unconfirmed-training-session", kwargs={"session_id": self.session_past.id})
+        response = self.client.post(
+            url,
+            data=json.dumps({"audience": "all"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()["player_recipient_count"], 2)
+        self.assertEqual(response.json()["parent_recipient_count"], 0)
+
+    def test_cancelled_session_rejected(self):
+        token = generate_auth_token(self.coach)
+        url = reverse("core:remind-unconfirmed-training-session", kwargs={"session_id": self.session_cancel.id})
+        response = self.client.post(
+            url,
+            data=json.dumps({"audience": "players"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_coach_attendance_includes_reminder_flags(self):
+        token = generate_auth_token(self.coach)
+        res_future = self.client.get(
+            reverse("core:coach-training-session-attendance", kwargs={"session_id": self.session_future.id}),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(res_future.status_code, 200)
+        sf = res_future.json()["session"]
+        self.assertTrue(sf["remind_parents_allowed"])
+        self.assertEqual(sf["unconfirmed_roster_count"], 2)
+        res_past = self.client.get(
+            reverse("core:coach-training-session-attendance", kwargs={"session_id": self.session_past.id}),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(res_past.status_code, 200)
+        sp = res_past.json()["session"]
+        self.assertFalse(sp["remind_parents_allowed"])
+
+
 class CoachTeamAttendanceAnalyticsTests(TestCase):
     """EP-26: attendance rates over time for coaches / directors who can manage the team."""
 
@@ -3250,6 +3418,394 @@ class CoachTeamAttendanceAnalyticsTests(TestCase):
         url = reverse("core:team-attendance-trends", kwargs={"team_id": fx["team_a"].id})
         response = self.client.get(url, {"start_date": "not-a-date"}, HTTP_AUTHORIZATION=f"Bearer {token}")
         self.assertEqual(response.status_code, 400)
+
+
+class AttendanceSummaryEndpointTests(TestCase):
+    """EP-27: compact team summary and per-player summary APIs."""
+
+    def _base(self):
+        director = User.objects.create_user(email="ep27-dir@example.com", password="StrongPassword123!")
+        club = Club.objects.create_club(name="EP27 Club", director=director)
+        team = Team.objects.create(club=club, name="EP27 Team")
+        coach = User.objects.create_user(
+            email="ep27-coach@example.com",
+            password="StrongPassword123!",
+            assigned_account_role=AssignedAccountRole.COACH,
+        )
+        player = User.objects.create_user(
+            email="ep27-player@example.com",
+            password="StrongPassword123!",
+            assigned_account_role=AssignedAccountRole.PLAYER,
+            date_of_birth=date(2006, 1, 1),
+        )
+        other_player = User.objects.create_user(
+            email="ep27-other@example.com",
+            password="StrongPassword123!",
+            assigned_account_role=AssignedAccountRole.PLAYER,
+            date_of_birth=date(2006, 1, 1),
+        )
+        parent = User.objects.create_user(
+            email="ep27-par@example.com",
+            password="StrongPassword123!",
+            assigned_account_role=AssignedAccountRole.PARENT,
+        )
+        TeamMembership.objects.add_member(user=coach, team=team, role=TeamRole.COACH)
+        TeamMembership.objects.add_member(user=player, team=team, role=TeamRole.PLAYER)
+        TeamMembership.objects.add_member(user=other_player, team=team, role=TeamRole.PLAYER)
+        ParentPlayerRelation.objects.link(parent=parent, player=player, approval_status=ParentLinkApprovalStatus.APPROVED)
+        return director, club, team, coach, player, other_player, parent
+
+    def test_team_summary_requires_manage_role(self):
+        _, _, team, _, player, _, _ = self._base()
+        today = timezone.localdate()
+        TrainingSession.objects.create(
+            team=team,
+            title="P",
+            session_type=TrainingSession.SessionType.TRAINING,
+            scheduled_date=today - timedelta(days=1),
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+        )
+        token = generate_auth_token(player)
+        url = reverse("core:team-attendance-summary", kwargs={"team_id": team.id})
+        response = self.client.get(url, HTTP_AUTHORIZATION=f"Bearer {token}")
+        self.assertEqual(response.status_code, 403)
+
+    def test_team_summary_coach_sees_roll_up(self):
+        _, _, team, coach, player, _, _ = self._base()
+        today = timezone.localdate()
+        s = TrainingSession.objects.create(
+            team=team,
+            title="P",
+            session_type=TrainingSession.SessionType.TRAINING,
+            scheduled_date=today - timedelta(days=2),
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+        )
+        TrainingSessionConfirmation.objects.create(training_session=s, player=player, confirmed_by=coach)
+        token = generate_auth_token(coach)
+        url = reverse("core:team-attendance-summary", kwargs={"team_id": team.id})
+        response = self.client.get(
+            url,
+            {
+                "start_date": (today - timedelta(days=14)).isoformat(),
+                "end_date": today.isoformat(),
+            },
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["closed_roster_slots_total"], 2)
+        self.assertEqual(body["closed_roster_slots_present"], 1)
+        self.assertEqual(body["closed_roster_slots_absent"], 1)
+
+    def test_player_summary_self(self):
+        _, _, team, _, player, _, _ = self._base()
+        today = timezone.localdate()
+        s = TrainingSession.objects.create(
+            team=team,
+            title="P",
+            session_type=TrainingSession.SessionType.TRAINING,
+            scheduled_date=today - timedelta(days=1),
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+        )
+        TrainingSessionConfirmation.objects.create(training_session=s, player=player, confirmed_by=player)
+        token = generate_auth_token(player)
+        url = reverse("core:player-team-attendance-summary", kwargs={"team_id": team.id, "player_id": player.id})
+        response = self.client.get(url, HTTP_AUTHORIZATION=f"Bearer {token}")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["player"]["attendance_rate_percent"], 100.0)
+
+    def test_player_summary_parent_of_player(self):
+        _, _, team, _, player, _, parent = self._base()
+        today = timezone.localdate()
+        s = TrainingSession.objects.create(
+            team=team,
+            title="P",
+            session_type=TrainingSession.SessionType.TRAINING,
+            scheduled_date=today - timedelta(days=1),
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+        )
+        TrainingSessionConfirmation.objects.create(training_session=s, player=player, confirmed_by=parent)
+        token = generate_auth_token(parent)
+        url = reverse("core:player-team-attendance-summary", kwargs={"team_id": team.id, "player_id": player.id})
+        response = self.client.get(url, HTTP_AUTHORIZATION=f"Bearer {token}")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["player"]["attendance_rate_percent"], 100.0)
+
+    def test_player_summary_wrong_player_forbidden(self):
+        _, _, team, _, player, other_player, _ = self._base()
+        token = generate_auth_token(other_player)
+        url = reverse("core:player-team-attendance-summary", kwargs={"team_id": team.id, "player_id": player.id})
+        response = self.client.get(url, HTTP_AUTHORIZATION=f"Bearer {token}")
+        self.assertEqual(response.status_code, 403)
+
+    def test_player_not_on_roster_404(self):
+        _, _, team, coach, _, _, _ = self._base()
+        stranger = User.objects.create_user(
+            email="ep27-stranger@example.com",
+            password="StrongPassword123!",
+            assigned_account_role=AssignedAccountRole.PLAYER,
+        )
+        token = generate_auth_token(coach)
+        url = reverse("core:player-team-attendance-summary", kwargs={"team_id": team.id, "player_id": stranger.id})
+        response = self.client.get(url, HTTP_AUTHORIZATION=f"Bearer {token}")
+        self.assertEqual(response.status_code, 404)
+
+    def test_analytics_and_compact_summary_share_team_average(self):
+        _, _, team, coach, player, _other, _ = self._base()
+        today = timezone.localdate()
+        s = TrainingSession.objects.create(
+            team=team,
+            title="P",
+            session_type=TrainingSession.SessionType.TRAINING,
+            scheduled_date=today - timedelta(days=2),
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+        )
+        TrainingSessionConfirmation.objects.create(training_session=s, player=player, confirmed_by=coach)
+        token = generate_auth_token(coach)
+        turl = reverse("core:team-attendance-trends", kwargs={"team_id": team.id})
+        surl = reverse("core:team-attendance-summary", kwargs={"team_id": team.id})
+        q = {
+            "start_date": (today - timedelta(days=14)).isoformat(),
+            "end_date": today.isoformat(),
+        }
+        a = self.client.get(turl, q, HTTP_AUTHORIZATION=f"Bearer {token}").json()
+        c = self.client.get(surl, q, HTTP_AUTHORIZATION=f"Bearer {token}").json()
+        self.assertEqual(
+            a["team_average_attendance_rate_percent"],
+            c["team_average_attendance_rate_percent"],
+        )
+
+    def test_cancelled_sessions_excluded_from_closed_slot_totals(self):
+        from apps.core.attendance_summary import prepare_team_attendance_scope, team_closed_player_slot_totals
+
+        _, _, team, _, _player, _other, _ = self._base()
+        today = timezone.localdate()
+        TrainingSession.objects.create(
+            team=team,
+            title="C",
+            session_type=TrainingSession.SessionType.TRAINING,
+            scheduled_date=today - timedelta(days=1),
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+            status=TrainingSession.Status.CANCELLED,
+        )
+        scope = prepare_team_attendance_scope(
+            team,
+            start_date=today - timedelta(days=7),
+            end_date=today,
+            last_n_sessions=None,
+        )
+        attended, closed = team_closed_player_slot_totals(scope)
+        self.assertEqual(closed, 0)
+        self.assertEqual(attended, 0)
+
+
+class AttendanceIncompleteReminderTests(TestCase):
+    """EP-28: coach notifications when roster confirmations are incomplete after a session ends."""
+
+    def _fixture(self, *, include_other_team_coach=False):
+        director = User.objects.create_user(email="ep28-dir@example.com", password="StrongPassword123!")
+        club = Club.objects.create_club(name="EP28 Club", director=director)
+        team = Team.objects.create(club=club, name="EP28 Team")
+        coach = User.objects.create_user(
+            email="ep28-coach@example.com",
+            password="StrongPassword123!",
+            assigned_account_role=AssignedAccountRole.COACH,
+        )
+        player_a = User.objects.create_user(
+            email="ep28-pa@example.com",
+            password="StrongPassword123!",
+            assigned_account_role=AssignedAccountRole.PLAYER,
+            date_of_birth=date(2008, 1, 1),
+        )
+        player_b = User.objects.create_user(
+            email="ep28-pb@example.com",
+            password="StrongPassword123!",
+            assigned_account_role=AssignedAccountRole.PLAYER,
+            date_of_birth=date(2009, 2, 1),
+        )
+        TeamMembership.objects.add_member(user=coach, team=team, role=TeamRole.COACH)
+        TeamMembership.objects.add_member(user=player_a, team=team, role=TeamRole.PLAYER)
+        TeamMembership.objects.add_member(user=player_b, team=team, role=TeamRole.PLAYER)
+        other_coach = None
+        if include_other_team_coach:
+            team_b = Team.objects.create(club=club, name="EP28 Other")
+            other_coach = User.objects.create_user(
+                email="ep28-othercoach@example.com",
+                password="StrongPassword123!",
+                assigned_account_role=AssignedAccountRole.COACH,
+            )
+            TeamMembership.objects.add_member(user=other_coach, team=team_b, role=TeamRole.COACH)
+
+        today = timezone.localdate()
+        past = today - timedelta(days=5)
+        session_incomplete = TrainingSession.objects.create(
+            team=team,
+            title="Past incomplete",
+            session_type=TrainingSession.SessionType.TRAINING,
+            scheduled_date=past,
+            start_time=time(17, 0),
+            end_time=time(18, 0),
+        )
+        session_complete = TrainingSession.objects.create(
+            team=team,
+            title="Past complete",
+            session_type=TrainingSession.SessionType.TRAINING,
+            scheduled_date=past - timedelta(days=1),
+            start_time=time(17, 0),
+            end_time=time(18, 0),
+        )
+        TrainingSessionConfirmation.objects.create(
+            training_session=session_complete,
+            player=player_a,
+            confirmed_by=coach,
+        )
+        TrainingSessionConfirmation.objects.create(
+            training_session=session_complete,
+            player=player_b,
+            confirmed_by=coach,
+        )
+        TrainingSessionConfirmation.objects.create(
+            training_session=session_incomplete,
+            player=player_a,
+            confirmed_by=coach,
+        )
+
+        future = today + timedelta(days=3)
+        session_future = TrainingSession.objects.create(
+            team=team,
+            title="Future",
+            session_type=TrainingSession.SessionType.TRAINING,
+            scheduled_date=future,
+            start_time=time(17, 0),
+            end_time=time(18, 0),
+        )
+
+        cancelled = TrainingSession.objects.create(
+            team=team,
+            title="Cancelled past",
+            session_type=TrainingSession.SessionType.TRAINING,
+            scheduled_date=past - timedelta(days=3),
+            start_time=time(17, 0),
+            end_time=time(18, 0),
+            status=TrainingSession.Status.CANCELLED,
+        )
+
+        return {
+            "director": director,
+            "club": club,
+            "team": team,
+            "coach": coach,
+            "player_a": player_a,
+            "player_b": player_b,
+            "session_incomplete": session_incomplete,
+            "session_complete": session_complete,
+            "session_future": session_future,
+            "session_cancelled": cancelled,
+            "other_coach": other_coach,
+        }
+
+    def test_incomplete_past_session_creates_reminder_for_coach(self):
+        fx = self._fixture()
+        n = sweep_incomplete_attendance_reminders()
+        self.assertGreaterEqual(n, 1)
+        notif = Notification.objects.get(
+            recipient=fx["coach"],
+            category=Notification.Category.ATTENDANCE_INCOMPLETE,
+            training_session=fx["session_incomplete"],
+        )
+        self.assertFalse(notif.is_read)
+        self.assertIn("1 roster player", notif.message.lower())
+
+    def test_complete_past_session_no_reminder(self):
+        fx = self._fixture()
+        sweep_incomplete_attendance_reminders()
+        self.assertFalse(
+            Notification.objects.filter(training_session=fx["session_complete"]).exists()
+        )
+
+    def test_future_session_no_reminder(self):
+        fx = self._fixture()
+        sweep_incomplete_attendance_reminders()
+        self.assertFalse(
+            Notification.objects.filter(training_session=fx["session_future"]).exists()
+        )
+
+    def test_duplicate_sweep_does_not_duplicate_rows(self):
+        fx = self._fixture()
+        sweep_incomplete_attendance_reminders()
+        sweep_incomplete_attendance_reminders()
+        c = Notification.objects.filter(
+            recipient=fx["coach"],
+            category=Notification.Category.ATTENDANCE_INCOMPLETE,
+            training_session=fx["session_incomplete"],
+        ).count()
+        self.assertEqual(c, 1)
+
+    def test_reminder_cleared_when_attendance_completes(self):
+        fx = self._fixture()
+        sweep_incomplete_attendance_reminders()
+        self.assertTrue(
+            Notification.objects.filter(training_session=fx["session_incomplete"]).exists()
+        )
+        TrainingSessionConfirmation.objects.create(
+            training_session=fx["session_incomplete"],
+            player=fx["player_b"],
+            confirmed_by=fx["coach"],
+        )
+        sync_incomplete_attendance_notifications_for_session_id(fx["session_incomplete"].id)
+        self.assertFalse(
+            Notification.objects.filter(training_session=fx["session_incomplete"]).exists()
+        )
+
+    def test_cancelled_session_no_reminder(self):
+        fx = self._fixture()
+        sweep_incomplete_attendance_reminders()
+        self.assertFalse(
+            Notification.objects.filter(training_session=fx["session_cancelled"]).exists()
+        )
+
+    def test_other_team_coach_does_not_receive_reminder(self):
+        fx = self._fixture(include_other_team_coach=True)
+        self.assertIsNotNone(fx["other_coach"])
+        sweep_incomplete_attendance_reminders()
+        self.assertFalse(
+            Notification.objects.filter(recipient=fx["other_coach"]).exists()
+        )
+
+    def test_notification_list_includes_coach_attendance_path(self):
+        fx = self._fixture()
+        sweep_incomplete_attendance_reminders()
+        token = generate_auth_token(fx["coach"])
+        response = self.client.get(
+            reverse("core:notifications"),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        items = response.json()["items"]
+        match = [i for i in items if i.get("training_session_id") == fx["session_incomplete"].id]
+        self.assertEqual(len(match), 1)
+        self.assertEqual(
+            match[0]["coach_attendance_path"],
+            f"/coach/attendance?team={fx['team'].id}&session={fx['session_incomplete'].id}",
+        )
+
+    def test_player_does_not_see_coach_reminder(self):
+        fx = self._fixture()
+        sweep_incomplete_attendance_reminders()
+        token = generate_auth_token(fx["player_a"])
+        response = self.client.get(
+            reverse("core:notifications"),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        ids = [i.get("training_session_id") for i in response.json()["items"]]
+        self.assertNotIn(fx["session_incomplete"].id, ids)
 
 
 class CoachRosterRbacTests(TestCase):

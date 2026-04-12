@@ -7,6 +7,7 @@ class Notification(models.Model):
         SESSION = "session", "Session"
         SCHEDULE = "schedule", "Schedule"
         MANUAL = "manual", "Manual"
+        ATTENDANCE_INCOMPLETE = "attendance_incomplete", "Attendance incomplete"
 
     recipient = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -27,10 +28,17 @@ class Notification(models.Model):
         blank=True,
         related_name="notifications",
     )
+    training_session = models.ForeignKey(
+        "core.TrainingSession",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="incomplete_attendance_notifications",
+    )
     title = models.CharField(max_length=255)
     message = models.TextField()
     category = models.CharField(
-        max_length=20,
+        max_length=32,
         choices=Category.choices,
         default=Category.MANUAL,
     )
@@ -39,6 +47,16 @@ class Notification(models.Model):
 
     class Meta:
         ordering = ["-created_at", "-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["recipient", "training_session", "category"],
+                condition=models.Q(
+                    category="attendance_incomplete",
+                    training_session__isnull=False,
+                ),
+                name="core_notification_unique_attendance_incomplete",
+            ),
+        ]
 
     def __str__(self) -> str:
         return f"{self.recipient} - {self.title}"

@@ -131,7 +131,7 @@ class ParentPlayerRelationAdmin(admin.ModelAdmin):
 
 @admin.register(Notification)
 class NotificationAdmin(admin.ModelAdmin):
-    list_display = ("recipient", "title", "category", "team", "is_read", "created_at")
+    list_display = ("recipient", "title", "category", "team", "training_session", "is_read", "created_at")
     search_fields = (
         "recipient__email",
         "recipient__first_name",

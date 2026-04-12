@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
@@ -19,6 +19,11 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
+from .attendance_summary import (
+    CALCULATION_SUMMARY_TEXT,
+    club_team_attendance_snapshot,
+    club_weighted_average_attendance_percent,
+)
 from .decorators import login_required
 from .models import (
     Club,
@@ -620,6 +625,14 @@ def director_payment_overview(request, club_id):
     outstanding_summaries.sort(key=lambda b: (-Decimal(b["total_remaining"]), b["family_label"].lower()))
     preview_families = outstanding_summaries[:8]
 
+    today_local = timezone.localdate()
+    att_start = today_local - timedelta(days=84)
+    club_att_pct = club_weighted_average_attendance_percent(
+        club,
+        start_date=att_start,
+        end_date=today_local,
+    )
+
     return JsonResponse(
         {
             "club": _club_payment_json(club),
@@ -627,8 +640,21 @@ def director_payment_overview(request, club_id):
                 "registration_player_count": registration_count,
                 "monthly_revenue": str(monthly_revenue),
                 "monthly_revenue_currency": "USD",
-                "attendance_rate": None,
+                "attendance_rate": club_att_pct,
                 "outstanding_payer_count": outstanding_families,
+            },
+            "attendance": {
+                "calculation_summary": CALCULATION_SUMMARY_TEXT,
+                "filters": {
+                    "start_date": att_start.isoformat(),
+                    "end_date": today_local.isoformat(),
+                },
+                "club_average_rate_percent": club_att_pct,
+                "by_team": club_team_attendance_snapshot(
+                    club,
+                    start_date=att_start,
+                    end_date=today_local,
+                ),
             },
             "family_summaries": preview_families,
         }
