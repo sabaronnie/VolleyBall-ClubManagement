@@ -2609,6 +2609,166 @@ class ParentChildAttendanceHistoryTests(TestCase):
         self.assertEqual(response.json()["records"], [])
 
 
+class PlayerAttendanceConfirmationTests(TestCase):
+    """EP-24: player self-confirm for training sessions (assigned Player role, 14+)."""
+
+    def _fixture_team_and_session(self, *, player_dob, player_assigned_role=AssignedAccountRole.PLAYER):
+        director = User.objects.create_user(email="ep24-dir@example.com", password="StrongPassword123!")
+        club = Club.objects.create_club(name="EP24 Club", director=director)
+        team = Team.objects.create(club=club, name="EP24 Team")
+        coach = User.objects.create_user(
+            email="ep24-coach@example.com",
+            password="StrongPassword123!",
+            assigned_account_role=AssignedAccountRole.COACH,
+        )
+        TeamMembership.objects.add_member(user=coach, team=team, role=TeamRole.COACH)
+        player = User.objects.create_user(
+            email="ep24-player@example.com",
+            password="StrongPassword123!",
+            assigned_account_role=player_assigned_role,
+            date_of_birth=player_dob,
+        )
+        TeamMembership.objects.add_member(user=player, team=team, role=TeamRole.PLAYER)
+        other = User.objects.create_user(
+            email="ep24-other@example.com",
+            password="StrongPassword123!",
+            assigned_account_role=AssignedAccountRole.PLAYER,
+            date_of_birth=date(2006, 1, 1),
+        )
+        TeamMembership.objects.add_member(user=other, team=team, role=TeamRole.PLAYER)
+        today = timezone.localdate()
+        session = TrainingSession.objects.create(
+            team=team,
+            title="Practice",
+            session_type=TrainingSession.SessionType.TRAINING,
+            scheduled_date=today + timedelta(days=1),
+            start_time=time(18, 0),
+            end_time=time(19, 30),
+        )
+        return team, session, player, other, coach
+
+    def test_authenticated_player_can_confirm_valid_session(self):
+        _team, session, player, _other, _coach = self._fixture_team_and_session(player_dob=date(2008, 5, 1))
+        token = generate_auth_token(player)
+        response = self.client.post(
+            reverse("core:confirm-training-session", kwargs={"session_id": session.id}),
+            data=json.dumps({}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn("session", data)
+        mine = next(
+            row
+            for row in data["session"]["player_confirmations"]
+            if row["player_id"] == player.id
+        )
+        self.assertTrue(mine["is_confirmed"])
+
+    def test_player_can_update_existing_confirmation(self):
+        _team, session, player, _other, _coach = self._fixture_team_and_session(player_dob=date(2007, 1, 1))
+        TrainingSessionConfirmation.objects.create(
+            training_session=session,
+            player=player,
+            confirmed_by=player,
+        )
+        token = generate_auth_token(player)
+        response = self.client.post(
+            reverse("core:confirm-training-session", kwargs={"session_id": session.id}),
+            data=json.dumps({}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(TrainingSessionConfirmation.objects.filter(training_session=session, player=player).count(), 1)
+
+    def test_player_cannot_confirm_for_teammate(self):
+        _team, session, player, other, _coach = self._fixture_team_and_session(player_dob=date(2007, 1, 1))
+        token = generate_auth_token(player)
+        response = self.client.post(
+            reverse("core:confirm-training-session", kwargs={"session_id": session.id}),
+            data=json.dumps({"player_id": other.id}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_unauthenticated_rejected(self):
+        _team, session, _player, _other, _coach = self._fixture_team_and_session(player_dob=date(2007, 1, 1))
+        response = self.client.post(
+            reverse("core:confirm-training-session", kwargs={"session_id": session.id}),
+            data=json.dumps({}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 401)
+
+    def test_non_player_assigned_role_cannot_self_confirm_even_on_roster(self):
+        """Coach-assigned account cannot self-confirm as a player (EP-24)."""
+        _team, session, player, _other, _coach = self._fixture_team_and_session(
+            player_dob=date(2006, 1, 1),
+            player_assigned_role=AssignedAccountRole.COACH,
+        )
+        token = generate_auth_token(player)
+        response = self.client.post(
+            reverse("core:confirm-training-session", kwargs={"session_id": session.id}),
+            data=json.dumps({}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_invalid_session_returns_404(self):
+        director = User.objects.create_user(email="ep24-idir@example.com", password="StrongPassword123!")
+        club = Club.objects.create_club(name="EP24 Club X", director=director)
+        team = Team.objects.create(club=club, name="EP24 Team X")
+        player = User.objects.create_user(
+            email="ep24-pl@example.com",
+            password="StrongPassword123!",
+            assigned_account_role=AssignedAccountRole.PLAYER,
+            date_of_birth=date(2006, 1, 1),
+        )
+        TeamMembership.objects.add_member(user=player, team=team, role=TeamRole.PLAYER)
+        token = generate_auth_token(player)
+        response = self.client.post(
+            reverse("core:confirm-training-session", kwargs={"session_id": 999999}),
+            data=json.dumps({}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 404)
+
+    def test_session_outside_player_scope_rejected(self):
+        director = User.objects.create_user(email="ep24-idir2@example.com", password="StrongPassword123!")
+        club = Club.objects.create_club(name="EP24 Club Y", director=director)
+        team_a = Team.objects.create(club=club, name="Team A")
+        team_b = Team.objects.create(club=club, name="Team B")
+        player = User.objects.create_user(
+            email="ep24-pl2@example.com",
+            password="StrongPassword123!",
+            assigned_account_role=AssignedAccountRole.PLAYER,
+            date_of_birth=date(2006, 1, 1),
+        )
+        TeamMembership.objects.add_member(user=player, team=team_a, role=TeamRole.PLAYER)
+        today = timezone.localdate()
+        session_b = TrainingSession.objects.create(
+            team=team_b,
+            title="Other practice",
+            session_type=TrainingSession.SessionType.TRAINING,
+            scheduled_date=today + timedelta(days=1),
+            start_time=time(18, 0),
+            end_time=time(19, 30),
+        )
+        token = generate_auth_token(player)
+        response = self.client.post(
+            reverse("core:confirm-training-session", kwargs={"session_id": session_b.id}),
+            data=json.dumps({}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 403)
+
+
 class CoachRosterRbacTests(TestCase):
     def test_coach_cannot_add_parent_assigned_user_as_player(self):
         director = User.objects.create_user(email="rb-dir@example.com", password="StrongPassword123!")

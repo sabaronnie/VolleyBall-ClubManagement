@@ -196,6 +196,11 @@ def _get_user_age(user):
 
 
 def _can_player_self_confirm_training(player_user):
+    """Adult-capable players (14+) with the Player account role may self-confirm (EP-24)."""
+    assigned = (getattr(player_user, "assigned_account_role", None) or "").strip()
+    if assigned != AssignedAccountRole.PLAYER:
+        return False
+
     age = _get_user_age(player_user)
     if age is None:
         return False
