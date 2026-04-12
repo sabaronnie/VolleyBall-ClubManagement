@@ -182,7 +182,7 @@ export default function MemberHubPage() {
   };
 
   return (
-    <ClubWorkspaceLayout activeTab="dashboard">
+    <ClubWorkspaceLayout activeTab="dashboard" viewerAccountRole={me?.user?.assigned_account_role || null}>
       <section className="vc-member-hub" style={{ padding: "1.5rem 1.75rem 2.5rem", maxWidth: 920, margin: "0 auto" }}>
         <header style={{ marginBottom: "1.5rem" }}>
           <h1 style={{ fontSize: "1.45rem", margin: "0 0 0.35rem", fontWeight: 700 }}>Dashboard</h1>

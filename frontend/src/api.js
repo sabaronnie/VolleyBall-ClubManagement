@@ -134,6 +134,10 @@ export async function fetchCurrentUser() {
   return authenticatedGet("/api/auth/me/");
 }
 
+export async function fetchParentChildAttendanceHistory() {
+  return authenticatedGet("/api/me/parent/child-attendance/");
+}
+
 export async function fetchTeamSchedule(teamId) {
   return authenticatedGet(`/api/teams/${teamId}/schedule/`);
 }

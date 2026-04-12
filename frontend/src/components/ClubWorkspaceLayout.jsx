@@ -57,6 +57,7 @@ export default function ClubWorkspaceLayout({
   activeTab,
   beforeIconActions = null,
   heroOverlay = false,
+  viewerAccountRole = null,
   children,
 }) {
   const accountWrapRef = useRef(null);
@@ -170,6 +171,15 @@ export default function ClubWorkspaceLayout({
             <button type="button" className={tabClass("schedule")} onClick={() => navigate("/schedule")}>
               Schedule
             </button>
+            {viewerAccountRole === "parent" ? (
+              <button
+                type="button"
+                className={tabClass("parent-attendance")}
+                onClick={() => navigate("/parent/attendance")}
+              >
+                Attendance
+              </button>
+            ) : null}
             <button type="button" className={tabClass("statistics")} disabled>
               Statistics
             </button>

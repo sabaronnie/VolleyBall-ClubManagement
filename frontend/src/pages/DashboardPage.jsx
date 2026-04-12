@@ -31,6 +31,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const [viewerAccountRole, setViewerAccountRole] = useState(null);
 
   useEffect(() => {
     if (!localStorage.getItem(AUTH_TOKEN_KEY)) {
@@ -40,6 +41,7 @@ export default function DashboardPage() {
 
   const resolveClub = useCallback(async () => {
     const me = await fetchCurrentUser();
+    setViewerAccountRole(me.user?.assigned_account_role || null);
     const clubs = me.owned_clubs || [];
     setOwnedClubs(clubs);
     if (!clubs.length) {
@@ -95,7 +97,7 @@ export default function DashboardPage() {
   const kpis = overview?.kpis;
 
   return (
-    <ClubWorkspaceLayout activeTab="dashboard">
+    <ClubWorkspaceLayout activeTab="dashboard" viewerAccountRole={viewerAccountRole}>
       {ownedClubs.length ? (
         <nav className="vc-dash-subnav" aria-label="Director shortcuts">
           <button type="button" className="vc-dash-subnav__link" onClick={() => navigate("/director/users")}>

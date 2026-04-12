@@ -16,6 +16,7 @@ import CoachPaymentsPage from "./pages/CoachPaymentsPage";
 import LoginPage from "./pages/LoginPage";
 import MemberHubPage from "./pages/MemberHubPage";
 import MyFeesPage from "./pages/MyFeesPage";
+import ParentAttendancePage from "./pages/ParentAttendancePage";
 import TeamRosterPage from "./pages/TeamRosterPage";
 import { ForgotPasswordPage, ResetPasswordPage } from "./pages/PasswordResetPages";
 import RegisterPage from "./pages/RegisterPage";
@@ -912,6 +913,7 @@ function App() {
   const [isSavingSchedule, setIsSavingSchedule] = useState(false);
   const [selectedChildIdByTeam, setSelectedChildIdByTeam] = useState({});
   const [directorDashboardAllowed, setDirectorDashboardAllowed] = useState(null);
+  const [viewerAccountRole, setViewerAccountRole] = useState(null);
   const [teamsRefreshKey, setTeamsRefreshKey] = useState(0);
   const scheduleTeams = useMemo(
     () => (scheduleAccessElevated ? teams : teams.filter((t) => t.scheduleTier === "member")),
@@ -1020,6 +1022,7 @@ function App() {
     async function loadTeams() {
       if (!isAuthenticated) {
         setDirectorDashboardAllowed(null);
+        setViewerAccountRole(null);
         setScheduleAccessElevated(false);
         setTeams([]);
         setActiveTeamId("");
@@ -1032,6 +1035,8 @@ function App() {
         if (!isMounted) {
           return;
         }
+
+        setViewerAccountRole(payload.user?.assigned_account_role || null);
 
         const allowed =
           typeof payload.is_director_or_staff === "boolean"
@@ -1050,6 +1055,7 @@ function App() {
           return;
         }
         setDirectorDashboardAllowed(false);
+        setViewerAccountRole(null);
         setScheduleAccessElevated(false);
         setTeams([]);
         setActiveTeamId("");
@@ -1490,10 +1496,22 @@ function App() {
     return <DirectorPaymentLogsPage />;
   }
 
+  if (pathname === "/parent/attendance" || pathname === "/parent/attendance/") {
+    if (!isAuthenticated) {
+      return <LoginPage />;
+    }
+    return (
+      <ClubWorkspaceLayout activeTab="parent-attendance" viewerAccountRole={viewerAccountRole}>
+        <ParentAttendancePage />
+      </ClubWorkspaceLayout>
+    );
+  }
+
   if (pathname === "/teams") {
     return (
       <ClubWorkspaceLayout
         activeTab=""
+        viewerAccountRole={viewerAccountRole}
         beforeIconActions={
           <ClubTeamSelect
             teams={teams}
@@ -1512,6 +1530,7 @@ function App() {
     return (
       <ClubWorkspaceLayout
         activeTab=""
+        viewerAccountRole={viewerAccountRole}
         beforeIconActions={
           <ClubTeamSelect
             teams={teams}
@@ -1533,6 +1552,7 @@ function App() {
     return (
       <ClubWorkspaceLayout
         activeTab=""
+        viewerAccountRole={viewerAccountRole}
         beforeIconActions={
           <ClubTeamSelect
             teams={teams}
@@ -1560,6 +1580,7 @@ function App() {
     return (
       <ClubWorkspaceLayout
         activeTab=""
+        viewerAccountRole={viewerAccountRole}
         beforeIconActions={
           <ClubTeamSelect
             teams={teams}
@@ -1581,6 +1602,7 @@ function App() {
     return (
       <ClubWorkspaceLayout
         activeTab="schedule"
+        viewerAccountRole={viewerAccountRole}
         beforeIconActions={
           <ClubTeamSelect
             teams={scheduleTeams}
@@ -1960,6 +1982,7 @@ function App() {
     return (
       <ClubWorkspaceLayout
         activeTab="home"
+        viewerAccountRole={viewerAccountRole}
         beforeIconActions={
           <ClubTeamSelect
             teams={teams}
