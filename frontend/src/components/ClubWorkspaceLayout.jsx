@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchCurrentUser } from "../api";
+import NotificationBell from "./NotificationBell";
 import { navigate } from "../navigation";
 
 const AUTH_TOKEN_KEY = "netup.auth.token";
@@ -72,6 +73,7 @@ export default function ClubWorkspaceLayout({
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState("");
   const [directorToolsVisible, setDirectorToolsVisible] = useState(false);
+  const [showParentAttendanceFromProfile, setShowParentAttendanceFromProfile] = useState(false);
 
   useEffect(() => {
     if (!localStorage.getItem(AUTH_TOKEN_KEY)) {
@@ -82,11 +84,19 @@ export default function ClubWorkspaceLayout({
       .then((me) => {
         if (!cancelled) {
           setDirectorToolsVisible(Boolean(me.is_director_or_staff));
+          const roles = me.account_profile?.roles || [];
+          const assigned = (me.user?.assigned_account_role || "").trim();
+          const hasChildren = Array.isArray(me.children) && me.children.length > 0;
+          const pendingLinks = Array.isArray(me.pending_parent_links) && me.pending_parent_links.length > 0;
+          setShowParentAttendanceFromProfile(
+            assigned === "parent" || roles.includes("parent") || hasChildren || pendingLinks,
+          );
         }
       })
       .catch(() => {
         if (!cancelled) {
           setDirectorToolsVisible(false);
+          setShowParentAttendanceFromProfile(false);
         }
       });
     return () => {
@@ -193,13 +203,13 @@ export default function ClubWorkspaceLayout({
                 Team attendance
               </button>
             ) : null}
-            {viewerAccountRole === "parent" ? (
+            {viewerAccountRole === "parent" || showParentAttendanceFromProfile ? (
               <button
                 type="button"
                 className={tabClass("parent-attendance")}
                 onClick={() => navigate("/parent/attendance")}
               >
-                Attendance
+                Family attendance
               </button>
             ) : null}
             <button type="button" className={tabClass("statistics")} disabled>
@@ -209,6 +219,7 @@ export default function ClubWorkspaceLayout({
         </div>
         <div className="vc-dash-actions vc-dash-actions--spread" aria-label="Toolbar">
           {beforeIconActions ? <div className="vc-dash-actions-pre">{beforeIconActions}</div> : null}
+          <NotificationBell />
           <button type="button" className="vc-dash-icon-btn" aria-label="Settings" disabled>
             {"\u2699\uFE0F"}
           </button>

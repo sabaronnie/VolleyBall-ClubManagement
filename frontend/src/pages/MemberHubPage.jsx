@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { directorCreateTeam, fetchCurrentUser, fetchMyFees, requestParentLinkToPlayer } from "../api";
+import {
+  directorCreateTeam,
+  fetchCurrentUser,
+  fetchMyFees,
+  fetchTeamMembers,
+  requestParentLinkToPlayer,
+} from "../api";
 import ClubWorkspaceLayout from "../components/ClubWorkspaceLayout";
 import { navigate } from "../navigation";
 
@@ -35,6 +41,8 @@ export default function MemberHubPage() {
   const [linkBusy, setLinkBusy] = useState(false);
   const [linkMessage, setLinkMessage] = useState("");
   const [linkError, setLinkError] = useState("");
+  /** teamId -> { playerCount, coachCount } */
+  const [coachTeamRoster, setCoachTeamRoster] = useState({});
 
   useEffect(() => {
     if (!localStorage.getItem(AUTH_TOKEN_KEY)) {
@@ -104,6 +112,59 @@ export default function MemberHubPage() {
     }
     return [...m.entries()].map(([id, name]) => ({ id, name }));
   }, [coached]);
+
+  const coachedTeamIdsKey = useMemo(
+    () =>
+      (me?.coached_teams || [])
+        .map((t) => t.id)
+        .filter((id) => id != null)
+        .sort((a, b) => a - b)
+        .join(","),
+    [me?.coached_teams],
+  );
+
+  useEffect(() => {
+    if (!coachedTeamIdsKey) {
+      setCoachTeamRoster({});
+      return undefined;
+    }
+    const teamIds = coachedTeamIdsKey
+      .split(",")
+      .map((s) => Number(s))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    if (!teamIds.length) {
+      setCoachTeamRoster({});
+      return undefined;
+    }
+    let cancelled = false;
+    void (async () => {
+      const next = {};
+      await Promise.all(
+        teamIds.map(async (tid) => {
+          try {
+            const data = await fetchTeamMembers(tid);
+            const members = data.members || [];
+            let playerCount = 0;
+            let coachCount = 0;
+            for (const row of members) {
+              const role = row.membership?.role;
+              if (role === "player") playerCount += 1;
+              else if (role === "coach") coachCount += 1;
+            }
+            next[tid] = { playerCount, coachCount, error: null };
+          } catch {
+            next[tid] = { playerCount: null, coachCount: null, error: "Could not load roster." };
+          }
+        }),
+      );
+      if (!cancelled) {
+        setCoachTeamRoster(next);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [coachedTeamIdsKey]);
 
   useEffect(() => {
     if (!coachClubOptions.length) {
@@ -185,6 +246,11 @@ export default function MemberHubPage() {
     (me?.coached_teams || []).some((t) => t.can_manage_training) ||
     (me?.director_teams || []).some((t) => t.can_manage_training);
 
+  const directorLabelWithoutMembership =
+    me?.user?.assigned_account_role === "director" &&
+    !me?.is_director_or_staff &&
+    ownedClubs.length === 0;
+
   return (
     <ClubWorkspaceLayout
       activeTab="dashboard"
@@ -193,10 +259,10 @@ export default function MemberHubPage() {
       showCoachAttendanceTab={showCoachAttendanceTab}
     >
       <section className="vc-member-hub" style={{ padding: "1.5rem 1.75rem 2.5rem", maxWidth: 920, margin: "0 auto" }}>
-        <header style={{ marginBottom: "1.5rem" }}>
+        <header style={{ marginBottom: "1.25rem" }}>
           <h1 style={{ fontSize: "1.45rem", margin: "0 0 0.35rem", fontWeight: 700 }}>Dashboard</h1>
-          <p style={{ margin: 0, color: "#5c6570", lineHeight: 1.55, maxWidth: 640 }}>
-            Your personalized hub based on your club role.
+          <p style={{ margin: 0, color: "#5c6570", lineHeight: 1.5, maxWidth: 560 }}>
+            Quick links for your role—open a section below for details.
           </p>
         </header>
 
@@ -205,30 +271,64 @@ export default function MemberHubPage() {
 
         {!loading && !error ? (
           <>
+            {directorLabelWithoutMembership ? (
+              <div
+                className="vc-director-error"
+                role="status"
+                style={{ marginBottom: "1.25rem", lineHeight: 1.55 }}
+              >
+                Your profile is set to <strong>Director</strong>, but there is no active{" "}
+                <strong>club director</strong> membership for your account. Director tools stay off until that is
+                restored (for example from the project backend:{" "}
+                <code style={{ fontSize: "0.85em" }}>
+                  python manage.py set_club_director YOUR_EMAIL --club-id=CLUB_ID
+                </code>
+                ). After fixing, refresh this page or sign out and back in.
+              </div>
+            ) : null}
             <section
               className="vc-dash-kpi-card"
-              style={{ marginBottom: "1.25rem", display: "flex", flexWrap: "wrap", gap: "0.75rem", alignItems: "center" }}
-              aria-label="Workspace shortcuts"
+              style={{ marginBottom: "1.25rem" }}
+              aria-label="Quick links"
             >
-              <span style={{ fontWeight: 600, width: "100%", marginBottom: "0.15rem" }}>Workspace</span>
-              <button type="button" className="vc-action-btn" onClick={() => navigate("/schedule")}>
-                Schedule
-              </button>
-              <button
-                type="button"
-                className="vc-action-btn"
-                onClick={() => navigate(coachOnlyPayer ? "/payments" : "/my-fees")}
+              <h2 style={{ fontSize: "1.05rem", margin: "0 0 0.75rem" }}>Quick links</h2>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
+                  gap: "0.5rem",
+                }}
               >
-                {coachOnlyPayer ? "Team payments" : "My payments"}
-              </button>
+                <button type="button" className="vc-action-btn" onClick={() => navigate("/schedule")}>
+                  Schedule
+                </button>
+                <button
+                  type="button"
+                  className="vc-action-btn"
+                  onClick={() => navigate(coachOnlyPayer ? "/payments" : "/my-fees")}
+                >
+                  {coachOnlyPayer ? "Team fees" : "My fees"}
+                </button>
+                {showCoachAttendanceTab ? (
+                  <button type="button" className="vc-action-btn" onClick={() => navigate("/coach/attendance")}>
+                    Team attendance
+                  </button>
+                ) : null}
+                {playing.length > 0 ? (
+                  <button type="button" className="vc-action-btn" onClick={() => navigate("/player/attendance")}>
+                    My sessions
+                  </button>
+                ) : null}
+                {accountRoles.includes("parent") || children.length > 0 ? (
+                  <button type="button" className="vc-action-btn" onClick={() => navigate("/parent/attendance")}>
+                    Family attendance
+                  </button>
+                ) : null}
+              </div>
               {!hasTeams ? (
-                <span className="vc-modal__muted" style={{ flex: "1 1 200px" }}>
-                  Ask your director to add you to a roster. If you run teams, use{" "}
-                  <button type="button" className="vc-link-cyan" onClick={() => navigate("/director/teams")}>
-                    Teams &amp; roster setup
-                  </button>{" "}
-                  (directors) or create a team under Coaching below (coaches).
-                </span>
+                <p className="vc-modal__muted" style={{ margin: "0.75rem 0 0", fontSize: "0.88rem", lineHeight: 1.5 }}>
+                  No team yet? Your director can add you to a roster.
+                </p>
               ) : null}
             </section>
 
@@ -280,27 +380,24 @@ export default function MemberHubPage() {
 
             {isDirector ? (
               <section className="vc-dash-kpi-card" style={{ marginBottom: "1.25rem" }} aria-labelledby="hub-director-heading">
-                <h2 id="hub-director-heading" style={{ fontSize: "1.05rem", margin: "0 0 0.75rem" }}>
-                  Director & staff
+                <h2 id="hub-director-heading" style={{ fontSize: "1.05rem", margin: "0 0 0.65rem" }}>
+                  Director tools
                 </h2>
-                <p style={{ margin: "0 0 1rem", color: "#5c6570", lineHeight: 1.5 }}>
-                  Registration, payments, and roster tools for people who run the club.
-                </p>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
                   <button type="button" className="vc-action-btn" onClick={() => navigate("/dashboard")}>
-                    Director dashboard
+                    Club dashboard
                   </button>
                   <button type="button" className="vc-action-btn" onClick={() => navigate("/director/payments")}>
-                    Payments & fees
+                    Payments
                   </button>
                   <button type="button" className="vc-action-btn" onClick={() => navigate("/director/users")}>
-                    Registration
+                    Users
                   </button>
                   <button type="button" className="vc-action-btn" onClick={() => navigate("/director/teams")}>
-                    Teams & roster setup
+                    Teams
                   </button>
                   <button type="button" className="vc-action-btn" onClick={() => navigate("/payments")}>
-                    Payment schedule
+                    Fee schedules
                   </button>
                 </div>
               </section>
@@ -308,11 +405,12 @@ export default function MemberHubPage() {
 
             {coached.length ? (
               <section className="vc-dash-kpi-card" style={{ marginBottom: "1.25rem" }} aria-labelledby="hub-coach-heading">
-                <h2 id="hub-coach-heading" style={{ fontSize: "1.05rem", margin: "0 0 0.75rem" }}>
+                <h2 id="hub-coach-heading" style={{ fontSize: "1.05rem", margin: "0 0 0.5rem" }}>
                   Coaching
                 </h2>
-                <p style={{ margin: "0 0 1rem", color: "#5c6570", lineHeight: 1.5 }}>
-                  Open a roster to add players or coaches by user ID, or create another team in the same club.
+                <p style={{ margin: "0 0 0.85rem", color: "#5c6570", lineHeight: 1.5, fontSize: "0.9rem" }}>
+                  Add sessions under <strong>Team attendance</strong> so players and parents can confirm; manage roster
+                  and fees per team below.
                 </p>
                 <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: "0.75rem" }}>
                   {coached.map((team) => (
@@ -328,7 +426,29 @@ export default function MemberHubPage() {
                         paddingBottom: "0.65rem",
                       }}
                     >
-                      <span style={{ fontWeight: 600 }}>{team.name}</span>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontWeight: 600 }}>{team.name}</div>
+                        {coachTeamRoster[team.id]?.error ? (
+                          <p className="vc-modal__muted" style={{ margin: "0.25rem 0 0", fontSize: "0.85rem" }}>
+                            {coachTeamRoster[team.id].error}
+                          </p>
+                        ) : coachTeamRoster[team.id]?.playerCount != null ? (
+                          <p className="vc-modal__muted" style={{ margin: "0.25rem 0 0", fontSize: "0.85rem" }}>
+                            {coachTeamRoster[team.id].playerCount} player
+                            {coachTeamRoster[team.id].playerCount === 1 ? "" : "s"}
+                            {coachTeamRoster[team.id].coachCount != null && coachTeamRoster[team.id].coachCount > 0
+                              ? ` · ${coachTeamRoster[team.id].coachCount} coach${
+                                  coachTeamRoster[team.id].coachCount === 1 ? "" : "es"
+                                }`
+                              : ""}{" "}
+                            on roster
+                          </p>
+                        ) : (
+                          <p className="vc-modal__muted" style={{ margin: "0.25rem 0 0", fontSize: "0.85rem" }}>
+                            Loading roster…
+                          </p>
+                        )}
+                      </div>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
                         <button
                           type="button"
@@ -571,9 +691,12 @@ export default function MemberHubPage() {
                     );
                   })}
                 </ul>
-                <div style={{ marginTop: "0.85rem" }}>
+                <div style={{ marginTop: "0.85rem", display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
+                  <button type="button" className="vc-action-btn" onClick={() => navigate("/parent/attendance")}>
+                    Family attendance
+                  </button>
                   <button type="button" className="vc-action-btn" onClick={() => navigate("/my-fees")}>
-                    View & pay children's fees
+                    View & pay children&apos;s fees
                   </button>
                 </div>
               </section>

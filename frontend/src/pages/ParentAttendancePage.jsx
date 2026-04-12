@@ -118,6 +118,7 @@ export default function ParentAttendancePage() {
   const records = payload?.records || [];
   const linked = payload?.linked_children || [];
   const notice = payload?.message;
+  const attendanceSummaries = payload?.attendance_summaries || [];
 
   const confirmContexts = useMemo(() => buildConfirmContexts(me, records), [me, records]);
 
@@ -188,6 +189,26 @@ export default function ParentAttendancePage() {
     return list;
   }, [sessionsPayload, activeConfirmContext, today]);
 
+  const pastForChild = useMemo(() => {
+    if (!sessionsPayload?.sessions || !activeConfirmContext) return [];
+    const cid = activeConfirmContext.childId;
+    const list = [];
+    for (const s of sessionsPayload.sessions) {
+      const d = parseLocalDate(s.scheduled_date);
+      if (!d || d >= today) continue;
+      const row = (s.player_confirmations || []).find((p) => Number(p.player_id) === Number(cid));
+      list.push({ session: s, childRow: row || null });
+    }
+    const byDateDesc = (a, b) => {
+      const da = parseLocalDate(a.session.scheduled_date);
+      const db = parseLocalDate(b.session.scheduled_date);
+      if (!da || !db) return 0;
+      return db - da || String(b.session.start_time).localeCompare(String(a.session.start_time));
+    };
+    list.sort(byDateDesc);
+    return list;
+  }, [sessionsPayload, activeConfirmContext, today]);
+
   const onConfirmForChild = async (sessionId, childId) => {
     setConfirmBanner("");
     setConfirmBannerError("");
@@ -213,7 +234,51 @@ export default function ParentAttendancePage() {
     return records.filter((row) => Number(row.child?.id) === id);
   }, [records, childFilter]);
 
+  const displayedSummaries = useMemo(() => {
+    if (childFilter === "all") return attendanceSummaries;
+    const id = Number(childFilter);
+    if (!Number.isFinite(id)) return attendanceSummaries;
+    return attendanceSummaries.filter((row) => Number(row.child?.id) === id);
+  }, [attendanceSummaries, childFilter]);
+
   const showChildColumn = linked.length > 1 && childFilter === "all";
+
+  const renderSummaryCards = () => {
+    if (!displayedSummaries.length) return null;
+    return (
+      <section className="vc-panel" style={{ marginBottom: "1.5rem" }}>
+        <h2 className="vc-panel-title">Attendance summary</h2>
+        <p className="vc-modal__muted" style={{ marginTop: 0, marginBottom: "1rem", maxWidth: 720, lineHeight: 1.5 }}>
+          Rates use about the last 12 weeks of completed session days; pending includes upcoming sessions in the
+          next two years. Cancelled sessions are excluded. Same rules as coach analytics.
+        </p>
+        <div className="vc-dash-kpi-card" style={{ flexWrap: "wrap" }}>
+          {displayedSummaries.map((row) => {
+            const m = row.metrics || {};
+            const rate =
+              m.attendance_rate_percent != null ? `${Number(m.attendance_rate_percent).toFixed(1)}%` : "—";
+            return (
+              <div key={`${row.child?.id}-${row.team?.id}`} className="vc-kpi" style={{ minWidth: 200 }}>
+                <span className="vc-kpi-icon" aria-hidden="true">
+                  📊
+                </span>
+                <div>
+                  <div className="vc-kpi-label">
+                    {childDisplayName(row.child)} · {row.team?.name || "Team"}
+                  </div>
+                  <div className="vc-kpi-value">{rate}</div>
+                  <div className="vc-modal__muted" style={{ fontSize: "0.82rem", marginTop: "0.35rem" }}>
+                    Present {m.attended_sessions ?? "—"} / closed {m.sessions_counted_for_rate ?? "—"} · Pending{" "}
+                    {m.pending_sessions ?? "—"}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+    );
+  };
 
   const renderConfirmSection = () => {
     if (!confirmContexts.length) return null;
@@ -342,6 +407,46 @@ export default function ParentAttendancePage() {
             })}
           </div>
         )}
+
+        {pastForChild.length ? (
+          <div style={{ marginTop: "1.5rem" }}>
+            <div className="team-training-panel__header" style={{ marginBottom: "0.65rem" }}>
+              <h2 style={{ fontSize: "1.05rem", margin: 0 }}>Recent past</h2>
+              <p className="vc-modal__muted" style={{ margin: "0.35rem 0 0", fontSize: "0.88rem", lineHeight: 1.5 }}>
+                Latest closed session days for {activeConfirmContext?.childName ?? "your child"} on this team. Full
+                history is in the table below.
+              </p>
+            </div>
+            <div className="training-session-list">
+              {pastForChild.slice(0, 8).map(({ session, childRow }) => {
+                const confirmed = Boolean(childRow?.is_confirmed);
+                const isCancelled = session.status === "cancelled";
+                return (
+                  <article key={session.id} className="training-session-card">
+                    <div className="training-session-card__top">
+                      <div>
+                        <div className="training-session-card__meta">
+                          <span>{session.session_type_label || session.session_type}</span>
+                          {isCancelled ? (
+                            <span className="training-status-badge training-status-badge--cancelled">Cancelled</span>
+                          ) : null}
+                        </div>
+                        <h3 style={{ fontSize: "1rem" }}>{session.title}</h3>
+                        <p className="training-session-card__location">
+                          {session.scheduled_date} · {session.start_time} – {session.end_time}
+                          {session.location ? ` · ${session.location}` : ""}
+                        </p>
+                      </div>
+                      <span className={confirmed ? "vc-status-paid" : "vc-status-pending"}>
+                        {isCancelled ? "Cancelled" : confirmed ? "Confirmed" : "No confirmation"}
+                      </span>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
       </section>
     );
   };
@@ -366,13 +471,22 @@ export default function ParentAttendancePage() {
     return (
       <section className="teams-page-shell">
         <header className="teams-page-header">
-          <div className="teams-page-heading">
-            <p className="teams-page-kicker">Family</p>
-            <h1>Child attendance</h1>
-            <p className="teams-page-subtitle">{notice}</p>
+          <div className="teams-page-heading" style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", alignItems: "flex-start", justifyContent: "space-between" }}>
+            <div>
+              <p className="teams-page-kicker">Family</p>
+              <h1>Child attendance</h1>
+              <p className="teams-page-subtitle">{notice}</p>
+              <p className="vc-modal__muted" style={{ margin: "0.5rem 0 0", maxWidth: 560, lineHeight: 1.5 }}>
+                Club fees for linked players are under <strong>My fees</strong> on your dashboard.
+              </p>
+            </div>
+            <button type="button" className="vc-action-btn" onClick={() => void load()}>
+              Refresh
+            </button>
           </div>
         </header>
         {renderConfirmSection()}
+        {renderSummaryCards()}
         <section className="schedule-empty-card">
           <h2>No attendance yet</h2>
           <p>When your linked player joins team sessions, their attendance will appear here.</p>
@@ -385,19 +499,25 @@ export default function ParentAttendancePage() {
     return (
       <section className="teams-page-shell">
         <header className="teams-page-header">
-          <div className="teams-page-heading">
-            <p className="teams-page-kicker">Family</p>
-            <h1>Child attendance</h1>
-            <p className="teams-page-subtitle">
-              Training and match sessions for{" "}
-              {linked.length === 1
-                ? `${linked[0].first_name || "your child"}'s teams`
-                : "your linked players"}
-              .
-            </p>
+          <div className="teams-page-heading" style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", alignItems: "flex-start", justifyContent: "space-between" }}>
+            <div>
+              <p className="teams-page-kicker">Family</p>
+              <h1>Child attendance</h1>
+              <p className="teams-page-subtitle">
+                Training and match sessions for{" "}
+                {linked.length === 1
+                  ? `${linked[0].first_name || "your child"}'s teams`
+                  : "your linked players"}
+                .
+              </p>
+            </div>
+            <button type="button" className="vc-action-btn" onClick={() => void load()}>
+              Refresh
+            </button>
           </div>
         </header>
         {renderConfirmSection()}
+        {renderSummaryCards()}
         <section className="schedule-empty-card">
           <h2>No sessions yet</h2>
           <p>There are no scheduled sessions on your linked players&apos; teams, or rosters are still being set up.</p>
@@ -411,16 +531,26 @@ export default function ParentAttendancePage() {
   return (
     <section className="teams-page-shell">
       <header className="teams-page-header">
-        <div className="teams-page-heading">
-          <p className="teams-page-kicker">Family</p>
-          <h1>Child attendance</h1>
-          <p className="teams-page-subtitle">
-            Confirm upcoming sessions for young players, then review confirmation status (newest first in the table).
-          </p>
+        <div className="teams-page-heading" style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", alignItems: "flex-start", justifyContent: "space-between" }}>
+          <div>
+            <p className="teams-page-kicker">Family</p>
+            <h1>Child attendance</h1>
+            <p className="teams-page-subtitle">
+              Confirm upcoming sessions for young players, then review confirmation status (newest first in the table).
+            </p>
+            <p className="vc-modal__muted" style={{ margin: "0.5rem 0 0", maxWidth: 560, lineHeight: 1.5 }}>
+              Pay club fees on <strong>Dashboard → My fees</strong> (same flow as players, for your linked children).
+            </p>
+          </div>
+          <button type="button" className="vc-action-btn" onClick={() => void load()}>
+            Refresh
+          </button>
         </div>
       </header>
 
       {renderConfirmSection()}
+
+      {renderSummaryCards()}
 
       {linked.length > 1 ? (
         <div className="vc-dash-team-field" style={{ marginBottom: "1rem", maxWidth: 360 }}>

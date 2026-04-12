@@ -1050,11 +1050,9 @@ function App() {
 
         setViewerAccountRole(payload.user?.assigned_account_role || null);
 
-        const allowed =
-          typeof payload.is_director_or_staff === "boolean"
-            ? payload.is_director_or_staff
-            : (payload.owned_clubs || []).length > 0;
-        setDirectorDashboardAllowed(Boolean(allowed));
+        const owned = (payload.owned_clubs || []).length > 0;
+        const flaggedDirector = payload.is_director_or_staff === true;
+        setDirectorDashboardAllowed(flaggedDirector || owned);
 
         const elevated =
           (payload.director_teams || []).length > 0 || (payload.coached_teams || []).length > 0;

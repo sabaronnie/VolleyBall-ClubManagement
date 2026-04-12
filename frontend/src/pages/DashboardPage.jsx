@@ -34,6 +34,7 @@ export default function DashboardPage() {
   const [viewerAccountRole, setViewerAccountRole] = useState(null);
   const [hasPlayerTeams, setHasPlayerTeams] = useState(false);
   const [showCoachAttendanceTab, setShowCoachAttendanceTab] = useState(false);
+  const [isDirectorOrStaff, setIsDirectorOrStaff] = useState(false);
 
   useEffect(() => {
     if (!localStorage.getItem(AUTH_TOKEN_KEY)) {
@@ -43,6 +44,7 @@ export default function DashboardPage() {
 
   const resolveClub = useCallback(async () => {
     const me = await fetchCurrentUser();
+    setIsDirectorOrStaff(Boolean(me.is_director_or_staff));
     setViewerAccountRole(me.user?.assigned_account_role || null);
     setHasPlayerTeams(Array.isArray(me.player_teams) && me.player_teams.length > 0);
     setShowCoachAttendanceTab(
@@ -110,10 +112,10 @@ export default function DashboardPage() {
       showPlayerSessionsTab={hasPlayerTeams}
       showCoachAttendanceTab={showCoachAttendanceTab}
     >
-      {ownedClubs.length ? (
+      {ownedClubs.length > 0 || isDirectorOrStaff ? (
         <nav className="vc-dash-subnav" aria-label="Director shortcuts">
           <button type="button" className="vc-dash-subnav__link" onClick={() => navigate("/director/users")}>
-            Registration
+            Users
           </button>
           <span className="vc-dash-subnav__sep" aria-hidden="true">
             ·
@@ -123,7 +125,7 @@ export default function DashboardPage() {
             className="vc-dash-subnav__link"
             onClick={() => navigate(`/director/payments?club_id=${clubId || ownedClubs[0]?.id || ""}`)}
           >
-            Full payments
+            Payments
           </button>
           <span className="vc-dash-subnav__sep" aria-hidden="true">
             ·
@@ -133,19 +135,19 @@ export default function DashboardPage() {
             className="vc-dash-subnav__link"
             onClick={() => navigate(`/director/payments/logs?club_id=${clubId || ownedClubs[0]?.id || ""}`)}
           >
-            Payment logs
+            Logs
           </button>
           <span className="vc-dash-subnav__sep" aria-hidden="true">
             ·
           </span>
           <button type="button" className="vc-dash-subnav__link" onClick={() => navigate("/director/teams")}>
-            Teams & roster
+            Teams
           </button>
           <span className="vc-dash-subnav__sep" aria-hidden="true">
             ·
           </span>
           <button type="button" className="vc-dash-subnav__link" onClick={() => navigate("/payments")}>
-            Payment schedule
+            Schedules
           </button>
         </nav>
       ) : null}
@@ -233,16 +235,53 @@ export default function DashboardPage() {
 
       <div className="vc-dash-row">
         <section className="vc-panel">
-          <h2 className="vc-panel-title">Attendance trend (last 30 months)</h2>
+          <h2 className="vc-panel-title">Attendance by team</h2>
           <div className="vc-chart-wrap">
-            <p className="vc-modal__muted" style={{ margin: 0 }}>
-              No attendance taken in the last 30 months.
-            </p>
+            {loading ? (
+              <p className="vc-modal__muted" style={{ margin: 0 }}>
+                Loading…
+              </p>
+            ) : !clubId || !overview?.attendance ? (
+              <p className="vc-modal__muted" style={{ margin: 0 }}>
+                Add training sessions to see team rates (about the last 12 weeks).
+              </p>
+            ) : (
+              <>
+                <details style={{ margin: "0 0 0.75rem" }}>
+                  <summary className="vc-modal__muted" style={{ fontSize: "0.88rem", cursor: "pointer" }}>
+                    How attendance % is calculated
+                  </summary>
+                  <p className="vc-modal__muted" style={{ margin: "0.5rem 0 0", fontSize: "0.85rem", lineHeight: 1.5 }}>
+                    {overview.attendance.calculation_summary}
+                  </p>
+                </details>
+                <ul className="vc-summary-list" style={{ margin: 0 }}>
+                  {(overview.attendance.by_team || []).map((t) => (
+                    <li key={t.team_id}>
+                      <span>{t.team_name}</span>
+                      <strong>
+                        {t.average_rate_percent != null ? `${Number(t.average_rate_percent).toFixed(1)}%` : "—"}
+                        {t.closed_roster_slots ? (
+                          <span className="vc-modal__muted" style={{ fontWeight: 600, marginLeft: "0.35rem" }}>
+                            ({t.closed_roster_slots} closed slots)
+                          </span>
+                        ) : null}
+                      </strong>
+                    </li>
+                  ))}
+                </ul>
+                {!(overview.attendance.by_team || []).length ? (
+                  <p className="vc-modal__muted" style={{ margin: "0.75rem 0 0" }}>
+                    No teams or no closed sessions in this window yet.
+                  </p>
+                ) : null}
+              </>
+            )}
           </div>
         </section>
 
         <section className="vc-panel">
-          <h2 className="vc-panel-title">Payments overview</h2>
+          <h2 className="vc-panel-title">Who owes fees</h2>
           {loading ? (
             <p className="vc-modal__muted">Loading payment data…</p>
           ) : !clubId ? (
@@ -296,7 +335,7 @@ export default function DashboardPage() {
 
       <div className="vc-actions-row">
         <button type="button" className="vc-action-btn" onClick={() => navigate("/director/users")}>
-          <span>Manage registration</span>
+          <span>Registration</span>
           <span aria-hidden="true">›</span>
         </button>
         <button
@@ -305,66 +344,32 @@ export default function DashboardPage() {
           disabled={!clubId}
           onClick={() => navigate(`/director/payments/logs?club_id=${clubId || ""}`)}
         >
-          <span>View logs</span>
+          <span>Payment logs</span>
           <span aria-hidden="true">›</span>
         </button>
       </div>
 
       <div className="vc-dash-bottom">
-        <section className="vc-panel vc-roles-table">
-          <h2 className="vc-panel-title">Roles and access</h2>
-          <table className="vc-table">
-            <thead>
-              <tr>
-                <th>Capability</th>
-                <th>Coach</th>
-                <th>Parents</th>
-                <th>Player</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>Attendance</td>
-                <td className="vc-yes">Yes</td>
-                <td className="vc-yes">Yes</td>
-                <td className="vc-yes">Yes</td>
-              </tr>
-              <tr>
-                <td>Payments</td>
-                <td className="vc-no">No</td>
-                <td className="vc-yes">Yes</td>
-                <td className="vc-no">No</td>
-              </tr>
-              <tr>
-                <td>Performance</td>
-                <td className="vc-yes">Yes</td>
-                <td className="vc-yes">Yes</td>
-                <td className="vc-no">No</td>
-              </tr>
-            </tbody>
-          </table>
-        </section>
-
-        <section className="vc-panel">
+        <section className="vc-panel" style={{ gridColumn: "1 / -1", maxWidth: 560 }}>
           <div className="vc-summary-head">
             <h2 className="vc-panel-title" style={{ margin: 0 }}>
-              Club summary
+              Club at a glance
             </h2>
             <button type="button" className="vc-link-cyan" style={{ margin: 0 }} onClick={() => navigate("/director/teams")}>
-              Manage teams
+              Teams
             </button>
           </div>
           <ul className="vc-summary-list">
             <li>
-              <span>Active club</span>
+              <span>Club</span>
               <strong>{overview?.club?.name || "—"}</strong>
             </li>
             <li>
-              <span>Players on roster (club)</span>
+              <span>Players</span>
               <strong>{kpis ? String(kpis.registration_player_count) : "—"}</strong>
             </li>
             <li>
-              <span>Families with balance due</span>
+              <span>Families with balance</span>
               <strong>{kpis ? String(kpis.outstanding_payer_count) : "—"}</strong>
             </li>
             <li>
@@ -374,6 +379,41 @@ export default function DashboardPage() {
               </strong>
             </li>
           </ul>
+          <details style={{ marginTop: "1rem" }}>
+            <summary className="vc-modal__muted" style={{ fontSize: "0.88rem", cursor: "pointer" }}>
+              Role capabilities (attendance, payments, …)
+            </summary>
+            <table className="vc-table" style={{ marginTop: "0.65rem", fontSize: "0.88rem" }}>
+              <thead>
+                <tr>
+                  <th>Capability</th>
+                  <th>Coach</th>
+                  <th>Parents</th>
+                  <th>Player</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Attendance</td>
+                  <td className="vc-yes">Yes</td>
+                  <td className="vc-yes">Yes</td>
+                  <td className="vc-yes">Yes</td>
+                </tr>
+                <tr>
+                  <td>Payments</td>
+                  <td className="vc-no">No</td>
+                  <td className="vc-yes">Yes</td>
+                  <td className="vc-no">No</td>
+                </tr>
+                <tr>
+                  <td>Performance</td>
+                  <td className="vc-yes">Yes</td>
+                  <td className="vc-yes">Yes</td>
+                  <td className="vc-no">No</td>
+                </tr>
+              </tbody>
+            </table>
+          </details>
         </section>
       </div>
     </ClubWorkspaceLayout>

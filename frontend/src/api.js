@@ -250,6 +250,40 @@ export async function fetchTeamAttendanceAnalytics(teamId, params = {}) {
   return authenticatedGet(q ? `${base}?${q}` : base);
 }
 
+/** EP-27: compact team roll-up (coach/director). */
+export async function fetchTeamAttendanceSummary(teamId, params = {}) {
+  const sp = new URLSearchParams();
+  if (params.startDate) {
+    sp.set("start_date", params.startDate);
+  }
+  if (params.endDate) {
+    sp.set("end_date", params.endDate);
+  }
+  if (params.lastNSessions != null && params.lastNSessions !== "") {
+    sp.set("last_n_sessions", String(params.lastNSessions));
+  }
+  const q = sp.toString();
+  const base = `/api/teams/${encodeURIComponent(String(teamId))}/attendance/summary/`;
+  return authenticatedGet(q ? `${base}?${q}` : base);
+}
+
+/** EP-27: per-player summary for a team (self, parent of player, or coach/director). */
+export async function fetchPlayerTeamAttendanceSummary(teamId, playerId, params = {}) {
+  const sp = new URLSearchParams();
+  if (params.startDate) {
+    sp.set("start_date", params.startDate);
+  }
+  if (params.endDate) {
+    sp.set("end_date", params.endDate);
+  }
+  if (params.lastNSessions != null && params.lastNSessions !== "") {
+    sp.set("last_n_sessions", String(params.lastNSessions));
+  }
+  const q = sp.toString();
+  const base = `/api/teams/${encodeURIComponent(String(teamId))}/players/${encodeURIComponent(String(playerId))}/attendance/summary/`;
+  return authenticatedGet(q ? `${base}?${q}` : base);
+}
+
 export async function fetchNotifications(teamId) {
   const query = teamId ? `?team_id=${encodeURIComponent(teamId)}` : "";
   return authenticatedGet(`/api/notifications/${query}`);
@@ -261,6 +295,13 @@ export async function markNotificationsRead() {
 
 export async function sendTeamNotification(payload) {
   return authenticatedJson("/api/notifications/send/", "POST", payload);
+}
+
+/** Attendance: only unconfirmed roster players; parents skipped for past/cancelled (cancelled rejected on server). */
+export async function remindUnconfirmedTrainingSession(sessionId, audience) {
+  return authenticatedJson(`/api/training-sessions/${sessionId}/remind-unconfirmed/`, "POST", {
+    audience,
+  });
 }
 
 export async function fetchDirectorPendingUsers() {

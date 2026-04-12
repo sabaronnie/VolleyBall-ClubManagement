@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { confirmTrainingSession, fetchCurrentUser, fetchTeamTrainingSessions } from "../api";
+import {
+  confirmTrainingSession,
+  fetchCurrentUser,
+  fetchPlayerTeamAttendanceSummary,
+  fetchTeamTrainingSessions,
+} from "../api";
 
 function parseLocalDate(iso) {
   if (!iso || typeof iso !== "string") return null;
@@ -16,6 +21,9 @@ export default function PlayerAttendancePage({ activeTeam }) {
   const [actionError, setActionError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [confirmingId, setConfirmingId] = useState(null);
+  const [summaryPayload, setSummaryPayload] = useState(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryError, setSummaryError] = useState("");
 
   const teamId = activeTeam?.id && activeTeam.id !== "__all__" ? activeTeam.id : null;
 
@@ -59,6 +67,33 @@ export default function PlayerAttendancePage({ activeTeam }) {
   useEffect(() => {
     void loadSessions();
   }, [loadSessions]);
+
+  useEffect(() => {
+    if (!teamId || !myUserId) {
+      setSummaryPayload(null);
+      setSummaryError("");
+      return;
+    }
+    let cancelled = false;
+    setSummaryLoading(true);
+    setSummaryError("");
+    void fetchPlayerTeamAttendanceSummary(teamId, myUserId)
+      .then((data) => {
+        if (!cancelled) setSummaryPayload(data);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setSummaryPayload(null);
+          setSummaryError(err.message || "Could not load attendance summary.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setSummaryLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [teamId, myUserId]);
 
   const today = useMemo(() => {
     const t = new Date();
@@ -158,6 +193,64 @@ export default function PlayerAttendancePage({ activeTeam }) {
 
       {successMessage ? <p className="vc-director-success" style={{ margin: "0 0 0.75rem" }}>{successMessage}</p> : null}
       {actionError ? <p className="schedule-feedback schedule-feedback--error">{actionError}</p> : null}
+
+      <section className="vc-panel" style={{ marginBottom: "1.25rem" }}>
+        <h2 className="vc-panel-title" style={{ fontSize: "1.05rem" }}>
+          Your attendance summary
+        </h2>
+        {summaryLoading ? (
+          <p className="vc-modal__muted" style={{ margin: 0 }}>
+            Loading summary…
+          </p>
+        ) : summaryError ? (
+          <p className="schedule-feedback schedule-feedback--error" style={{ margin: 0 }}>
+            {summaryError}
+          </p>
+        ) : summaryPayload?.player ? (
+          <>
+            <p className="vc-modal__muted" style={{ marginTop: 0, marginBottom: "0.75rem", fontSize: "0.88rem" }}>
+              Last ~12 weeks on this team (from server). Cancelled sessions excluded; rate uses completed days only.
+            </p>
+            <div className="vc-dash-kpi-card" style={{ flexWrap: "wrap" }}>
+              <div className="vc-kpi">
+                <span className="vc-kpi-icon" aria-hidden="true">
+                  ✅
+                </span>
+                <div>
+                  <div className="vc-kpi-label">Attendance rate</div>
+                  <div className="vc-kpi-value">
+                    {summaryPayload.player.attendance_rate_percent != null
+                      ? `${Number(summaryPayload.player.attendance_rate_percent).toFixed(1)}%`
+                      : "—"}
+                  </div>
+                </div>
+              </div>
+              <div className="vc-kpi">
+                <span className="vc-kpi-icon" aria-hidden="true">
+                  📅
+                </span>
+                <div>
+                  <div className="vc-kpi-label">Closed sessions counted</div>
+                  <div className="vc-kpi-value">{summaryPayload.player.sessions_counted_for_rate ?? "—"}</div>
+                </div>
+              </div>
+              <div className="vc-kpi">
+                <span className="vc-kpi-icon" aria-hidden="true">
+                  ⏳
+                </span>
+                <div>
+                  <div className="vc-kpi-label">Pending (upcoming / today)</div>
+                  <div className="vc-kpi-value">{summaryPayload.player.pending_sessions ?? "—"}</div>
+                </div>
+              </div>
+            </div>
+          </>
+        ) : (
+          <p className="vc-modal__muted" style={{ margin: 0 }}>
+            No summary available.
+          </p>
+        )}
+      </section>
 
       <div className="team-training-panel">
         <div className="team-training-panel__header">

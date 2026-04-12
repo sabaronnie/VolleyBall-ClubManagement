@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  createTeamTrainingSession,
   fetchCoachTrainingSessionAttendance,
   fetchTeamAttendanceAnalytics,
   fetchTeamTrainingSessions,
+  remindUnconfirmedTrainingSession,
 } from "../api";
 
 function parseLocalDate(iso) {
@@ -63,6 +65,20 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
   const [analyticsPayload, setAnalyticsPayload] = useState(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [analyticsError, setAnalyticsError] = useState("");
+  const [analyticsExpanded, setAnalyticsExpanded] = useState(false);
+  const [newSessionTitle, setNewSessionTitle] = useState("");
+  const [newSessionDate, setNewSessionDate] = useState(() => isoDateLocal(new Date()));
+  const [newSessionStart, setNewSessionStart] = useState("18:00");
+  const [newSessionEnd, setNewSessionEnd] = useState("19:30");
+  const [newSessionLocation, setNewSessionLocation] = useState("");
+  const [newSessionNotifyPlayers, setNewSessionNotifyPlayers] = useState(true);
+  const [newSessionNotifyParents, setNewSessionNotifyParents] = useState(true);
+  const [createSessionBusy, setCreateSessionBusy] = useState(false);
+  const [createSessionError, setCreateSessionError] = useState("");
+  const [createSessionSuccess, setCreateSessionSuccess] = useState("");
+  const [remindBusy, setRemindBusy] = useState(false);
+  const [remindMessage, setRemindMessage] = useState("");
+  const [remindError, setRemindError] = useState("");
 
   const loadList = useCallback(async () => {
     if (!teamId) {
@@ -95,7 +111,44 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
     setAnalyticsEnd(defaultRange.end);
     setAnalyticsGrouping("week");
     setAnalyticsLastN("");
+    setAnalyticsExpanded(false);
+    setAnalyticsPayload(null);
+    setCreateSessionError("");
+    setCreateSessionSuccess("");
+    setRemindMessage("");
+    setRemindError("");
   }, [teamId, defaultRange.start, defaultRange.end]);
+
+  useEffect(() => {
+    const syncCoachTeamFromUrl = () => {
+      const path = window.location.pathname.replace(/\/$/, "") || "/";
+      if (!path.endsWith("/coach/attendance")) {
+        return;
+      }
+      const params = new URLSearchParams(window.location.search);
+      const tr = params.get("team");
+      const tid = tr ? Number(tr) : NaN;
+      if (Number.isFinite(tid) && tid > 0) {
+        window.dispatchEvent(new CustomEvent("netup-set-active-team", { detail: { teamId: tid } }));
+      }
+    };
+    syncCoachTeamFromUrl();
+    window.addEventListener("popstate", syncCoachTeamFromUrl);
+    return () => window.removeEventListener("popstate", syncCoachTeamFromUrl);
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tr = params.get("team");
+    const sr = params.get("session");
+    if (!teamId || !tr || String(teamId) !== String(Number(tr))) {
+      return;
+    }
+    const sid = sr ? Number(sr) : NaN;
+    if (Number.isFinite(sid) && sid > 0) {
+      setSelectedSessionId(sid);
+    }
+  }, [teamId]);
 
   const loadAnalytics = useCallback(
     async (overrides) => {
@@ -128,8 +181,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
   );
 
   useEffect(() => {
-    if (!teamId) {
-      setAnalyticsPayload(null);
+    if (!teamId || !analyticsExpanded) {
       return;
     }
     void loadAnalytics({
@@ -138,8 +190,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
       grouping: "week",
       lastNSessions: "",
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only refetch analytics when the team changes
-  }, [teamId, defaultRange.start, defaultRange.end]);
+  }, [teamId, analyticsExpanded, defaultRange.start, defaultRange.end, loadAnalytics]);
 
   const loadDetail = useCallback(async (sessionId) => {
     setDetailLoading(true);
@@ -160,8 +211,84 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
       setDetailPayload(null);
       return;
     }
+    setRemindMessage("");
+    setRemindError("");
     void loadDetail(selectedSessionId);
   }, [selectedSessionId, loadDetail]);
+
+  const canManageTraining = Boolean(listPayload?.can_manage_training);
+
+  const onCreateTrainingSession = useCallback(async () => {
+    if (!teamId || !newSessionTitle.trim()) {
+      setCreateSessionError("Enter a session title.");
+      return;
+    }
+    setCreateSessionBusy(true);
+    setCreateSessionError("");
+    setCreateSessionSuccess("");
+    try {
+      const startT = newSessionStart.length > 5 ? newSessionStart.slice(0, 5) : newSessionStart;
+      const endT = newSessionEnd.length > 5 ? newSessionEnd.slice(0, 5) : newSessionEnd;
+      await createTeamTrainingSession(teamId, {
+        title: newSessionTitle.trim(),
+        session_type: "training",
+        scheduled_date: newSessionDate,
+        start_time: startT,
+        end_time: endT,
+        location: newSessionLocation.trim(),
+        notify_players: newSessionNotifyPlayers,
+        notify_parents: newSessionNotifyParents,
+      });
+      setCreateSessionSuccess("Session added. Check notify options above if families should get an in-app alert.");
+      setNewSessionTitle("");
+      await loadList();
+    } catch (err) {
+      setCreateSessionError(err.message || "Could not create session.");
+    } finally {
+      setCreateSessionBusy(false);
+    }
+  }, [
+    teamId,
+    newSessionTitle,
+    newSessionDate,
+    newSessionStart,
+    newSessionEnd,
+    newSessionLocation,
+    newSessionNotifyPlayers,
+    newSessionNotifyParents,
+    loadList,
+  ]);
+
+  const sendAttendanceReminder = useCallback(
+    async (audience) => {
+      const sess = detailPayload?.session;
+      if (!teamId || !sess || sess.status === "cancelled") {
+        return;
+      }
+      setRemindBusy(true);
+      setRemindError("");
+      setRemindMessage("");
+      try {
+        const res = await remindUnconfirmedTrainingSession(sess.id, audience);
+        const n = res.recipient_count ?? 0;
+        const np = res.player_recipient_count ?? 0;
+        const npar = res.parent_recipient_count ?? 0;
+        if (n === 0) {
+          setRemindMessage(res.message || "No matching recipients.");
+        } else {
+          const parts = [];
+          if (np) parts.push(`${np} player${np === 1 ? "" : "s"}`);
+          if (npar) parts.push(`${npar} parent${npar === 1 ? "" : "s"}`);
+          setRemindMessage(`Sent to ${parts.join(" and ")} (${n} notification${n === 1 ? "" : "s"}).`);
+        }
+      } catch (err) {
+        setRemindError(err.message || "Could not send reminder.");
+      } finally {
+        setRemindBusy(false);
+      }
+    },
+    [teamId, detailPayload],
+  );
 
   const today = useMemo(() => {
     const t = new Date();
@@ -224,12 +351,147 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
           <p className="teams-page-kicker">Coaching</p>
           <h1>Session attendance</h1>
           <p className="teams-page-subtitle">
-            Plan practices and matches for <strong>{listPayload?.team?.name || activeTeam?.name}</strong>. Open a
-            session to see the full roster with present, pending, and absent states.
+            Plan practices and matches for <strong>{listPayload?.team?.name || activeTeam?.name}</strong>. Schedule a
+            session below so players and parents can confirm from their apps; open a session to review the roster and
+            send reminders.
           </p>
         </div>
       </header>
 
+      {canManageTraining ? (
+        <section
+          className="vc-coach-analytics-panel"
+          style={{
+            marginBottom: "1.25rem",
+            padding: "1.1rem 1.25rem",
+            borderRadius: "12px",
+            border: "1px solid #e4e7ec",
+            background: "#fff",
+          }}
+          aria-labelledby="coach-add-session-heading"
+        >
+          <h2 id="coach-add-session-heading" style={{ fontSize: "1.05rem", margin: "0 0 0.5rem" }}>
+            Schedule a new session
+          </h2>
+          <p className="vc-modal__muted" style={{ margin: "0 0 1rem", fontSize: "0.88rem", lineHeight: 1.5 }}>
+            Creates a practice on the team calendar and optionally notifies roster players and linked parents (same as
+            other session alerts).
+          </p>
+          {createSessionSuccess ? (
+            <p className="vc-director-success" style={{ marginBottom: "0.65rem" }}>
+              {createSessionSuccess}
+            </p>
+          ) : null}
+          {createSessionError ? (
+            <p className="schedule-feedback schedule-feedback--error" style={{ marginBottom: "0.65rem" }}>
+              {createSessionError}
+            </p>
+          ) : null}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+              gap: "0.65rem",
+              alignItems: "end",
+            }}
+          >
+            <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem", fontSize: "0.82rem" }}>
+              <span className="vc-modal__muted">Title</span>
+              <input
+                className="vc-dash-team-select"
+                value={newSessionTitle}
+                onChange={(e) => setNewSessionTitle(e.target.value)}
+                placeholder="e.g. Evening practice"
+              />
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem", fontSize: "0.82rem" }}>
+              <span className="vc-modal__muted">Date</span>
+              <input
+                type="date"
+                className="vc-dash-team-select"
+                value={newSessionDate}
+                onChange={(e) => setNewSessionDate(e.target.value)}
+              />
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem", fontSize: "0.82rem" }}>
+              <span className="vc-modal__muted">Start</span>
+              <input
+                type="time"
+                className="vc-dash-team-select"
+                value={newSessionStart}
+                onChange={(e) => setNewSessionStart(e.target.value)}
+              />
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem", fontSize: "0.82rem" }}>
+              <span className="vc-modal__muted">End</span>
+              <input
+                type="time"
+                className="vc-dash-team-select"
+                value={newSessionEnd}
+                onChange={(e) => setNewSessionEnd(e.target.value)}
+              />
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem", fontSize: "0.82rem", gridColumn: "1 / -1" }}>
+              <span className="vc-modal__muted">Location (optional)</span>
+              <input
+                className="vc-dash-team-select"
+                value={newSessionLocation}
+                onChange={(e) => setNewSessionLocation(e.target.value)}
+                placeholder="Main gym"
+              />
+            </label>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem", marginTop: "0.75rem", alignItems: "center" }}>
+            <label style={{ display: "flex", gap: "0.4rem", alignItems: "center", fontSize: "0.88rem" }}>
+              <input
+                type="checkbox"
+                checked={newSessionNotifyPlayers}
+                onChange={(e) => setNewSessionNotifyPlayers(e.target.checked)}
+              />
+              Notify players
+            </label>
+            <label style={{ display: "flex", gap: "0.4rem", alignItems: "center", fontSize: "0.88rem" }}>
+              <input
+                type="checkbox"
+                checked={newSessionNotifyParents}
+                onChange={(e) => setNewSessionNotifyParents(e.target.checked)}
+              />
+              Notify parents
+            </label>
+          </div>
+          <div style={{ marginTop: "0.85rem" }}>
+            <button
+              type="button"
+              className="vc-action-btn"
+              disabled={createSessionBusy || !newSessionTitle.trim()}
+              onClick={() => void onCreateTrainingSession()}
+            >
+              {createSessionBusy ? "Saving…" : "Add session"}
+            </button>
+          </div>
+        </section>
+      ) : null}
+
+      {!analyticsExpanded ? (
+        <div style={{ marginBottom: "1.25rem" }}>
+          <button type="button" className="vc-action-btn" onClick={() => setAnalyticsExpanded(true)}>
+            Show attendance trends &amp; player analytics
+          </button>
+        </div>
+      ) : (
+        <div style={{ marginBottom: "0.65rem" }}>
+          <button
+            type="button"
+            className="vc-link-cyan"
+            style={{ fontSize: "0.88rem", padding: 0, border: "none", background: "none", cursor: "pointer" }}
+            onClick={() => setAnalyticsExpanded(false)}
+          >
+            Hide attendance trends
+          </button>
+        </div>
+      )}
+
+      {analyticsExpanded ? (
       <section
         className="vc-coach-analytics-panel"
         style={{
@@ -428,6 +690,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
           </>
         ) : null}
       </section>
+      ) : null}
 
       <div className="coach-attendance-layout">
         <div className="team-training-panel">
@@ -540,6 +803,82 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
                   <span className="vc-modal__muted">Roster {detailSession.summary?.roster_size ?? 0}</span>
                 </div>
               </header>
+              {canManageTraining && detailSession.status !== "cancelled" ? (
+                <section
+                  style={{
+                    marginBottom: "1rem",
+                    padding: "0.85rem 1rem",
+                    borderRadius: "10px",
+                    border: "1px solid #e0e7ff",
+                    background: "#f8faff",
+                  }}
+                  aria-labelledby="coach-remind-attendance-heading"
+                >
+                  <h4 id="coach-remind-attendance-heading" style={{ margin: "0 0 0.35rem", fontSize: "0.95rem" }}>
+                    Remind who still needs to confirm
+                  </h4>
+                  <p className="vc-modal__muted" style={{ margin: "0 0 0.65rem", fontSize: "0.82rem", lineHeight: 1.5 }}>
+                    In-app notifications go only to roster players (and their linked parents when allowed) who have{" "}
+                    <strong>not</strong> confirmed yet. Parents are not included for past practices or cancelled
+                    sessions.
+                  </p>
+                  {typeof detailSession.unconfirmed_roster_count === "number" ? (
+                    <p style={{ margin: "0 0 0.65rem", fontSize: "0.84rem", fontWeight: 600 }}>
+                      {detailSession.unconfirmed_roster_count} player
+                      {detailSession.unconfirmed_roster_count === 1 ? "" : "s"} without confirmation
+                    </p>
+                  ) : null}
+                  {detailSession.remind_parents_allowed === false ? (
+                    <p className="vc-modal__muted" style={{ margin: "0 0 0.65rem", fontSize: "0.82rem" }}>
+                      This session is already over—only players without a confirmation can be nudged (not parents).
+                    </p>
+                  ) : null}
+                  {remindMessage ? <p className="vc-director-success" style={{ marginBottom: "0.5rem" }}>{remindMessage}</p> : null}
+                  {remindError ? (
+                    <p className="schedule-feedback schedule-feedback--error" style={{ marginBottom: "0.5rem" }}>
+                      {remindError}
+                    </p>
+                  ) : null}
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem" }}>
+                    <button
+                      type="button"
+                      className="vc-action-btn"
+                      style={{ fontSize: "0.85rem", padding: "0.4rem 0.75rem" }}
+                      disabled={remindBusy}
+                      onClick={() => void sendAttendanceReminder("players")}
+                    >
+                      {remindBusy ? "Sending…" : "Notify unconfirmed players"}
+                    </button>
+                    <button
+                      type="button"
+                      className="vc-action-btn"
+                      style={{ fontSize: "0.85rem", padding: "0.4rem 0.75rem" }}
+                      disabled={remindBusy || detailSession.remind_parents_allowed === false}
+                      title={
+                        detailSession.remind_parents_allowed === false
+                          ? "Parents are not notified for past or cancelled practices"
+                          : undefined
+                      }
+                      onClick={() => void sendAttendanceReminder("parents")}
+                    >
+                      {remindBusy ? "Sending…" : "Notify parents (unconfirmed only)"}
+                    </button>
+                    <button
+                      type="button"
+                      className="vc-action-btn"
+                      style={{ fontSize: "0.85rem", padding: "0.4rem 0.75rem" }}
+                      disabled={remindBusy}
+                      onClick={() => void sendAttendanceReminder("all")}
+                    >
+                      {remindBusy
+                        ? "Sending…"
+                        : detailSession.remind_parents_allowed === false
+                          ? "Notify unconfirmed players only"
+                          : "Notify players & parents (unconfirmed)"}
+                    </button>
+                  </div>
+                </section>
+              ) : null}
               {detailSession.players?.length ? (
                 <div style={{ overflowX: "auto" }}>
                   <table className="vc-table" style={{ fontSize: "0.9rem", width: "100%" }}>
