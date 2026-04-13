@@ -9,6 +9,7 @@ import {
 } from "../api";
 import ClubWorkspaceLayout from "../components/ClubWorkspaceLayout";
 import CoachDashboardBody from "../components/coach/CoachDashboardBody";
+import MemberPlayerDashboard from "../components/member/MemberPlayerDashboard";
 import { navigate } from "../navigation";
 
 const AUTH_TOKEN_KEY = "netup.auth.token";
@@ -281,6 +282,7 @@ export default function MemberHubPage() {
       const feesData = await fetchMyFees();
       setOwnFees(feesData.own_fees || []);
       setChildrenFees(feesData.children_fees || []);
+      window.dispatchEvent(new Event("vc-member-dashboard-refresh"));
     } catch (err) {
       setLinkError(err.message || "Could not submit link request.");
     } finally {
@@ -345,7 +347,7 @@ export default function MemberHubPage() {
         className={`vc-member-hub${showCoachDashboard ? " vc-member-hub--coach-dash" : ""}`}
         style={{
           padding: "1.5rem 1.75rem 2.5rem",
-          maxWidth: showCoachDashboard ? "min(1180px, 100%)" : 920,
+          maxWidth: showCoachDashboard ? "min(1180px, 100%)" : "min(1120px, 100%)",
           margin: "0 auto",
         }}
       >
@@ -369,55 +371,59 @@ export default function MemberHubPage() {
                 loading={coachDashLoading}
                 error={coachDashError}
               />
+            ) : (
+              <MemberPlayerDashboard />
+            )}
+
+            {showCoachDashboard ? (
+              <section
+                className="vc-dash-kpi-card"
+                style={{ marginBottom: "1.25rem" }}
+                aria-label="Quick links"
+              >
+                <h2 style={{ fontSize: "1.05rem", margin: "0 0 0.75rem" }}>Quick links</h2>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
+                    gap: "0.5rem",
+                  }}
+                >
+                  <button type="button" className="vc-action-btn" onClick={() => navigate("/schedule")}>
+                    Schedule
+                  </button>
+                  <button
+                    type="button"
+                    className="vc-action-btn"
+                    onClick={() => navigate(coachOnlyPayer ? "/payments" : "/my-fees")}
+                  >
+                    {coachOnlyPayer ? "Team fees" : "My fees"}
+                  </button>
+                  {showCoachAttendanceTab ? (
+                    <button type="button" className="vc-action-btn" onClick={() => navigate("/coach/attendance")}>
+                      Team attendance
+                    </button>
+                  ) : null}
+                  {playing.length > 0 ? (
+                    <button type="button" className="vc-action-btn" onClick={() => navigate("/player/attendance")}>
+                      My sessions
+                    </button>
+                  ) : null}
+                  {accountRoles.includes("parent") || children.length > 0 ? (
+                    <button type="button" className="vc-action-btn" onClick={() => navigate("/parent/attendance")}>
+                      Family attendance
+                    </button>
+                  ) : null}
+                </div>
+                {!hasTeams ? (
+                  <p className="vc-modal__muted" style={{ margin: "0.75rem 0 0", fontSize: "0.88rem", lineHeight: 1.5 }}>
+                    No team yet? Your director can add you to a roster.
+                  </p>
+                ) : null}
+              </section>
             ) : null}
 
-            <section
-              className="vc-dash-kpi-card"
-              style={{ marginBottom: "1.25rem" }}
-              aria-label="Quick links"
-            >
-              <h2 style={{ fontSize: "1.05rem", margin: "0 0 0.75rem" }}>Quick links</h2>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
-                  gap: "0.5rem",
-                }}
-              >
-                <button type="button" className="vc-action-btn" onClick={() => navigate("/schedule")}>
-                  Schedule
-                </button>
-                <button
-                  type="button"
-                  className="vc-action-btn"
-                  onClick={() => navigate(coachOnlyPayer ? "/payments" : "/my-fees")}
-                >
-                  {coachOnlyPayer ? "Team fees" : "My fees"}
-                </button>
-                {showCoachAttendanceTab ? (
-                  <button type="button" className="vc-action-btn" onClick={() => navigate("/coach/attendance")}>
-                    Team attendance
-                  </button>
-                ) : null}
-                {playing.length > 0 ? (
-                  <button type="button" className="vc-action-btn" onClick={() => navigate("/player/attendance")}>
-                    My sessions
-                  </button>
-                ) : null}
-                {accountRoles.includes("parent") || children.length > 0 ? (
-                  <button type="button" className="vc-action-btn" onClick={() => navigate("/parent/attendance")}>
-                    Family attendance
-                  </button>
-                ) : null}
-              </div>
-              {!hasTeams ? (
-                <p className="vc-modal__muted" style={{ margin: "0.75rem 0 0", fontSize: "0.88rem", lineHeight: 1.5 }}>
-                  No team yet? Your director can add you to a roster.
-                </p>
-              ) : null}
-            </section>
-
-            {coachOnlyPayer ? (
+            {showCoachDashboard && coachOnlyPayer ? (
               <section
                 className="vc-dash-kpi-card"
                 style={{ marginBottom: "1.25rem" }}
@@ -433,35 +439,7 @@ export default function MemberHubPage() {
                   Open team payments
                 </button>
               </section>
-            ) : (
-              <section
-                className="vc-dash-kpi-card"
-                style={{ marginBottom: "1.25rem" }}
-                aria-labelledby="hub-payments-heading"
-              >
-                <h2 id="hub-payments-heading" style={{ fontSize: "1.05rem", margin: "0 0 0.5rem" }}>
-                  Payments & balances
-                </h2>
-                <p style={{ margin: "0 0 0.75rem", color: "#5c6570", lineHeight: 1.5 }}>
-                  View every fee line on your account (and linked children), see what is due, and record payments.
-                </p>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: "1.25rem", alignItems: "center" }}>
-                  <div>
-                    <div className="vc-kpi-label">Total outstanding</div>
-                    <div className="vc-kpi-value">
-                      {unpaidLineCount ? money(payCur, totalUnpaidAll) : money(payCur, 0)}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="vc-kpi-label">Open items</div>
-                    <div className="vc-kpi-value">{unpaidLineCount}</div>
-                  </div>
-                  <button type="button" className="vc-action-btn" onClick={() => navigate("/my-fees")}>
-                    View all & pay
-                  </button>
-                </div>
-              </section>
-            )}
+            ) : null}
 
             {isDirector ? (
               <section className="vc-dash-kpi-card" style={{ marginBottom: "1.25rem" }} aria-labelledby="hub-director-heading">
@@ -636,7 +614,7 @@ export default function MemberHubPage() {
               </section>
             ) : null}
 
-            {playing.length ? (
+            {showCoachDashboard && playing.length ? (
               <section className="vc-dash-kpi-card" style={{ marginBottom: "1.25rem" }} aria-labelledby="hub-player-heading">
                 <h2 id="hub-player-heading" style={{ fontSize: "1.05rem", margin: "0 0 0.75rem" }}>
                   Your teams
@@ -728,7 +706,7 @@ export default function MemberHubPage() {
               </section>
             ) : null}
 
-            {children.length ? (
+            {showCoachDashboard && children.length ? (
               <section className="vc-dash-kpi-card" style={{ marginBottom: "1.25rem" }} aria-labelledby="hub-parent-heading">
                 <h2 id="hub-parent-heading" style={{ fontSize: "1.05rem", margin: "0 0 0.75rem" }}>
                   Family & linked players
@@ -787,7 +765,7 @@ export default function MemberHubPage() {
               </section>
             ) : null}
 
-            {!isDirector && !coached.length && !playing.length && !children.length ? (
+            {showCoachDashboard && !isDirector && !coached.length && !playing.length && !children.length ? (
               <p className="vc-modal__muted">
                 When your director links you to a team or family, coach, player, and parent shortcuts appear here.
               </p>

@@ -148,6 +148,14 @@ export async function fetchParentChildAttendanceHistory() {
   return authenticatedGet("/api/me/parent/child-attendance/");
 }
 
+export async function fetchMemberDashboard(forPlayerId) {
+  const q =
+    forPlayerId != null && String(forPlayerId).trim() !== ""
+      ? `?for_player_id=${encodeURIComponent(String(forPlayerId))}`
+      : "";
+  return authenticatedGet(`/api/me/member-dashboard/${q}`);
+}
+
 export async function fetchTeamSchedule(teamId) {
   return authenticatedGet(`/api/teams/${teamId}/schedule/`);
 }

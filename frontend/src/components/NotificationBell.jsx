@@ -56,6 +56,15 @@ export default function NotificationBell({ teamId = null }) {
   }, [load]);
 
   useEffect(() => {
+    const onOpen = () => {
+      setOpen(true);
+      void load();
+    };
+    window.addEventListener("vc-open-notifications", onOpen);
+    return () => window.removeEventListener("vc-open-notifications", onOpen);
+  }, [load]);
+
+  useEffect(() => {
     if (!open) {
       return undefined;
     }
