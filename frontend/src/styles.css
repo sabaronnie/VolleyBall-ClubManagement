@@ -1725,11 +1725,17 @@ button {
   max-width: 6.25rem;
   object-fit: contain;
   object-position: center;
-  opacity: 1;
-  transition: transform 0.22s ease;
+  filter: grayscale(1);
+  opacity: 0.78;
+  transition:
+    filter 0.22s ease,
+    opacity 0.22s ease,
+    transform 0.22s ease;
 }
 
 .brand-logo:hover .brand-logo__img {
+  filter: grayscale(0);
+  opacity: 1;
   transform: scale(1.04);
 }
 

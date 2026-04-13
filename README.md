@@ -166,9 +166,22 @@ Create a `.env` file at the project root and set values for:
 
 The settings loader reads `.env` from the project root in [base.py](/Users/ronniesaba/Documents/EECE%20430L/430Course/Project/backend/config/settings/base.py).
 
-### 4. Create the MySQL database
+### 4. Create the MySQL database and user
 
-Create a MySQL schema matching `MYSQL_DATABASE`.
+Create a schema matching `MYSQL_DATABASE`, and a MySQL user whose name and password match `MYSQL_USER` and `MYSQL_PASSWORD` in `.env`.
+
+Example (adjust names/passwords; run in MySQL as an admin user):
+
+```sql
+CREATE DATABASE IF NOT EXISTS project_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER IF NOT EXISTS 'project_user'@'localhost' IDENTIFIED BY 'your_secure_password';
+GRANT ALL PRIVILEGES ON project_db.* TO 'project_user'@'localhost';
+FLUSH PRIVILEGES;
+```
+
+Then set `MYSQL_USER`, `MYSQL_PASSWORD`, and `MYSQL_DATABASE` in `.env` to those values. Alternatively, for local development only, you can use `MYSQL_USER=root` and your MySQL root password.
+
+If you see **`OperationalError (1045) Access denied`**, the user or password in `.env` does not match MySQL—fix the credentials or create the user as above.
 
 ### 5. Run migrations
 
