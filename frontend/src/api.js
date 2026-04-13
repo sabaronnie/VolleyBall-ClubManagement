@@ -154,6 +154,11 @@ export async function fetchCurrentUser() {
   return authenticatedGet("/api/auth/me/");
 }
 
+/** Create a club; creator becomes club director (see POST /api/clubs/create/). */
+export async function createClub(body) {
+  return authenticatedJson("/api/clubs/create/", "POST", body);
+}
+
 export async function fetchParentChildAttendanceHistory() {
   return authenticatedGet("/api/me/parent/child-attendance/");
 }

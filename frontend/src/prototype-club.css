@@ -696,6 +696,99 @@
   border-color: rgba(255, 255, 255, 0.18);
 }
 
+.vc-dashboard-hero__ghost-btn {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2rem;
+  padding: 0.35rem 0.95rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 0.82rem;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.vc-dashboard-hero__ghost-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.vc-dashboard-hero__ghost-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.vc-dashboard-profile-loading {
+  margin: 0 0 1rem;
+  font-size: 0.95rem;
+}
+
+.vc-dashboard-onboarding {
+  margin-bottom: 1.5rem;
+}
+
+.vc-dashboard-onboarding__card {
+  max-width: 720px;
+  padding: 2rem 2rem 2.25rem;
+  border-radius: 24px;
+  background: #fff;
+  border: 1px solid #dbe3ea;
+  box-shadow: 0 18px 42px rgba(16, 28, 54, 0.08);
+}
+
+.vc-dashboard-onboarding__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.38rem 0.72rem;
+  border-radius: 999px;
+  background: rgba(36, 49, 91, 0.08);
+  color: #24396f;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.vc-dashboard-onboarding__title {
+  margin: 1rem 0 0.65rem;
+  font-size: clamp(1.75rem, 2.5vw, 2.25rem);
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+  color: #1a1d21;
+}
+
+.vc-dashboard-onboarding__text {
+  margin: 0;
+  max-width: 52ch;
+  font-size: 1.02rem;
+  line-height: 1.65;
+  color: #4b5563;
+}
+
+.vc-dashboard-onboarding__cta {
+  margin-top: 1.35rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.65rem;
+  padding: 0 1.35rem;
+  border-radius: 12px;
+  border: 0;
+  background: linear-gradient(135deg, #1f2f5d 0%, #24396f 55%, #14233f 100%);
+  color: #fff;
+  font-size: 0.95rem;
+  font-weight: 800;
+  font-family: inherit;
+  cursor: pointer;
+  box-shadow: 0 12px 28px rgba(31, 47, 93, 0.25);
+}
+
+.vc-dashboard-onboarding__cta:hover {
+  filter: brightness(1.04);
+}
+
 .vc-dashboard-hero__select-card {
   position: relative;
   z-index: 1;
@@ -1677,6 +1770,32 @@
   width: 100%;
   padding: 1.35rem 1.5rem 1.5rem;
   box-shadow: 0 20px 50px rgba(15, 40, 60, 0.2);
+}
+
+.vc-director-modal--wide {
+  max-width: 480px;
+}
+
+.vc-director-modal__optional {
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  color: #8b939c;
+  font-size: 0.85em;
+}
+
+.vc-director-modal__textarea {
+  width: 100%;
+  min-height: 5.5rem;
+  padding: 0.55rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid #d8dee6;
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 500;
+  color: #1a1d21;
+  background: #fafbfc;
+  resize: vertical;
 }
 
 .vc-director-modal h3 {

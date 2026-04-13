@@ -1054,7 +1054,13 @@ function App() {
 
         const owned = (payload.owned_clubs || []).length > 0;
         const flaggedDirector = payload.is_director_or_staff === true;
-        setDirectorDashboardAllowed(flaggedDirector || owned);
+        const hasRosterOrMemberContext =
+          (payload.director_teams || []).length > 0 ||
+          (payload.coached_teams || []).length > 0 ||
+          (payload.player_teams || []).length > 0 ||
+          (payload.children || []).some((c) => Array.isArray(c.teams) && c.teams.length > 0);
+        // Director dashboard: existing directors, or users with no team/member context yet (create-club onboarding).
+        setDirectorDashboardAllowed(flaggedDirector || owned || !hasRosterOrMemberContext);
 
         const elevated =
           (payload.director_teams || []).length > 0 || (payload.coached_teams || []).length > 0;
