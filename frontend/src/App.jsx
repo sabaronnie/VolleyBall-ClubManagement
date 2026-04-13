@@ -7,7 +7,7 @@ import {
 } from "./api";
 import ClubWorkspaceLayout from "./components/ClubWorkspaceLayout";
 import SiteNavbar from "./components/SiteNavbar";
-import { navigate } from "./navigation";
+import { goToContactPage, navigate } from "./navigation";
 import DashboardPage from "./pages/DashboardPage";
 import DirectorPaymentLogsPage from "./pages/DirectorPaymentLogsPage";
 import DirectorPaymentsPage from "./pages/DirectorPaymentsPage";
@@ -23,6 +23,7 @@ import CoachSessionAttendancePage from "./pages/CoachSessionAttendancePage";
 import TeamRosterPage from "./pages/TeamRosterPage";
 import { ForgotPasswordPage, ResetPasswordPage } from "./pages/PasswordResetPages";
 import RegisterPage from "./pages/RegisterPage";
+import ContactUsPage from "./pages/ContactUsPage";
 
 const AUTH_TOKEN_KEY = "netup.auth.token";
 const ACTIVE_TEAM_KEY = "netup.active.team";
@@ -194,7 +195,7 @@ const footerLinks = [
   { label: "Clubs", sectionId: "roles" },
   { label: "Teams", sectionId: "journey" },
   { label: "Parents", sectionId: "faq" },
-  { label: "Contact", sectionId: "cta" },
+  { label: "Contact", path: "/contact" },
 ];
 
 function usePathname() {
@@ -1415,6 +1416,30 @@ function App() {
     return <RegisterPage />;
   }
 
+  if (pathname === "/contact" || pathname === "/contact/") {
+    if (!isAuthenticated) {
+      return (
+        <div className="contact-public-page">
+          <div className="contact-public-page__nav">
+            <SiteNavbar mode="guest" />
+          </div>
+          <ContactUsPage />
+        </div>
+      );
+    }
+    return (
+      <ClubWorkspaceLayout
+        activeTab="contact"
+        viewerAccountRole={viewerAccountRole}
+        {...defaultTeamNavProps}
+        showPlayerSessionsTab={showPlayerSessionsTab}
+        showCoachAttendanceTab={showCoachAttendanceTab}
+      >
+        <ContactUsPage />
+      </ClubWorkspaceLayout>
+    );
+  }
+
   if (pathname === "/dashboard" || pathname === "/club" || pathname === "/club/") {
     if (!isAuthenticated) {
       return <LoginPage />;
@@ -2014,7 +2039,7 @@ function App() {
             <button
               className="closing-button"
               type="button"
-              onClick={() => scrollToSection("faq")}
+              onClick={() => goToContactPage()}
             >
               Request a demo
             </button>
@@ -2066,7 +2091,9 @@ function App() {
                 key={item.label}
                 type="button"
                 className="footer-link"
-                onClick={() => scrollToSection(item.sectionId)}
+                onClick={() =>
+                  item.path ? navigate(item.path) : scrollToSection(item.sectionId)
+                }
               >
                 {item.label}
               </button>

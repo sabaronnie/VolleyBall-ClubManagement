@@ -1,4 +1,4 @@
-import { navigate } from "../navigation";
+import { goToContactPage, navigate } from "../navigation";
 
 function BrandContent() {
   return (
@@ -53,6 +53,13 @@ export default function SiteNavbar({
             </div>
             <img src="/auth/logo-ball.png" alt="" />
           </div>
+          <button
+            className="action-button action-button--ghost"
+            type="button"
+            onClick={() => goToContactPage()}
+          >
+            Contact Us
+          </button>
           <button className="action-button action-button--ghost" type="button" onClick={() => navigate("/register")}>
             Register
           </button>
@@ -90,6 +97,9 @@ export default function SiteNavbar({
       </div>
       <div className="vc-dash-actions vc-dash-actions--spread" aria-label="Toolbar">
         {teamSelector}
+        <button type="button" className="nav-link-button" onClick={() => goToContactPage()}>
+          Contact Us
+        </button>
         {actions}
       </div>
     </header>

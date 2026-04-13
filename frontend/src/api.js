@@ -140,6 +140,16 @@ export async function verifyRegistrationOtp({ email, otp }) {
   return request("/api/register/verify/", { email, otp });
 }
 
+export async function submitContactForm({ name, email, role, message, phone }) {
+  return request("/api/contact/", {
+    name,
+    email,
+    role,
+    message,
+    phone: phone || "",
+  });
+}
+
 export async function fetchCurrentUser() {
   return authenticatedGet("/api/auth/me/");
 }
