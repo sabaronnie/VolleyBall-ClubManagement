@@ -54,7 +54,6 @@ from .models import (
     TeamScheduleEntry,
     TrainingSession,
     TrainingSessionConfirmation,
-    UserAccountRole,
     VerificationStatus,
 )
 from .permissions import (
@@ -510,7 +509,6 @@ def _serialize_basic_user(user):
         "last_name": user.last_name,
         "date_of_birth": user.date_of_birth.isoformat() if user.date_of_birth else None,
         "verification_status": user.verification_status,
-        "assigned_account_role": user.assigned_account_role or None,
         "role": _canonical_app_role(user) or None,
     }
 
@@ -543,7 +541,7 @@ def _account_roles_for_user(user):
 
 
 def _canonical_app_role(user) -> str:
-    """Single primary role for admin UI (membership-backed roles win over the assigned label)."""
+    """Single primary role for admin UI derived from memberships and parent links."""
     if ClubMembership.objects.active().filter(user=user, role=ClubRole.CLUB_DIRECTOR).exists():
         return AssignedAccountRole.DIRECTOR
     if TeamMembership.objects.active().filter(user=user, role=TeamRole.COACH).exists():
@@ -552,14 +550,11 @@ def _canonical_app_role(user) -> str:
         return AssignedAccountRole.PLAYER
     if ParentPlayerRelation.objects.approved().filter(parent=user).exists():
         return AssignedAccountRole.PARENT
-    assigned = (user.assigned_account_role or "").strip().lower()
-    if assigned in AssignedAccountRole.values:
-        return assigned
     return ""
 
 
 def _display_role_for_account(request_user):
-    """Single human-readable role line for profile (membership wins over assigned label)."""
+    """Single human-readable role line for profile derived from memberships and parent links."""
     membership_roles = _account_roles_for_user(request_user)
     labels = {
         "director": "Club director",
@@ -573,10 +568,6 @@ def _display_role_for_account(request_user):
         extras = [r.replace("_", " ").strip().title() for r in membership_roles if r not in labels]
         parts = ordered + extras
         return ", ".join(parts) if parts else "Member"
-    assigned = (request_user.assigned_account_role or "").strip()
-    if assigned:
-        label = dict(AssignedAccountRole.choices).get(assigned) or assigned.replace("_", " ").strip().title()
-        return f"{label} (roster link pending)"
     return "No club role yet"
 
 
@@ -1087,7 +1078,6 @@ def _serialize_user_directory_row(user):
         "last_name": user.last_name,
         "verification_status": user.verification_status,
         "role": _canonical_app_role(user) or None,
-        "assigned_account_role": user.assigned_account_role or None,
         "is_staff": user.is_staff,
     }
 
@@ -1138,8 +1128,6 @@ def directors_set_user_account_role(request, user_id):
 
     payload = _parse_json_request(request) or {}
     raw = payload.get("role")
-    if raw is None:
-        raw = payload.get("assigned_account_role")
     if raw is None or (isinstance(raw, str) and not str(raw).strip()):
         return JsonResponse({"errors": {"role": "Role is required."}}, status=400)
     new_role = str(raw).strip().lower()
@@ -1211,10 +1199,6 @@ def directors_set_user_account_role(request, user_id):
         with transaction.atomic():
             if new_role == AssignedAccountRole.DIRECTOR:
                 ClubMembership.objects.assign_director(user=target, club=director_club)
-                UserAccountRole.objects.update_or_create(
-                    user=target,
-                    defaults={"role": AssignedAccountRole.DIRECTOR},
-                )
             elif new_role in (
                 AssignedAccountRole.PLAYER,
                 AssignedAccountRole.PARENT,
@@ -1226,10 +1210,6 @@ def directors_set_user_account_role(request, user_id):
                     club_id__in=manageable_club_ids,
                 ):
                     ClubMembership.objects.deactivate(membership)
-                UserAccountRole.objects.update_or_create(
-                    user=target,
-                    defaults={"role": new_role},
-                )
     except IntegrityError:
         return JsonResponse(
             {"errors": {"user": "Could not update role (data conflict). Try again."}},

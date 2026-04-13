@@ -45,7 +45,7 @@ export default function DashboardPage() {
   const resolveClub = useCallback(async () => {
     const me = await fetchCurrentUser();
     setIsDirectorOrStaff(Boolean(me.is_director_or_staff));
-    setViewerAccountRole(me.user?.role || me.user?.assigned_account_role || null);
+    setViewerAccountRole(me.user?.role || null);
     setHasPlayerTeams(Array.isArray(me.player_teams) && me.player_teams.length > 0);
     setShowCoachAttendanceTab(
       (me.coached_teams || []).some((t) => t.can_manage_training) ||

@@ -85,11 +85,10 @@ export default function ClubWorkspaceLayout({
         if (!cancelled) {
           setDirectorToolsVisible(Boolean(me.is_director_or_staff));
           const roles = me.account_profile?.roles || [];
-          const assigned = (me.user?.role || me.user?.assigned_account_role || "").trim();
           const hasChildren = Array.isArray(me.children) && me.children.length > 0;
           const pendingLinks = Array.isArray(me.pending_parent_links) && me.pending_parent_links.length > 0;
           setShowParentAttendanceFromProfile(
-            assigned === "parent" || roles.includes("parent") || hasChildren || pendingLinks,
+            roles.includes("parent") || hasChildren || pendingLinks,
           );
         }
       })
@@ -327,9 +326,6 @@ export default function ClubWorkspaceLayout({
                 const roleLine =
                   account.display_role ||
                   (roles.length ? roles.map((r) => formatRoleWord(r)).join(", ") : "") ||
-                  (user.assigned_account_role
-                    ? `${formatRoleWord(user.assigned_account_role)} (roster link pending)`
-                    : "") ||
                   "\u2014";
                 const teamLines = buildTeamAssignmentLines(profileMe);
                 const parents = account.linked_parents || [];

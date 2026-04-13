@@ -10,4 +10,3 @@ from .team import Team
 from .password_reset_otp import PasswordResetOTP
 from .player_fee import DirectorPaymentAuditLog, FeePaymentLedgerEntry, PaymentSchedule, PlayerFeeRecord
 from .user import AssignedAccountRole, User, VerificationStatus
-from .user_account_role import UserAccountRole

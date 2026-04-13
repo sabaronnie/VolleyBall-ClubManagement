@@ -249,7 +249,7 @@ export default function MemberHubPage() {
   return (
     <ClubWorkspaceLayout
       activeTab="dashboard"
-      viewerAccountRole={me?.user?.role || me?.user?.assigned_account_role || null}
+      viewerAccountRole={me?.user?.role || null}
       showPlayerSessionsTab={playing.length > 0}
       showCoachAttendanceTab={showCoachAttendanceTab}
     >

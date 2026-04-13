@@ -1048,7 +1048,7 @@ function App() {
           return;
         }
 
-        setViewerAccountRole(payload.user?.role || payload.user?.assigned_account_role || null);
+        setViewerAccountRole(payload.user?.role || null);
 
         const owned = (payload.owned_clubs || []).length > 0;
         const flaggedDirector = payload.is_director_or_staff === true;
