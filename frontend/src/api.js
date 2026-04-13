@@ -136,6 +136,10 @@ export async function registerUser({ firstName, lastName, email, password, dateO
   });
 }
 
+export async function verifyRegistrationOtp({ email, otp }) {
+  return request("/api/register/verify/", { email, otp });
+}
+
 export async function fetchCurrentUser() {
   return authenticatedGet("/api/auth/me/");
 }

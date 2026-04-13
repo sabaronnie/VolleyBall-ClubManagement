@@ -31,6 +31,7 @@ from .views import (
     remove_team_captain,
     remove_team_member,
     register,
+    register_verify,
     remind_unconfirmed_training_session,
     send_team_notification,
     set_team_captain,
@@ -194,6 +195,7 @@ urlpatterns = [
         name="manage-player-parent-access",
     ),
     path("register/", register, name="register"),
+    path("register/verify/", register_verify, name="register-verify"),
     path("teams/<int:team_id>/members/", view_team_members, name="view-team-members"),
     path("teams/<int:team_id>/schedule/", team_schedule, name="team-schedule"),
     path(

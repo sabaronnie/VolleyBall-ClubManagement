@@ -2399,6 +2399,11 @@ button {
   font-weight: 800;
 }
 
+.auth-flow-hint--register {
+  color: rgba(255, 255, 255, 0.96);
+  text-align: center;
+}
+
 .auth-input-readonly {
   opacity: 0.85;
   cursor: default;
@@ -2415,7 +2420,7 @@ button {
 }
 
 .auth-success {
-  color: #0c7a2a;
+  color: #39b85f;
 }
 
 .login-right-visual {
@@ -2622,6 +2627,16 @@ button {
 
 .auth-form--register .auth-submit:hover {
   background: #98102b;
+}
+
+.auth-form--register .auth-submit--secondary {
+  margin-top: 0.45rem;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+}
+
+.auth-form--register .auth-submit--secondary:hover {
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .auth-switch--light {

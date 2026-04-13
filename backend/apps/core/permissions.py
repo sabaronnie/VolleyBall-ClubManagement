@@ -162,8 +162,12 @@ def coach_may_add_user_to_team_roster(actor, team, target_user, team_role: str) 
         return False
     if not is_team_coach(actor, team):
         return True
-    assigned = (getattr(target_user, "assigned_account_role", None) or "").strip()
-    if assigned in (AssignedAccountRole.PARENT, AssignedAccountRole.DIRECTOR):
+    if ClubMembership.objects.active().filter(
+        user=target_user,
+        role=ClubRole.CLUB_DIRECTOR,
+    ).exists():
+        return False
+    if ParentPlayerRelation.objects.approved().filter(parent=target_user).exists():
         return False
     return True
 

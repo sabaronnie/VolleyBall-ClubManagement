@@ -1,5 +1,6 @@
 from django.contrib.auth.base_user import BaseUserManager
 from django.contrib.auth.models import AbstractUser
+from django.core.exceptions import ObjectDoesNotExist
 from django.db import models
 
 
@@ -25,11 +26,19 @@ class UserManager(BaseUserManager):
         if not email:
             raise ValueError("An email address is required.")
 
+        requested_role = (extra_fields.pop("assigned_account_role", "") or "").strip().lower()
         email = self.normalize_email(email)
 
         user = self.model(email=email, **extra_fields)
         user.set_password(password)
         user.save(using=self._db)
+        if requested_role in AssignedAccountRole.values:
+            from .user_account_role import UserAccountRole
+
+            UserAccountRole.objects.update_or_create(
+                user=user,
+                defaults={"role": requested_role},
+            )
         return user
 
     def create_superuser(self, email, password=None, **extra_fields):
@@ -56,18 +65,20 @@ class User(AbstractUser):
         choices=VerificationStatus.choices,
         default=VerificationStatus.VERIFIED,
     )
-    assigned_account_role = models.CharField(
-        max_length=20,
-        choices=AssignedAccountRole.choices,
-        blank=True,
-        default="",
-        help_text="Primary app role set and maintained by club directors.",
-    )
 
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = []
 
     objects = UserManager()
+
+    @property
+    def assigned_account_role(self) -> str:
+        try:
+            assignment = self.account_role_assignment
+        except (AttributeError, ObjectDoesNotExist):
+            assignment = None
+        role = getattr(assignment, "role", "") or ""
+        return role if role in AssignedAccountRole.values else ""
 
     def __str__(self) -> str:
         return self.get_full_name() or self.email

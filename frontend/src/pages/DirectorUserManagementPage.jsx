@@ -378,6 +378,10 @@ export default function DirectorUserManagementPage() {
 
         <section className="vc-director-section">
           <h2 className="vc-panel-title">Pending Accounts</h2>
+          <p className="vc-modal__muted" style={{ marginTop: 0 }}>
+            New accounts now verify themselves with an email OTP during signup, so this queue should normally stay
+            empty.
+          </p>
           <div className="vc-director-layout">
             <div className="vc-director-table-wrap">
               {loadingPending ? (
