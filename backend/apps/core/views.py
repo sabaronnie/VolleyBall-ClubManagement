@@ -1,6 +1,7 @@
 import json
 import logging
 import secrets
+import threading
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -10,6 +11,7 @@ from django.contrib.auth import authenticate, get_user_model
 from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
+from django.core.validators import EmailValidator
 from django.core.mail import send_mail
 from django.db import IntegrityError, transaction
 from django.db.models import Exists, OuterRef, Q
@@ -40,6 +42,7 @@ from .models import (
     Club,
     ClubMembership,
     ClubRole,
+    ContactSubmission,
     Notification,
     ParentLinkApprovalStatus,
     ParentPlayerRelation,
@@ -86,6 +89,61 @@ User = get_user_model()
 
 def _password_reset_email_configured():
     return bool(settings.EMAIL_HOST_USER and settings.EMAIL_HOST_PASSWORD)
+
+
+def _contact_form_notification_recipients():
+    raw = (getattr(settings, "CONTACT_NOTIFICATION_EMAIL", None) or "").strip()
+    if not raw:
+        return []
+    return [addr.strip() for addr in raw.split(",") if addr.strip()]
+
+
+def _send_contact_submission_notification(row):
+    """Email club staff when SMTP is configured; failures are logged only (row is already saved)."""
+    recipients = _contact_form_notification_recipients()
+    if not recipients:
+        logger.warning("Contact form submission %s saved but CONTACT_NOTIFICATION_EMAIL is empty.", row.pk)
+        return
+    if not _password_reset_email_configured():
+        logger.warning(
+            "Contact form submission %s saved but outbound email is not configured (EMAIL_HOST_USER / EMAIL_HOST_PASSWORD).",
+            row.pk,
+        )
+        return
+
+    subject = f"[NetUp] Contact form: {row.name}"
+    body = (
+        "A new message was submitted via the Contact Us form.\n\n"
+        f"Submission ID: {row.pk}\n"
+        f"Name: {row.name}\n"
+        f"Email: {row.email}\n"
+        f"Role: {row.get_role_display()}\n"
+        f"Phone: {row.phone or '—'}\n\n"
+        f"Message:\n{row.message}\n"
+    )
+    try:
+        send_mail(
+            subject,
+            body,
+            settings.DEFAULT_FROM_EMAIL,
+            recipients,
+            fail_silently=False,
+        )
+    except Exception:
+        logger.exception("Failed to send contact form notification email for submission %s", row.pk)
+
+
+def _dispatch_contact_submission_notification(row):
+    """Return the API response immediately; send email outside the request path when possible."""
+    if settings.EMAIL_BACKEND == "django.core.mail.backends.locmem.EmailBackend":
+        _send_contact_submission_notification(row)
+        return
+
+    threading.Thread(
+        target=_send_contact_submission_notification,
+        args=(row,),
+        daemon=True,
+    ).start()
 
 
 def _registration_otp_minutes():
@@ -1333,6 +1391,60 @@ def password_reset_confirm(request):
     PasswordResetOTP.objects.filter(user=user).delete()
 
     return JsonResponse({"message": "Your password has been reset successfully."}, status=200)
+
+
+@csrf_exempt
+@require_POST
+def contact_submit(request):
+    payload = _parse_json_request(request)
+    if payload is None:
+        return JsonResponse({"errors": {"body": "Invalid JSON."}}, status=400)
+
+    name = (payload.get("name") or "").strip()
+    email_value = (payload.get("email") or "").strip().lower()
+    role = (payload.get("role") or "").strip().lower()
+    message = (payload.get("message") or "").strip()
+    phone = (payload.get("phone") or "").strip()
+
+    errors = {}
+    if not name:
+        errors["name"] = "Name is required."
+    if not email_value:
+        errors["email"] = "Email is required."
+    else:
+        try:
+            EmailValidator()(email_value)
+        except ValidationError:
+            errors["email"] = "Enter a valid email address."
+
+    valid_roles = {choice.value for choice in ContactSubmission.ContactRole}
+    if role not in valid_roles:
+        errors["role"] = "Select a valid role."
+
+    if not message:
+        errors["message"] = "Message is required."
+
+    if phone and len(phone) > 40:
+        errors["phone"] = "Phone number is too long."
+
+    if errors:
+        return JsonResponse({"errors": errors}, status=400)
+
+    row = ContactSubmission.objects.create(
+        name=name,
+        email=email_value,
+        role=role,
+        message=message,
+        phone=phone,
+    )
+    _dispatch_contact_submission_notification(row)
+    return JsonResponse(
+        {
+            "id": row.id,
+            "message": "Thanks — we received your message and will get back to you soon.",
+        },
+        status=201,
+    )
 
 
 @login_required

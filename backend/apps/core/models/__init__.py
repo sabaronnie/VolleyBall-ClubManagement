@@ -1,4 +1,5 @@
 from .club import Club
+from .contact_submission import ContactSubmission
 from .coach_dashboard import (
     CoachFeedbackStatus,
     TeamCoachFeedback,

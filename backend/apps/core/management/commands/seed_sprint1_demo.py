@@ -26,6 +26,7 @@ from django.utils import timezone
 
 from apps.core.models import (
     Club,
+    ContactSubmission,
     ClubMembership,
     CoachFeedbackStatus,
     DirectorPaymentAuditLog,
@@ -75,9 +76,15 @@ class Command(BaseCommand):
             action="store_true",
             help="Recreate training sessions, confirmations, and coach dashboard rows for Riyadi U16.",
         )
+        parser.add_argument(
+            "--with-contact-samples",
+            action="store_true",
+            help="Insert a few ContactSubmission rows for admin / API testing.",
+        )
 
     def handle(self, *args, **options):
         force = options["force"]
+        with_contact_samples = options["with_contact_samples"]
         with transaction.atomic():
             director = self._ensure_user(
                 email="demo.director@sprint1.local",
@@ -204,12 +211,58 @@ class Command(BaseCommand):
             self._seed_nahda_low_attendance(team_nahda, karma)
             self.stdout.write(self.style.SUCCESS("Seeded director dashboard fees, ledger, Nahda sessions, and audit logs."))
 
+        if with_contact_samples:
+            self._seed_contact_samples()
+
         self.stdout.write(
             self.style.SUCCESS(
                 f"Done. Log in as lyn.coach@sprint1.local / {DEMO_PASSWORD} (coach) or "
                 f"tayma.parent@sprint1.local (parent of Karma and Racha) or "
                 f"taymamerhebi@gmail.com / taymamerhebi (director). "
                 f"Team id for Riyadi U16: {team_riyadi.id}."
+            )
+        )
+
+    def _seed_contact_samples(self):
+        samples = [
+            {
+                "name": "Demo Director",
+                "email": "demo.contact.director@sprint1.local",
+                "role": ContactSubmission.ContactRole.DIRECTOR,
+                "message": "We would like to schedule a walkthrough of NetUp for our club board.",
+                "phone": "+1 555 0101",
+            },
+            {
+                "name": "Jamie Parent",
+                "email": "demo.contact.parent@sprint1.local",
+                "role": ContactSubmission.ContactRole.PARENT,
+                "message": "Question about parent visibility for U14 schedules.",
+                "phone": "",
+            },
+            {
+                "name": "Alex Coach",
+                "email": "demo.contact.coach@sprint1.local",
+                "role": ContactSubmission.ContactRole.COACH,
+                "message": "Interested in the attendance workflow for training sessions.",
+                "phone": "+1 555 0199",
+            },
+        ]
+        created = 0
+        for row in samples:
+            _, was_created = ContactSubmission.objects.get_or_create(
+                email=row["email"],
+                message=row["message"],
+                defaults={
+                    "name": row["name"],
+                    "role": row["role"],
+                    "phone": row["phone"],
+                },
+            )
+            if was_created:
+                created += 1
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"Contact samples: {created} new row(s), {len(samples) - created} already present."
             )
         )
 

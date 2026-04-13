@@ -3,6 +3,7 @@ from django.urls import path
 from . import payment_views
 from .views import (
     add_parent_association,
+    contact_submit,
     add_team_member,
     directors_pending_parent_links,
     directors_resolve_parent_link,
@@ -49,6 +50,7 @@ from .views import (
 app_name = "core"
 
 urlpatterns = [
+    path("contact/", contact_submit, name="contact-submit"),
     path("auth/login/", login, name="login"),
     path("auth/password-reset/request/", password_reset_request, name="password-reset-request"),
     path("auth/password-reset/confirm/", password_reset_confirm, name="password-reset-confirm"),

@@ -20,6 +20,7 @@ from .models import (
     AssignedAccountRole,
     Club,
     ClubMembership,
+    ContactSubmission,
     ClubRole,
     DirectorPaymentAuditLog,
     FeePaymentLedgerEntry,
@@ -4241,3 +4242,108 @@ class MemberHubDashboardTests(TestCase):
         body = response.json()
         self.assertFalse(body["progress"]["has_weekly_metrics"])
         self.assertEqual(body["progress"]["weeks"], [])
+
+
+@override_settings(
+    EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+    EMAIL_HOST_USER="sender@example.com",
+    EMAIL_HOST_PASSWORD="secret",
+    CONTACT_NOTIFICATION_EMAIL="staff-notify@example.com",
+)
+class ContactSubmitApiTests(TestCase):
+    def test_contact_submit_creates_row_and_returns_201(self):
+        self.assertEqual(ContactSubmission.objects.count(), 0)
+        response = self.client.post(
+            reverse("core:contact-submit"),
+            data=json.dumps(
+                {
+                    "name": "Sam Volley",
+                    "email": "sam@example.com",
+                    "role": "coach",
+                    "message": "We need a demo next week.",
+                    "phone": "+1 555 0100",
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 201)
+        body = response.json()
+        self.assertIn("id", body)
+        self.assertIn("message", body)
+        self.assertEqual(ContactSubmission.objects.count(), 1)
+        row = ContactSubmission.objects.get()
+        self.assertEqual(row.name, "Sam Volley")
+        self.assertEqual(row.email, "sam@example.com")
+        self.assertEqual(row.role, ContactSubmission.ContactRole.COACH)
+        self.assertEqual(row.message, "We need a demo next week.")
+        self.assertEqual(row.phone, "+1 555 0100")
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ["staff-notify@example.com"])
+        self.assertIn("Sam Volley", mail.outbox[0].subject)
+        self.assertIn("We need a demo next week.", mail.outbox[0].body)
+        self.assertIn("sam@example.com", mail.outbox[0].body)
+
+    def test_contact_submit_optional_phone_blank(self):
+        response = self.client.post(
+            reverse("core:contact-submit"),
+            data=json.dumps(
+                {
+                    "name": "Pat",
+                    "email": "pat@example.com",
+                    "role": "parent",
+                    "message": "Hello",
+                    "phone": "",
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(ContactSubmission.objects.get().phone, "")
+        self.assertEqual(len(mail.outbox), 1)
+
+    def test_contact_submit_validation_errors(self):
+        response = self.client.post(
+            reverse("core:contact-submit"),
+            data=json.dumps(
+                {
+                    "name": "",
+                    "email": "not-an-email",
+                    "role": "invalid-role",
+                    "message": "",
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+        errors = response.json().get("errors", {})
+        self.assertIn("name", errors)
+        self.assertIn("email", errors)
+        self.assertIn("role", errors)
+        self.assertIn("message", errors)
+        self.assertEqual(ContactSubmission.objects.count(), 0)
+
+    def test_contact_submit_rejects_invalid_json(self):
+        response = self.client.post(
+            reverse("core:contact-submit"),
+            data="{",
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_contact_submit_rejects_phone_too_long(self):
+        response = self.client.post(
+            reverse("core:contact-submit"),
+            data=json.dumps(
+                {
+                    "name": "Pat",
+                    "email": "pat@example.com",
+                    "role": "player",
+                    "message": "Hi",
+                    "phone": "x" * 41,
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("phone", response.json().get("errors", {}))
+        self.assertEqual(ContactSubmission.objects.count(), 0)

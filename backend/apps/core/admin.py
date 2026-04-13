@@ -2,6 +2,7 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 
 from .models import (
+    ContactSubmission,
     Club,
     ClubMembership,
     DirectorPaymentAuditLog,
@@ -65,6 +66,14 @@ class CustomUserAdmin(UserAdmin):
     )
     search_fields = ("email", "first_name", "last_name", "emergency_contact")
     ordering = ("email",)
+
+
+@admin.register(ContactSubmission)
+class ContactSubmissionAdmin(admin.ModelAdmin):
+    list_display = ("created_at", "name", "email", "role", "phone")
+    list_filter = ("role",)
+    search_fields = ("name", "email", "message")
+    readonly_fields = ("created_at",)
 
 
 @admin.register(Club)
