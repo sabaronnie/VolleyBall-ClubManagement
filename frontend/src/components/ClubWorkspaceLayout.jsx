@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { fetchCurrentUser } from "../api";
+import { ChevronDownIcon, UserCircleIcon } from "./AppIcons";
 import NotificationBell from "./NotificationBell";
+import SiteNavbar, { buildWorkspaceTabs } from "./SiteNavbar";
 import { navigate } from "../navigation";
 
 const AUTH_TOKEN_KEY = "netup.auth.token";
@@ -56,9 +58,12 @@ function buildTeamAssignmentLines(me) {
 
 export default function ClubWorkspaceLayout({
   activeTab,
-  beforeIconActions = null,
   heroOverlay = false,
   viewerAccountRole = null,
+  teamOptions = [],
+  activeTeamId = "",
+  onChangeTeam = null,
+  includeAllTeamsOption = true,
   /** Show "My sessions" when the user has at least one player team (roster membership). */
   showPlayerSessionsTab = false,
   /** Coach/director training: per-session attendance planning (EP-25). */
@@ -160,144 +165,106 @@ export default function ClubWorkspaceLayout({
     void loadProfile();
   };
 
-  const tabClass = (id) => `vc-dash-tab${activeTab === id ? " is-active" : ""}`;
+  const tabs = buildWorkspaceTabs({
+    showPlayerSessionsTab,
+    showCoachAttendanceTab,
+    showParentAttendanceTab: viewerAccountRole === "parent" || showParentAttendanceFromProfile,
+  });
 
   return (
     <div className={`vc-app vc-dashboard${heroOverlay ? " vc-dashboard--hero-overlay" : ""}`}>
-      <header className="vc-dash-topbar">
-        <div className="vc-dash-brand">
-          <button
-            type="button"
-            className="vc-dash-logo vc-dash-logo--home"
-            onClick={() => navigate("/")}
-            aria-label="Go to homepage"
-          >
-            <span aria-hidden="true">{"\u{1F3D0}"}</span>
-          </button>
-          <nav className="vc-dash-tabs" aria-label="Main">
-            <button type="button" className={tabClass("home")} onClick={() => navigate("/")}>
-              Home
-            </button>
-            <button type="button" className={tabClass("dashboard")} onClick={() => navigate("/dashboard")}>
-              Dashboard
-            </button>
-            <button type="button" className={tabClass("schedule")} onClick={() => navigate("/schedule")}>
-              Schedule
-            </button>
-            {showPlayerSessionsTab ? (
+      <SiteNavbar
+        mode="workspace"
+        activeTab={activeTab}
+        tabs={tabs}
+        teamSelector={
+          <ClubTeamSelect
+            teams={teamOptions}
+            activeTeamId={activeTeamId}
+            onChangeTeam={onChangeTeam}
+            includeAllTeamsOption={includeAllTeamsOption}
+          />
+        }
+        actions={
+          <>
+            <NotificationBell />
+            <div className="vc-account-wrap" ref={accountWrapRef}>
               <button
                 type="button"
-                className={tabClass("player-attendance")}
-                onClick={() => navigate("/player/attendance")}
+                className={`vc-dash-icon-btn${accountMenuOpen ? " is-active" : ""}`}
+                aria-label="Account menu"
+                aria-haspopup="menu"
+                aria-expanded={accountMenuOpen}
+                onClick={() => setAccountMenuOpen((open) => !open)}
               >
-                My sessions
+                <UserCircleIcon />
               </button>
-            ) : null}
-            {showCoachAttendanceTab ? (
-              <button
-                type="button"
-                className={tabClass("coach-attendance")}
-                onClick={() => navigate("/coach/attendance")}
-              >
-                Team attendance
-              </button>
-            ) : null}
-            {viewerAccountRole === "parent" || showParentAttendanceFromProfile ? (
-              <button
-                type="button"
-                className={tabClass("parent-attendance")}
-                onClick={() => navigate("/parent/attendance")}
-              >
-                Family attendance
-              </button>
-            ) : null}
-            <button type="button" className={tabClass("statistics")} disabled>
-              Statistics
-            </button>
-          </nav>
-        </div>
-        <div className="vc-dash-actions vc-dash-actions--spread" aria-label="Toolbar">
-          {beforeIconActions ? <div className="vc-dash-actions-pre">{beforeIconActions}</div> : null}
-          <NotificationBell />
-          <button type="button" className="vc-dash-icon-btn" aria-label="Settings" disabled>
-            {"\u2699\uFE0F"}
-          </button>
-          <div className="vc-account-wrap" ref={accountWrapRef}>
-            <button
-              type="button"
-              className={`vc-dash-icon-btn${accountMenuOpen ? " is-active" : ""}`}
-              aria-label="Account menu"
-              aria-haspopup="menu"
-              aria-expanded={accountMenuOpen}
-              onClick={() => setAccountMenuOpen((open) => !open)}
-            >
-              {"\u{1F464}"}
-            </button>
-            {accountMenuOpen ? (
-              <div className="vc-account-dropdown" role="menu">
-                <button type="button" role="menuitem" onClick={openProfile}>
-                  Profile
-                </button>
-                {directorToolsVisible ? (
-                  <>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => {
-                        setAccountMenuOpen(false);
-                        navigate("/director/payments");
-                      }}
-                    >
-                      Payments & fees
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => {
-                        setAccountMenuOpen(false);
-                        navigate("/director/users");
-                      }}
-                    >
-                      Registration
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => {
-                        setAccountMenuOpen(false);
-                        navigate("/director/teams");
-                      }}
-                    >
-                      Teams & roster
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => {
-                        setAccountMenuOpen(false);
-                        navigate("/payments");
-                      }}
-                    >
-                      Payment schedule
-                    </button>
-                  </>
-                ) : null}
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="vc-account-logout"
-                  onClick={() => {
-                    setAccountMenuOpen(false);
-                    logout();
-                  }}
-                >
-                  Logout
-                </button>
-              </div>
-            ) : null}
-          </div>
-        </div>
-      </header>
+              {accountMenuOpen ? (
+                <div className="vc-account-dropdown" role="menu">
+                  <button type="button" role="menuitem" onClick={openProfile}>
+                    Profile
+                  </button>
+                  {directorToolsVisible ? (
+                    <>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setAccountMenuOpen(false);
+                          navigate("/director/payments");
+                        }}
+                      >
+                        Payments & fees
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setAccountMenuOpen(false);
+                          navigate("/director/users");
+                        }}
+                      >
+                        Registration
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setAccountMenuOpen(false);
+                          navigate("/director/teams");
+                        }}
+                      >
+                        Teams & roster
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setAccountMenuOpen(false);
+                          navigate("/payments");
+                        }}
+                      >
+                        Payment schedule
+                      </button>
+                    </>
+                  ) : null}
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="vc-account-logout"
+                    onClick={() => {
+                      setAccountMenuOpen(false);
+                      logout();
+                    }}
+                  >
+                    Logout
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          </>
+        }
+      />
 
       {profileOpen ? (
         <div
@@ -464,38 +431,104 @@ export function ClubTeamSelect({
   teams,
   activeTeamId,
   onChangeTeam,
-  selectId,
   includeAllTeamsOption = true,
 }) {
+  const menuId = useId();
+  const wrapRef = useRef(null);
+  const [open, setOpen] = useState(false);
+
+  const options = useMemo(() => {
+    const list = [];
+    list.push({ key: "", label: "None", value: "", team: null });
+    if (includeAllTeamsOption && teams.length > 1) {
+      list.push({
+        key: "__all__",
+        label: "View all",
+        value: "__all__",
+        team: { id: "__all__", name: "View all", canManageSchedule: false, canManageTraining: false },
+      });
+    }
+    teams.forEach((team) => {
+      list.push({
+        key: String(team.id),
+        label: team.name,
+        value: String(team.id),
+        team,
+      });
+    });
+    return list;
+  }, [includeAllTeamsOption, teams]);
+
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+
+    const onPointerDown = (event) => {
+      if (wrapRef.current && !wrapRef.current.contains(event.target)) {
+        setOpen(false);
+      }
+    };
+
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    };
+
+    document.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  const selectedOption =
+    options.find((option) => option.value === String(activeTeamId ?? "")) ||
+    options.find((option) => option.value === "") ||
+    options[0];
+
+  const handleSelect = (option) => {
+    setOpen(false);
+    if (!option?.team || typeof onChangeTeam !== "function") {
+      return;
+    }
+    onChangeTeam(option.team);
+  };
+
   return (
-    <div className="vc-dash-team-field">
-      <label className="vc-dash-team-field__label" htmlFor={selectId}>
+    <div className="vc-dash-team-field vc-team-dropdown" ref={wrapRef}>
+      <span className="vc-dash-team-field__label">
         Team
-      </label>
-      <select
-        id={selectId}
-        className="vc-dash-team-select"
-        value={activeTeamId}
-        onChange={(event) => {
-          const val = event.target.value;
-          if (val === "__all__") {
-            onChangeTeam({ id: "__all__", name: "View all", canManageSchedule: false, canManageTraining: false });
-            return;
-          }
-          const selected = teams.find((team) => String(team.id) === val);
-          if (selected) {
-            onChangeTeam(selected);
-          }
-        }}
+      </span>
+      <button
+        type="button"
+        className={`vc-team-dropdown__trigger${open ? " is-open" : ""}`}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={menuId}
+        onClick={() => setOpen((value) => !value)}
       >
-        <option value="">Select a team…</option>
-        {includeAllTeamsOption && teams.length > 1 ? <option value="__all__">View all</option> : null}
-        {teams.map((team) => (
-          <option key={team.id} value={String(team.id)}>
-            {team.name}
-          </option>
-        ))}
-      </select>
+        <span className="vc-team-dropdown__value">{selectedOption?.label || "None"}</span>
+        <ChevronDownIcon className={`vc-team-dropdown__chevron${open ? " is-open" : ""}`} />
+      </button>
+      {open ? (
+        <div className="vc-team-dropdown__menu" id={menuId} role="listbox" aria-label="Select a team">
+          {options.map((option) => (
+            <button
+              key={option.key}
+              type="button"
+              role="option"
+              aria-selected={selectedOption?.value === option.value}
+              className={`vc-team-dropdown__option${selectedOption?.value === option.value ? " is-selected" : ""}`}
+              onClick={() => handleSelect(option)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

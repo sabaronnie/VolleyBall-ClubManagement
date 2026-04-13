@@ -85,15 +85,15 @@ button {
   overflow-x: clip;
 }
 
-.homepage-shell--in-workspace .hero-section {
-  min-height: auto;
-}
-
 .hero-section {
   position: relative;
   min-height: 720px;
   padding: 1.3rem 1.3rem 2.8rem;
   overflow: visible;
+}
+
+.hero-section--overlay-nav .hero-content {
+  padding-top: 8rem;
 }
 
 .hero-backdrop {
@@ -220,9 +220,14 @@ button {
   border-radius: 999px;
   width: 46px;
   height: 46px;
+  padding: 0;
   background: rgba(255, 255, 255, 0.12);
   color: #fff;
   cursor: pointer;
+  display: grid;
+  place-items: center;
+  line-height: 0;
+  transition: transform 180ms ease, background-color 180ms ease, box-shadow 180ms ease, color 180ms ease;
 }
 
 .notification-bell--light {
@@ -242,7 +247,13 @@ button {
 }
 
 .notification-bell__icon {
-  font-size: 1.1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  line-height: 0;
+  transform: translateY(-0.75px);
 }
 
 .notification-bell__badge {
@@ -1988,6 +1999,10 @@ button {
   .hero-section {
     min-height: auto;
     padding: 1rem 1rem 2.2rem;
+  }
+
+  .hero-section--overlay-nav .hero-content {
+    padding-top: 7rem;
   }
 
   .site-nav {
