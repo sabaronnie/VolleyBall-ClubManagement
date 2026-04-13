@@ -1,15 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   directorCreateTeam,
+  fetchCoachTeamDashboard,
   fetchCurrentUser,
   fetchMyFees,
   fetchTeamMembers,
   requestParentLinkToPlayer,
 } from "../api";
 import ClubWorkspaceLayout from "../components/ClubWorkspaceLayout";
+import CoachDashboardBody from "../components/coach/CoachDashboardBody";
 import { navigate } from "../navigation";
 
 const AUTH_TOKEN_KEY = "netup.auth.token";
+const ACTIVE_TEAM_KEY = "netup.active.team";
 
 function money(cur, amount) {
   const n = Number(amount);
@@ -43,6 +46,10 @@ export default function MemberHubPage() {
   const [linkError, setLinkError] = useState("");
   /** teamId -> { playerCount, coachCount } */
   const [coachTeamRoster, setCoachTeamRoster] = useState({});
+  const [coachDashTeamId, setCoachDashTeamId] = useState("");
+  const [coachDashData, setCoachDashData] = useState(null);
+  const [coachDashLoading, setCoachDashLoading] = useState(false);
+  const [coachDashError, setCoachDashError] = useState("");
 
   useEffect(() => {
     if (!localStorage.getItem(AUTH_TOKEN_KEY)) {
@@ -74,6 +81,25 @@ export default function MemberHubPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!me) {
+      return undefined;
+    }
+    setCoachDashTeamId(localStorage.getItem(ACTIVE_TEAM_KEY) || "");
+    return undefined;
+  }, [me]);
+
+  useEffect(() => {
+    const onSetTeam = (e) => {
+      const tid = e.detail?.teamId;
+      if (tid != null) {
+        setCoachDashTeamId(String(tid));
+      }
+    };
+    window.addEventListener("netup-set-active-team", onSetTeam);
+    return () => window.removeEventListener("netup-set-active-team", onSetTeam);
+  }, []);
+
   const ownedClubs = me?.owned_clubs || [];
   const isDirector = Boolean(me?.is_director_or_staff) || ownedClubs.length > 0;
   const coached = me?.coached_teams || [];
@@ -92,6 +118,64 @@ export default function MemberHubPage() {
     pendingParentLinks.length > 0;
   const coachOnlyPayer =
     coached.length > 0 && !playing.length && !children.length && !isDirector;
+
+  const coachTeamsManaging = useMemo(
+    () => (me?.coached_teams || []).filter((t) => t.can_manage_training),
+    [me?.coached_teams],
+  );
+
+  const resolvedCoachTeamId = useMemo(() => {
+    if (!coachTeamsManaging.length) {
+      return null;
+    }
+    const ids = new Set(coachTeamsManaging.map((t) => String(t.id)));
+    const stored = coachDashTeamId;
+    if (stored && ids.has(stored)) {
+      return Number(stored);
+    }
+    return coachTeamsManaging[0].id;
+  }, [coachTeamsManaging, coachDashTeamId]);
+
+  const showCoachDashboard = coachTeamsManaging.length > 0;
+
+  const handleCoachTeamSelect = (team) => {
+    const id = String(team.id);
+    localStorage.setItem(ACTIVE_TEAM_KEY, id);
+    setCoachDashTeamId(id);
+    window.dispatchEvent(new CustomEvent("netup-set-active-team", { detail: { teamId: id } }));
+  };
+
+  useEffect(() => {
+    if (!resolvedCoachTeamId || !showCoachDashboard) {
+      setCoachDashData(null);
+      setCoachDashError("");
+      setCoachDashLoading(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setCoachDashLoading(true);
+    setCoachDashError("");
+    void fetchCoachTeamDashboard(resolvedCoachTeamId)
+      .then((data) => {
+        if (!cancelled) {
+          setCoachDashData(data);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setCoachDashError(err.message || "Could not load coach dashboard.");
+          setCoachDashData(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setCoachDashLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [resolvedCoachTeamId, showCoachDashboard]);
 
   const ownUnpaidFees = ownFees.filter((f) => f.status !== "paid");
   const childUnpaidFees = childrenFees.filter((f) => f.status !== "paid");
@@ -252,12 +336,25 @@ export default function MemberHubPage() {
       viewerAccountRole={me?.user?.role || null}
       showPlayerSessionsTab={playing.length > 0}
       showCoachAttendanceTab={showCoachAttendanceTab}
+      teamOptions={showCoachDashboard ? coachTeamsManaging : []}
+      activeTeamId={showCoachDashboard && resolvedCoachTeamId != null ? String(resolvedCoachTeamId) : ""}
+      onChangeTeam={showCoachDashboard ? handleCoachTeamSelect : null}
+      includeAllTeamsOption={showCoachDashboard && coachTeamsManaging.length > 1}
     >
-      <section className="vc-member-hub" style={{ padding: "1.5rem 1.75rem 2.5rem", maxWidth: 920, margin: "0 auto" }}>
+      <section
+        className={`vc-member-hub${showCoachDashboard ? " vc-member-hub--coach-dash" : ""}`}
+        style={{
+          padding: "1.5rem 1.75rem 2.5rem",
+          maxWidth: showCoachDashboard ? "min(1180px, 100%)" : 920,
+          margin: "0 auto",
+        }}
+      >
         <header style={{ marginBottom: "1.25rem" }}>
           <h1 style={{ fontSize: "1.45rem", margin: "0 0 0.35rem", fontWeight: 700 }}>Dashboard</h1>
-          <p style={{ margin: 0, color: "#5c6570", lineHeight: 1.5, maxWidth: 560 }}>
-            Quick links for your role—open a section below for details.
+          <p style={{ margin: 0, color: "#5c6570", lineHeight: 1.5, maxWidth: 640 }}>
+            {showCoachDashboard
+              ? "Team overview, analytics, and quick coaching actions."
+              : "Quick links for your role—open a section below for details."}
           </p>
         </header>
 
@@ -266,6 +363,14 @@ export default function MemberHubPage() {
 
         {!loading && !error ? (
           <>
+            {showCoachDashboard ? (
+              <CoachDashboardBody
+                dashboard={coachDashData}
+                loading={coachDashLoading}
+                error={coachDashError}
+              />
+            ) : null}
+
             <section
               className="vc-dash-kpi-card"
               style={{ marginBottom: "1.25rem" }}

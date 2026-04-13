@@ -1951,3 +1951,217 @@
     left: 1.25rem;
   }
 }
+
+/* —— Coach dashboard (MemberHub /dashboard for users who coach) —— */
+.vc-member-hub--coach-dash {
+  background: #f0f2f5;
+  border-radius: 12px;
+}
+
+.vc-coach-dash-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  margin-bottom: 1.75rem;
+}
+
+.vc-coach-dash-body .vc-dash-row {
+  margin-bottom: 0;
+}
+
+.vc-coach-dash-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  background: #fff;
+  border-radius: 10px;
+  padding: 1.35rem 1.25rem;
+  box-shadow: 0 2px 12px rgba(15, 40, 60, 0.06);
+  border: 1px solid #e8ecf1;
+}
+
+.vc-coach-dash-summary__cell {
+  position: relative;
+  padding: 0 1rem;
+  text-align: center;
+}
+
+.vc-coach-dash-summary__cell:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 0.25rem;
+  bottom: 0.25rem;
+  width: 1px;
+  background: #e8ecf1;
+}
+
+.vc-coach-dash-summary__value {
+  font-size: 1.35rem;
+  font-weight: 800;
+  color: #1a1d21;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.vc-coach-dash-analytics-row .vc-panel {
+  border: 1px solid #e8ecf1;
+  box-shadow: 0 2px 12px rgba(15, 40, 60, 0.06);
+  border-radius: 10px;
+}
+
+.vc-coach-dash-panel--chart .vc-chart-wrap {
+  height: 200px;
+}
+
+.vc-coach-dash-chart__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+  margin-top: 0.5rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #5c6570;
+}
+
+.vc-coach-dash-chart__legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.vc-coach-dash-chart__swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.vc-coach-dash-chart__swatch--attendance {
+  background: #4a90e2;
+}
+
+.vc-coach-dash-chart__swatch--performance {
+  background: #94a3b8;
+}
+
+.vc-coach-dash-stats-panel__scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.vc-coach-dash-stats-table th,
+.vc-coach-dash-stats-table td {
+  white-space: nowrap;
+}
+
+.vc-coach-dash-stats-table__trend {
+  font-size: 0.95rem;
+  color: #1a1d21;
+}
+
+.vc-coach-dash-main-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+@media (max-width: 720px) {
+  .vc-coach-dash-main-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
+.vc-coach-dash-main-actions__btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 52px;
+  padding: 0.85rem 1.25rem;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(180deg, #5ba3f0 0%, #4a90e2 100%);
+  box-shadow: 0 3px 12px rgba(74, 144, 226, 0.28);
+  text-align: center;
+}
+
+.vc-coach-dash-main-actions__btn:hover {
+  filter: brightness(1.04);
+}
+
+.vc-coach-dash-feedback {
+  background: #fff;
+  border-radius: 10px;
+  padding: 1.25rem 1.4rem 1.35rem;
+  box-shadow: 0 2px 12px rgba(15, 40, 60, 0.06);
+  border: 1px solid #e8ecf1;
+}
+
+.vc-coach-dash-feedback__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.vc-coach-dash-feedback__title {
+  font-size: 1rem;
+  font-weight: 700;
+  margin: 0;
+  color: #1a1d21;
+}
+
+.vc-coach-dash-feedback__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  color: #2b3035;
+  font-size: 0.92rem;
+  line-height: 1.65;
+}
+
+.vc-coach-dash-feedback__list li + li {
+  margin-top: 0.55rem;
+}
+
+@media (max-width: 900px) {
+  .vc-coach-dash-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    row-gap: 1rem;
+  }
+
+  .vc-coach-dash-summary__cell {
+    padding: 0.35rem 0.75rem;
+  }
+
+  .vc-coach-dash-summary__cell::after {
+    display: none;
+  }
+
+  .vc-coach-dash-summary__cell:nth-child(odd) {
+    border-right: 1px solid #e8ecf1;
+  }
+}
+
+@media (max-width: 520px) {
+  .vc-coach-dash-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .vc-coach-dash-summary__cell:nth-child(odd) {
+    border-right: none;
+  }
+
+  .vc-coach-dash-summary__cell:not(:first-child) {
+    border-top: 1px solid #e8ecf1;
+    padding-top: 1rem;
+    margin-top: 0.35rem;
+  }
+}
