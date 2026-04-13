@@ -7,6 +7,7 @@ from .views import (
     directors_pending_parent_links,
     directors_resolve_parent_link,
     clear_training_session,
+    coach_team_dashboard,
     coach_training_session_attendance,
     create_club,
     create_team,
@@ -217,6 +218,11 @@ urlpatterns = [
         "teams/<int:team_id>/players/<int:player_id>/attendance/summary/",
         player_team_attendance_summary,
         name="player-team-attendance-summary",
+    ),
+    path(
+        "teams/<int:team_id>/coach-dashboard/",
+        coach_team_dashboard,
+        name="coach-team-dashboard",
     ),
     path(
         "training-sessions/<int:session_id>/",

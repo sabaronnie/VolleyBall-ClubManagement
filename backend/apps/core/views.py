@@ -2355,6 +2355,28 @@ def player_team_attendance_summary(request, team_id, player_id):
 
 @login_required
 @require_GET
+def coach_team_dashboard(request, team_id):
+    """Aggregated coach dashboard KPIs, chart metrics, roster stats, and feedback (DB-backed)."""
+    from .coach_dashboard import build_coach_team_dashboard
+
+    team = get_object_or_404(Team.objects.select_related("club"), pk=team_id)
+    if not can_manage_team(request.user, team):
+        return JsonResponse(
+            {
+                "errors": {
+                    "authorization": (
+                        "Only coaches or club directors for this team can view the coach dashboard."
+                    )
+                }
+            },
+            status=403,
+        )
+    payload = build_coach_team_dashboard(team=team)
+    return JsonResponse(payload)
+
+
+@login_required
+@require_GET
 def notifications(request):
     notification_items = list(
         Notification.objects.filter(recipient=request.user)

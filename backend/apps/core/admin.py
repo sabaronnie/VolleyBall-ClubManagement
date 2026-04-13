@@ -11,7 +11,10 @@ from .models import (
     PlayerAccessPolicy,
     PlayerFeeRecord,
     PlayerProfile,
+    TeamCoachFeedback,
+    TeamRosterPlayerStat,
     TeamScheduleEntry,
+    TeamSkillDashboardMetric,
     TrainingSession,
     TrainingSessionConfirmation,
     Team,
@@ -199,6 +202,29 @@ class TrainingSessionAdmin(admin.ModelAdmin):
         "created_by__email",
     )
     list_filter = ("team__club", "team", "session_type", "status", "scheduled_date")
+
+
+@admin.register(TeamSkillDashboardMetric)
+class TeamSkillDashboardMetricAdmin(admin.ModelAdmin):
+    list_display = ("team", "skill_category", "attendance_rate", "average_performance", "updated_at")
+    list_filter = ("team", "skill_category")
+    search_fields = ("team__name",)
+
+
+@admin.register(TeamRosterPlayerStat)
+class TeamRosterPlayerStatAdmin(admin.ModelAdmin):
+    list_display = ("team", "player", "spikes", "blocks", "serve_percentage", "prior_serve_percentage", "updated_at")
+    list_filter = ("team",)
+    search_fields = ("team__name", "player__email", "player__first_name", "player__last_name")
+    raw_id_fields = ("player",)
+
+
+@admin.register(TeamCoachFeedback)
+class TeamCoachFeedbackAdmin(admin.ModelAdmin):
+    list_display = ("team", "player", "coach", "status", "created_at")
+    list_filter = ("team", "status")
+    search_fields = ("body", "player__email", "coach__email", "team__name")
+    raw_id_fields = ("player", "coach")
 
 
 @admin.register(TrainingSessionConfirmation)

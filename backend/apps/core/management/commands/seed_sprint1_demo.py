@@ -1,16 +1,19 @@
 """
-Sprint 1 demo data (EP-26 / EP-27 / EP-28): clubs, teams, users (Tayma, Lyn, Karma, Racha, Farouk, Nay),
-training sessions over time, and mixed attendance confirmations for analytics, summaries, and
-incomplete-attendance coach reminders.
+Sprint 1 demo data (EP-26 / EP-27 / EP-28 + coach dashboard): clubs, teams, users (Tayma, Lyn, Karma,
+Racha, Farouk, Nay), training and match sessions, mixed attendance, skill metrics, roster stats, and
+coach feedback — all consumed by GET /api/teams/<id>/coach-dashboard/.
 
 Run from backend/: python manage.py seed_sprint1_demo
 Then (optional): python manage.py remind_incomplete_training_attendance
 
 Default login password for most seeded accounts: Sprint1Demo123!
 Exception: taymamerhebi@gmail.com uses password taymamerhebi (club director on all demo clubs).
+Coach dashboard: log in as lyn.coach@sprint1.local, open Dashboard, select Riyadi U16 in the team
+dropdown (or rely on default), data is read from the database only.
 """
 
 from datetime import date, time, timedelta
+from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
@@ -18,14 +21,18 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.core.models import (
-    AssignedAccountRole,
     Club,
     ClubMembership,
+    CoachFeedbackStatus,
     ParentPlayerRelation,
     PlayerProfile,
     Team,
+    TeamCoachFeedback,
     TeamMembership,
     TeamRole,
+    TeamRosterPlayerStat,
+    TeamSkillCategory,
+    TeamSkillDashboardMetric,
     TrainingSession,
     TrainingSessionConfirmation,
     VerificationStatus,
@@ -38,14 +45,22 @@ DEMO_PASSWORD = "Sprint1Demo123!"
 CLUB_NAMES = ("Riyadi", "Nahda", "CPF", "AUB")
 
 
+def _next_friday_on_or_after(today: date) -> date:
+    """Calendar Friday strictly after `today` (if today is Friday, returns next week's Friday)."""
+    days_ahead = (4 - today.weekday()) % 7
+    if days_ahead == 0:
+        days_ahead = 7
+    return today + timedelta(days=days_ahead)
+
+
 class Command(BaseCommand):
-    help = "Seed realistic clubs, teams, users, and training attendance for local EP-26/EP-27 testing."
+    help = "Seed realistic clubs, teams, users, sessions, attendance, and coach dashboard rows for local testing."
 
     def add_arguments(self, parser):
         parser.add_argument(
             "--force",
             action="store_true",
-            help="Recreate training sessions and confirmations even if demo users already exist.",
+            help="Recreate training sessions, confirmations, and coach dashboard rows for Riyadi U16.",
         )
 
     def handle(self, *args, **options):
@@ -55,7 +70,6 @@ class Command(BaseCommand):
                 email="demo.director@sprint1.local",
                 first_name="Club",
                 last_name="Director",
-                assigned_account_role=AssignedAccountRole.DIRECTOR,
             )
             clubs = {}
             for name in CLUB_NAMES:
@@ -69,7 +83,6 @@ class Command(BaseCommand):
                 email="taymamerhebi@gmail.com",
                 first_name="Tayma",
                 last_name="Merhebi",
-                assigned_account_role=AssignedAccountRole.DIRECTOR,
                 date_of_birth=date_from_year(1995),
                 password="taymamerhebi",
             )
@@ -85,46 +98,41 @@ class Command(BaseCommand):
                 email="tayma.parent@sprint1.local",
                 first_name="Tayma",
                 last_name="Merhebi",
-                assigned_account_role=AssignedAccountRole.PARENT,
                 date_of_birth=date_from_year(1985),
             )
             lyn = self._ensure_user(
                 email="lyn.coach@sprint1.local",
                 first_name="Lyn",
                 last_name="Coach",
-                assigned_account_role=AssignedAccountRole.COACH,
                 date_of_birth=date_from_year(1990),
             )
             karma = self._ensure_user(
                 email="karma.player@sprint1.local",
                 first_name="Karma",
                 last_name="Player",
-                assigned_account_role=AssignedAccountRole.PLAYER,
                 date_of_birth=date_from_year(2012),
             )
             racha = self._ensure_user(
                 email="racha.player@sprint1.local",
                 first_name="Racha",
                 last_name="Player",
-                assigned_account_role=AssignedAccountRole.PLAYER,
                 date_of_birth=date_from_year(2006),
             )
             nay = self._ensure_user(
                 email="nay.player@sprint1.local",
                 first_name="Nay",
                 last_name="Player",
-                assigned_account_role=AssignedAccountRole.PLAYER,
                 date_of_birth=date_from_year(2008),
             )
             farouk = self._ensure_user(
                 email="farouk.coach@sprint1.local",
                 first_name="Farouk",
                 last_name="Coach",
-                assigned_account_role=AssignedAccountRole.COACH,
                 date_of_birth=date_from_year(1988),
             )
 
             ParentPlayerRelation.objects.link(parent=tayma, player=karma)
+            ParentPlayerRelation.objects.link(parent=tayma, player=racha)
 
             team_riyadi = self._ensure_team(clubs["Riyadi"], "Riyadi U16")
             team_cpf = self._ensure_team(clubs["CPF"], "CPF Juniors")
@@ -150,17 +158,24 @@ class Command(BaseCommand):
             )
 
             if force:
+                TeamCoachFeedback.objects.filter(team=team_riyadi).delete()
+                TeamRosterPlayerStat.objects.filter(team=team_riyadi).delete()
+                TeamSkillDashboardMetric.objects.filter(team=team_riyadi).delete()
                 TrainingSessionConfirmation.objects.filter(training_session__team=team_riyadi).delete()
                 TrainingSession.objects.filter(team=team_riyadi).delete()
 
             if not TrainingSession.objects.filter(team=team_riyadi).exists() or force:
-                self._seed_riyadi_sessions(team_riyadi, karma, racha, nay, tayma)
-                self.stdout.write(self.style.SUCCESS("Seeded Riyadi U16 training sessions and confirmations."))
+                self._seed_riyadi_sessions_and_dashboard(team_riyadi, karma, racha, nay, tayma, lyn)
+                self.stdout.write(
+                    self.style.SUCCESS(
+                        "Seeded Riyadi U16 sessions, attendance, skill metrics, roster stats, and feedback."
+                    )
+                )
 
         self.stdout.write(
             self.style.SUCCESS(
                 f"Done. Log in as lyn.coach@sprint1.local / {DEMO_PASSWORD} (coach) or "
-                f"tayma.parent@sprint1.local (parent of Karma) or "
+                f"tayma.parent@sprint1.local (parent of Karma and Racha) or "
                 f"taymamerhebi@gmail.com / taymamerhebi (director). "
                 f"Team id for Riyadi U16: {team_riyadi.id}."
             )
@@ -172,7 +187,6 @@ class Command(BaseCommand):
         email,
         first_name,
         last_name,
-        assigned_account_role,
         date_of_birth=None,
         password=DEMO_PASSWORD,
     ):
@@ -181,7 +195,6 @@ class Command(BaseCommand):
             defaults={
                 "first_name": first_name,
                 "last_name": last_name,
-                "assigned_account_role": assigned_account_role,
                 "verification_status": VerificationStatus.VERIFIED,
                 "date_of_birth": date_of_birth,
             },
@@ -189,7 +202,6 @@ class Command(BaseCommand):
         if not created:
             user.first_name = first_name
             user.last_name = last_name
-            user.assigned_account_role = assigned_account_role
             user.verification_status = VerificationStatus.VERIFIED
             if date_of_birth is not None:
                 user.date_of_birth = date_of_birth
@@ -197,7 +209,6 @@ class Command(BaseCommand):
                 update_fields=[
                     "first_name",
                     "last_name",
-                    "assigned_account_role",
                     "verification_status",
                     "date_of_birth",
                 ]
@@ -216,9 +227,17 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS(f"Created team {name} under {club.name} (id={team.id})"))
         return team
 
-    def _seed_riyadi_sessions(self, team, karma, racha, nay, tayma):
+    def _seed_riyadi_sessions_and_dashboard(self, team, karma, racha, nay, tayma, lyn):
         today = timezone.localdate()
-        # Eight past sessions (weekly), one today (pending if no confirm), one future (pending)
+        next_friday = _next_friday_on_or_after(today)
+
+        def confirm(sess, player, by_user):
+            TrainingSessionConfirmation.objects.update_or_create(
+                training_session=sess,
+                player=player,
+                defaults={"confirmed_by": by_user},
+            )
+
         past_offsets = [56, 49, 42, 35, 28, 21, 14, 7]
         sessions = []
         for i, off in enumerate(past_offsets):
@@ -234,6 +253,22 @@ class Command(BaseCommand):
             )
             sessions.append(s)
 
+        past_match = TrainingSession.objects.create(
+            team=team,
+            title="League vs North Side",
+            session_type=TrainingSession.SessionType.MATCH,
+            scheduled_date=today - timedelta(days=18),
+            start_time=time(19, 0),
+            end_time=time(21, 0),
+            location="Riyadi Arena",
+            opponent="North Side",
+            match_type=TrainingSession.MatchType.LEAGUE,
+            status=TrainingSession.Status.SCHEDULED,
+        )
+        confirm(past_match, racha, racha)
+        confirm(past_match, nay, nay)
+        # Karma absent (no confirmation) for this past match
+
         today_session = TrainingSession.objects.create(
             team=team,
             title="Practice (today)",
@@ -243,6 +278,10 @@ class Command(BaseCommand):
             end_time=time(19, 30),
             location="Main gym",
         )
+        confirm(today_session, karma, tayma)
+        confirm(today_session, racha, racha)
+        # Nay: pending (no row) for today's session
+
         future_session = TrainingSession.objects.create(
             team=team,
             title="Practice (upcoming)",
@@ -253,7 +292,19 @@ class Command(BaseCommand):
             location="Arena B",
         )
 
-        cancelled = TrainingSession.objects.create(
+        upcoming_match = TrainingSession.objects.create(
+            team=team,
+            title="League vs Sea Eagles",
+            session_type=TrainingSession.SessionType.MATCH,
+            scheduled_date=next_friday,
+            start_time=time(18, 30),
+            end_time=time(20, 30),
+            location="National Court",
+            opponent="Sea Eagles",
+            match_type=TrainingSession.MatchType.LEAGUE,
+        )
+
+        TrainingSession.objects.create(
             team=team,
             title="Cancelled scrimmage (ignored in analytics)",
             session_type=TrainingSession.SessionType.TRAINING,
@@ -263,31 +314,79 @@ class Command(BaseCommand):
             status=TrainingSession.Status.CANCELLED,
         )
 
-        def confirm(sess, player, by_user):
-            TrainingSessionConfirmation.objects.update_or_create(
-                training_session=sess,
-                player=player,
-                defaults={"confirmed_by": by_user},
-            )
-
-        # Racha: high attendance — confirmed all past sessions (self, 18+)
+        # Racha: high attendance — confirmed all past practices
         for s in sessions:
             confirm(s, racha, racha)
 
-        # Nay: medium — every other past session
+        # Nay: medium — every other past practice
         for idx, s in enumerate(sessions):
             if idx % 2 == 0:
                 confirm(s, nay, nay)
 
-        # Karma: low — parent confirms 2 of 8
+        # Karma: low — parent confirms 2 of 8 past practices
         confirm(sessions[0], karma, tayma)
         confirm(sessions[2], karma, tayma)
 
-        # One session with early confirmations for everyone on a future slot (optional)
         confirm(future_session, racha, racha)
         confirm(future_session, nay, nay)
 
-        self.stdout.write(f"Also created today session id={today_session.id}, future id={future_session.id}, cancelled id={cancelled.id}.")
+        self.stdout.write(
+            f"Sessions: today id={today_session.id}, future practice id={future_session.id}, "
+            f"upcoming match id={upcoming_match.id}."
+        )
+
+        # --- Coach dashboard DB rows (API: coach-dashboard) ---
+        skill_rows = [
+            (TeamSkillCategory.ATTACK, Decimal("82.00"), Decimal("71.00")),
+            (TeamSkillCategory.DEFENSE, Decimal("76.00"), Decimal("84.00")),
+            (TeamSkillCategory.SERVE, Decimal("91.00"), Decimal("63.00")),
+            (TeamSkillCategory.BLOCK, Decimal("68.00"), Decimal("79.00")),
+        ]
+        for cat, att, perf in skill_rows:
+            TeamSkillDashboardMetric.objects.update_or_create(
+                team=team,
+                skill_category=cat,
+                defaults={"attendance_rate": att, "average_performance": perf},
+            )
+
+        roster_defaults = [
+            (karma, 12, 3, Decimal("82.00"), Decimal("74.00")),
+            (racha, 6, 1, Decimal("60.00"), Decimal("68.00")),
+            (nay, 9, 2, Decimal("75.00"), Decimal("70.00")),
+        ]
+        for player, spikes, blocks, serve_pct, prior in roster_defaults:
+            TeamRosterPlayerStat.objects.update_or_create(
+                team=team,
+                player=player,
+                defaults={
+                    "spikes": spikes,
+                    "blocks": blocks,
+                    "serve_percentage": serve_pct,
+                    "prior_serve_percentage": prior,
+                },
+            )
+
+        TeamCoachFeedback.objects.create(
+            team=team,
+            player=nay,
+            coach=lyn,
+            body="Strong blocking in last scrimmage — keep it up.",
+            status=CoachFeedbackStatus.ADDRESSED,
+        )
+        TeamCoachFeedback.objects.create(
+            team=team,
+            player=karma,
+            coach=lyn,
+            body="improve footwork timing",
+            status=CoachFeedbackStatus.PENDING,
+        )
+        TeamCoachFeedback.objects.create(
+            team=team,
+            player=racha,
+            coach=lyn,
+            body="work on the serve",
+            status=CoachFeedbackStatus.PENDING,
+        )
 
 
 def date_from_year(year):
