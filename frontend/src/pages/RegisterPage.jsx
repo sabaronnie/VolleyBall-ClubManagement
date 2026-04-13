@@ -75,9 +75,9 @@ export default function RegisterPage() {
             <h1>Up</h1>
           </div>
           <img src="/auth/logo-ball.png" alt="" />
+          <h2>Register</h2>
         </div>
-        <h2>Register</h2>
-        <p>Create an account so a club director can approve your registration.</p>
+        <p>Create an account to join your club, connect with your team, and access the tools for your role.</p>
 
         <form className="auth-form auth-form--register" onSubmit={onSubmit}>
           <label htmlFor="register-first-name">First Name</label>

@@ -2143,11 +2143,25 @@ button {
 }
 
 .auth-page--register {
-  background: #005888;
+  position: relative;
+  background:
+    linear-gradient(180deg, rgba(12, 29, 58, 0.4), rgba(7, 22, 43, 0.62)),
+    url("/homepage/hero-volleyball.png") center center / cover no-repeat;
   display: flex;
   justify-content: center;
   align-items: center;
-  padding: 1.2rem 1rem;
+  padding: 2rem 1rem;
+  overflow: hidden;
+}
+
+.auth-page--register::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at top right, rgba(124, 194, 235, 0.2), transparent 28%),
+    radial-gradient(circle at bottom left, rgba(0, 88, 136, 0.36), transparent 34%);
+  pointer-events: none;
 }
 
 .login-left-panel {
@@ -2414,6 +2428,14 @@ button {
 
 .register-shell {
   width: min(100%, 480px);
+  position: relative;
+  z-index: 1;
+  padding: clamp(1.6rem, 4vw, 2.5rem);
+  border-radius: 0;
+  background: linear-gradient(180deg, rgba(0, 88, 136, 0.94), rgba(0, 74, 118, 0.96));
+  box-shadow: 0 22px 56px rgba(0, 0, 0, 0.5);
+  border: 0;
+  backdrop-filter: blur(4px);
   font-family: "Sansita", system-ui, sans-serif;
   color: #fff;
 }
@@ -2421,8 +2443,8 @@ button {
 .register-brand {
   display: flex;
   justify-content: center;
-  align-items: flex-start;
-  gap: 0.35rem;
+  align-items: center;
+  gap: 0.7rem;
 }
 
 .register-wordmark h1 {
@@ -2432,30 +2454,34 @@ button {
 .register-brand img {
   width: clamp(32px, 5vw, 48px);
   margin-top: 0.1rem;
+  margin-left: -0.6rem;
+  margin-right: 0.45rem;
 }
 
-.register-shell h2 {
-  margin: 0.3rem 0 0;
-  text-align: center;
+.register-brand h2 {
+  margin: 0;
   font-family: "Sansita", system-ui, sans-serif;
-  font-size: clamp(1rem, 2.5vw, 1.3rem);
-  font-weight: 700;
+  font-size: clamp(1.7rem, 4vw, 2.2rem);
+  font-weight: 800;
+  line-height: 1;
 }
 
 .register-shell > p {
-  margin: 0.1rem 0 0;
+  margin: 0.6rem 0 0;
   text-align: center;
-  font-size: 0.85rem;
+  font-size: 0.88rem;
   font-weight: 600;
+  color: rgba(255, 255, 255, 0.88);
 }
 
 .auth-form--register {
   width: min(100%, 400px);
-  margin: 0.6rem auto 0;
+  margin: 0.95rem auto 0;
+  gap: 0.32rem;
 }
 
 .auth-form--register label {
-  margin-top: 0.45rem;
+  margin-top: 0.7rem;
   color: #fff;
   font-size: 0.95rem;
 }
@@ -2463,6 +2489,11 @@ button {
 .auth-form--register input,
 .auth-form--register .role-dropdown-trigger {
   font-size: 0.95rem;
+}
+
+.auth-form--register input {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(245, 248, 252, 0.96);
 }
 
 .register-role-row {
@@ -2545,14 +2576,24 @@ button {
 
 .auth-form--register .auth-submit {
   align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   margin-top: 0.8rem;
   border-radius: 24px;
   font-size: 1rem;
   padding: 0.55rem 1.6rem;
+  background: #b31735;
+  color: #fff;
+  text-align: center;
+}
+
+.auth-form--register .auth-submit:hover {
+  background: #98102b;
 }
 
 .auth-switch--light {
-  color: #fff;
+  color: rgba(255, 255, 255, 0.94);
   text-align: center;
 }
 
@@ -2580,6 +2621,15 @@ button {
   .player-dive {
     position: static;
     display: none;
+  }
+
+  .auth-page--register {
+    padding: 1.25rem 0.9rem;
+    align-items: flex-start;
+  }
+
+  .register-shell {
+    border-radius: 0;
   }
 }
 
