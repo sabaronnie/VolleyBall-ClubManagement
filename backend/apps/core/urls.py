@@ -24,6 +24,7 @@ from .views import (
     manage_player_parent_access,
     manage_training_session,
     me,
+    member_hub_dashboard,
     parent_child_attendance_history,
     player_team_attendance_summary,
     request_parent_link_to_player,
@@ -61,6 +62,7 @@ urlpatterns = [
     path("directors/users/<int:user_id>/verify/", directors_verify_user, name="directors-verify-user"),
     path("directors/users/<int:user_id>/reject/", directors_reject_user, name="directors-reject-user"),
     path("auth/me/", me, name="me"),
+    path("me/member-dashboard/", member_hub_dashboard, name="member-hub-dashboard"),
     path("me/parent/child-attendance/", parent_child_attendance_history, name="parent-child-attendance"),
     path("me/parent-link-request/", request_parent_link_to_player, name="request-parent-link"),
     path(

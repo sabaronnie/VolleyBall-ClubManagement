@@ -1434,6 +1434,24 @@ def me(request):
 
 @login_required
 @require_GET
+def member_hub_dashboard(request):
+    """Aggregated parent/player home dashboard (profile, fees, progress, next session)."""
+    from .member_dashboard import build_member_hub_dashboard_payload
+
+    raw = request.GET.get("for_player_id")
+    for_player_id = None
+    if raw not in (None, ""):
+        try:
+            for_player_id = int(raw)
+        except (TypeError, ValueError):
+            return JsonResponse({"errors": {"for_player_id": "A valid numeric player id is required."}}, status=400)
+
+    payload, status = build_member_hub_dashboard_payload(request.user, for_player_id=for_player_id)
+    return JsonResponse(payload, status=status)
+
+
+@login_required
+@require_GET
 def parent_child_attendance_history(request):
     """EP-23: Linked children's training session attendance for assigned parent accounts only."""
     if _canonical_app_role(request.user) != AssignedAccountRole.PARENT:

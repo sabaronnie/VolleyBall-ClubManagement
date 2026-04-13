@@ -11,6 +11,7 @@ from .models import (
     PlayerAccessPolicy,
     PlayerFeeRecord,
     PlayerProfile,
+    PlayerWeeklySkillMetric,
     TeamCoachFeedback,
     TeamRosterPlayerStat,
     TeamScheduleEntry,
@@ -217,6 +218,15 @@ class TeamRosterPlayerStatAdmin(admin.ModelAdmin):
     list_filter = ("team",)
     search_fields = ("team__name", "player__email", "player__first_name", "player__last_name")
     raw_id_fields = ("player",)
+
+
+@admin.register(PlayerWeeklySkillMetric)
+class PlayerWeeklySkillMetricAdmin(admin.ModelAdmin):
+    list_display = ("player", "team", "week_start", "attack", "defense", "serve")
+    list_filter = ("team",)
+    search_fields = ("team__name", "player__email", "player__first_name", "player__last_name")
+    raw_id_fields = ("player", "team")
+    date_hierarchy = "week_start"
 
 
 @admin.register(TeamCoachFeedback)

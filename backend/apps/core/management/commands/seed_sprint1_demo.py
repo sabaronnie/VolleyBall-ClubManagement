@@ -30,9 +30,11 @@ from apps.core.models import (
     CoachFeedbackStatus,
     DirectorPaymentAuditLog,
     FeePaymentLedgerEntry,
+    Notification,
     ParentPlayerRelation,
     PlayerFeeRecord,
     PlayerProfile,
+    PlayerWeeklySkillMetric,
     Team,
     TeamCoachFeedback,
     TeamMembership,
@@ -50,6 +52,10 @@ User = get_user_model()
 DEMO_PASSWORD = "Sprint1Demo123!"
 
 CLUB_NAMES = ("Riyadi", "Nahda", "CPF", "AUB")
+
+
+def _monday_of_week_containing(d: date) -> date:
+    return d - timedelta(days=d.weekday())
 
 
 def _next_friday_on_or_after(today: date) -> date:
@@ -172,6 +178,7 @@ class Command(BaseCommand):
                 TeamCoachFeedback.objects.filter(team=team_riyadi).delete()
                 TeamRosterPlayerStat.objects.filter(team=team_riyadi).delete()
                 TeamSkillDashboardMetric.objects.filter(team=team_riyadi).delete()
+                PlayerWeeklySkillMetric.objects.filter(team=team_riyadi).delete()
                 TrainingSessionConfirmation.objects.filter(training_session__team=team_riyadi).delete()
                 TrainingSession.objects.filter(team=team_riyadi).delete()
 
@@ -182,6 +189,9 @@ class Command(BaseCommand):
                         "Seeded Riyadi U16 sessions, attendance, skill metrics, roster stats, and feedback."
                     )
                 )
+
+            self._seed_player_weekly_skill_metrics(team_riyadi, karma, racha, nay)
+            self._seed_demo_notifications(team_riyadi, tayma, karma, lyn)
 
             self._seed_riyadi_fees_and_ledgers(
                 club_riyadi,
@@ -409,6 +419,49 @@ class Command(BaseCommand):
             body="work on the serve",
             status=CoachFeedbackStatus.PENDING,
         )
+
+    def _seed_player_weekly_skill_metrics(self, team, karma, racha, nay):
+        """Eight weeks of Attack/Defense/Serve scores for member dashboard charts."""
+        today = timezone.localdate()
+        first_monday = _monday_of_week_containing(today - timedelta(weeks=7))
+        curves = [
+            (karma, [(52 + i * 4, 58 + i * 3, 60 + i * 3) for i in range(8)]),
+            (racha, [(68 + i * 2, 72 + i * 2, 64 + i * 2) for i in range(8)]),
+            (nay, [(60 + i * 3, 56 + i * 3, 68 + i * 2) for i in range(8)]),
+        ]
+        for player, triples in curves:
+            for i, (a, d, s) in enumerate(triples):
+                ws = first_monday + timedelta(weeks=i)
+                PlayerWeeklySkillMetric.objects.update_or_create(
+                    player=player,
+                    team=team,
+                    week_start=ws,
+                    defaults={
+                        "attack": Decimal(str(min(98, a))),
+                        "defense": Decimal(str(min(98, d))),
+                        "serve": Decimal(str(min(98, s))),
+                    },
+                )
+
+    def _seed_demo_notifications(self, team, tayma_parent, karma_player, coach_user):
+        if not Notification.objects.filter(recipient=tayma_parent, title="Club update (demo)").exists():
+            Notification.objects.create(
+                recipient=tayma_parent,
+                created_by=coach_user,
+                team=team,
+                title="Club update (demo)",
+                message="Riyadi U16 fees and attendance are synced for the sprint 1 demo.",
+                category=Notification.Category.MANUAL,
+            )
+        if not Notification.objects.filter(recipient=karma_player, title="Practice reminder (demo)").exists():
+            Notification.objects.create(
+                recipient=karma_player,
+                created_by=coach_user,
+                team=team,
+                title="Practice reminder (demo)",
+                message="Check your dashboard for the next session and confirm attendance when available.",
+                category=Notification.Category.MANUAL,
+            )
 
     def _seed_riyadi_fees_and_ledgers(self, club, team, karma, racha, nay, director_user):
         today = timezone.localdate()

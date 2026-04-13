@@ -30,6 +30,7 @@ from .models import (
     PlayerAccessPolicy,
     PlayerFeeRecord,
     PlayerProfile,
+    PlayerWeeklySkillMetric,
     RegistrationOTP,
     Team,
     TeamMembership,
@@ -4081,3 +4082,162 @@ class CoachRosterRbacTests(TestCase):
             HTTP_AUTHORIZATION=f"Bearer {token}",
         )
         self.assertEqual(response.status_code, 403)
+
+
+class MemberHubDashboardTests(TestCase):
+    """GET /api/me/member-dashboard/ aggregated parent/player home payload."""
+
+    def _fixture(self):
+        director = User.objects.create_user(email="md-dir@example.com", password="StrongPassword123!")
+        club = Club.objects.create_club(name="MD Club", director=director)
+        team = Team.objects.create(club=club, name="MD Team")
+        coach = User.objects.create_user(
+            email="md-coach@example.com",
+            password="StrongPassword123!",
+            first_name="Casey",
+            last_name="Coach",
+        )
+        TeamMembership.objects.add_member(user=coach, team=team, role=TeamRole.COACH)
+        player = User.objects.create_user(
+            email="md-player@example.com",
+            password="StrongPassword123!",
+            first_name="Max",
+            last_name="Demo",
+            date_of_birth=date(2010, 3, 10),
+        )
+        TeamMembership.objects.add_member(user=player, team=team, role=TeamRole.PLAYER)
+        parent = User.objects.create_user(
+            email="md-parent@example.com",
+            password="StrongPassword123!",
+            first_name="Pat",
+            last_name="Demo",
+        )
+        ParentPlayerRelation.objects.link(parent=parent, player=player, approval_status=ParentLinkApprovalStatus.APPROVED)
+        other_child = User.objects.create_user(
+            email="md-otherchild@example.com",
+            password="StrongPassword123!",
+            first_name="Other",
+            last_name="Kid",
+        )
+        TeamMembership.objects.add_member(user=other_child, team=team, role=TeamRole.PLAYER)
+        ParentPlayerRelation.objects.link(parent=parent, player=other_child, approval_status=ParentLinkApprovalStatus.APPROVED)
+
+        today = timezone.localdate()
+        session = TrainingSession.objects.create(
+            team=team,
+            title="Next practice",
+            session_type=TrainingSession.SessionType.TRAINING,
+            scheduled_date=today + timedelta(days=2),
+            start_time=time(18, 0),
+            end_time=time(19, 30),
+            location="Gym A",
+        )
+        PlayerFeeRecord.objects.create(
+            club=club,
+            player=player,
+            team=team,
+            description="Dues",
+            amount_due=Decimal("100.00"),
+            amount_paid=Decimal("40.00"),
+            currency="USD",
+            due_date=today + timedelta(days=7),
+            billing_period_start=today.replace(day=1),
+        )
+        mon = today - timedelta(days=today.weekday())
+        PlayerWeeklySkillMetric.objects.create(
+            player=player,
+            team=team,
+            week_start=mon - timedelta(weeks=1),
+            attack=Decimal("60.00"),
+            defense=Decimal("65.00"),
+            serve=Decimal("70.00"),
+        )
+        PlayerWeeklySkillMetric.objects.create(
+            player=player,
+            team=team,
+            week_start=mon,
+            attack=Decimal("62.00"),
+            defense=Decimal("66.00"),
+            serve=Decimal("72.00"),
+        )
+        return {
+            "player": player,
+            "parent": parent,
+            "other_child": other_child,
+            "team": team,
+            "coach": coach,
+            "session": session,
+        }
+
+    def test_requires_authentication(self):
+        response = self.client.get(reverse("core:member-hub-dashboard"))
+        self.assertEqual(response.status_code, 401)
+
+    def test_player_sees_own_data(self):
+        fx = self._fixture()
+        token = generate_auth_token(fx["player"])
+        response = self.client.get(reverse("core:member-hub-dashboard"), HTTP_AUTHORIZATION=f"Bearer {token}")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["focus_player"]["id"], fx["player"].id)
+        self.assertEqual(data["profile"]["display_name"], "Max Demo")
+        self.assertEqual(data["profile"]["team"]["name"], "MD Team")
+        self.assertIn("Casey Coach", data["profile"]["coach_display"])
+        self.assertAlmostEqual(data["payment"]["amount_due"], 60.0)
+        self.assertEqual(data["payment"]["overall_status"], "pending")
+        self.assertEqual(data["club_summary"]["session_id"], fx["session"].id)
+        self.assertTrue(data["progress"]["has_weekly_metrics"])
+        self.assertEqual(len(data["progress"]["weeks"]), 2)
+        self.assertAlmostEqual(data["progress"]["summary"]["serve"], 72.0)
+
+    def test_parent_sees_linked_child_default_first_id(self):
+        fx = self._fixture()
+        token = generate_auth_token(fx["parent"])
+        response = self.client.get(reverse("core:member-hub-dashboard"), HTTP_AUTHORIZATION=f"Bearer {token}")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(len(data["available_children"]), 2)
+        self.assertEqual(data["focus_player"]["id"], min(fx["player"].id, fx["other_child"].id))
+
+    def test_parent_for_player_id_second_child(self):
+        fx = self._fixture()
+        token = generate_auth_token(fx["parent"])
+        url = reverse("core:member-hub-dashboard") + f"?for_player_id={fx['other_child'].id}"
+        response = self.client.get(url, HTTP_AUTHORIZATION=f"Bearer {token}")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["focus_player"]["id"], fx["other_child"].id)
+
+    def test_parent_cannot_view_unrelated_player(self):
+        fx = self._fixture()
+        stranger = User.objects.create_user(email="md-stranger@example.com", password="StrongPassword123!")
+        token = generate_auth_token(fx["parent"])
+        url = reverse("core:member-hub-dashboard") + f"?for_player_id={stranger.id}"
+        response = self.client.get(url, HTTP_AUTHORIZATION=f"Bearer {token}")
+        self.assertEqual(response.status_code, 403)
+
+    def test_non_player_for_self_id_returns_400(self):
+        fx = self._fixture()
+        token = generate_auth_token(fx["parent"])
+        url = reverse("core:member-hub-dashboard") + f"?for_player_id={fx['parent'].id}"
+        response = self.client.get(url, HTTP_AUTHORIZATION=f"Bearer {token}")
+        self.assertEqual(response.status_code, 400)
+
+    def test_member_without_roster_or_family_has_empty_focus(self):
+        lone = User.objects.create_user(email="md-lone@example.com", password="StrongPassword123!")
+        token = generate_auth_token(lone)
+        response = self.client.get(reverse("core:member-hub-dashboard"), HTTP_AUTHORIZATION=f"Bearer {token}")
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.json()["focus_player"])
+
+    def test_progress_empty_when_no_weekly_rows(self):
+        director = User.objects.create_user(email="md-p2@example.com", password="StrongPassword123!")
+        club = Club.objects.create_club(name="MD Club 2", director=director)
+        team = Team.objects.create(club=club, name="MD Team 2")
+        player = User.objects.create_user(email="md-player2@example.com", password="StrongPassword123!")
+        TeamMembership.objects.add_member(user=player, team=team, role=TeamRole.PLAYER)
+        token = generate_auth_token(player)
+        response = self.client.get(reverse("core:member-hub-dashboard"), HTTP_AUTHORIZATION=f"Bearer {token}")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertFalse(body["progress"]["has_weekly_metrics"])
+        self.assertEqual(body["progress"]["weeks"], [])

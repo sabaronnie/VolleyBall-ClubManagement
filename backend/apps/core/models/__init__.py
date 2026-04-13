@@ -6,6 +6,7 @@ from .coach_dashboard import (
     TeamSkillCategory,
     TeamSkillDashboardMetric,
 )
+from .member_progress import PlayerWeeklySkillMetric
 from .membership import ClubMembership, ClubRole, TeamMembership, TeamRole
 from .notification import Notification
 from .parent_player_relation import ParentLinkApprovalStatus, ParentPlayerRelation
