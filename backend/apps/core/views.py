@@ -3045,6 +3045,12 @@ def create_club(request):
     if errors:
         return JsonResponse({"errors": errors}, status=400)
 
+    if Club.objects.filter(name=name).exists():
+        return JsonResponse(
+            {"errors": {"name": "A club with this name already exists."}},
+            status=400,
+        )
+
     club_data = {
         "short_name": (payload.get("short_name") or "").strip(),
         "description": payload.get("description") or "",

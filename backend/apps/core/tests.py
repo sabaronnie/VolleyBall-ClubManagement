@@ -444,6 +444,80 @@ class CreateClubEndpointTests(TestCase):
 
         self.assertEqual(response.status_code, 401)
 
+    def test_create_club_rejects_empty_name(self):
+        user = User.objects.create_user(
+            email="director@example.com",
+            password="StrongPassword123!",
+            first_name="Club",
+            last_name="Director",
+        )
+        token = generate_auth_token(user)
+
+        response = self.client.post(
+            reverse("core:create-club"),
+            data=json.dumps({"name": "   "}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("name", response.json().get("errors", {}))
+        self.assertEqual(Club.objects.count(), 0)
+
+    def test_create_club_rejects_duplicate_name(self):
+        user = User.objects.create_user(
+            email="director@example.com",
+            password="StrongPassword123!",
+            first_name="Club",
+            last_name="Director",
+        )
+        other = User.objects.create_user(
+            email="other@example.com",
+            password="StrongPassword123!",
+            first_name="Other",
+            last_name="User",
+        )
+        Club.objects.create_club(name="Existing Club", director=other)
+        token = generate_auth_token(user)
+
+        response = self.client.post(
+            reverse("core:create-club"),
+            data=json.dumps({"name": "Existing Club"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("name", response.json().get("errors", {}))
+        self.assertEqual(Club.objects.count(), 1)
+
+    def test_me_endpoint_lists_owned_club_after_create_club(self):
+        user = User.objects.create_user(
+            email="director@example.com",
+            password="StrongPassword123!",
+            first_name="Club",
+            last_name="Director",
+        )
+        token = generate_auth_token(user)
+
+        create_response = self.client.post(
+            reverse("core:create-club"),
+            data=json.dumps({"name": "Fresh Club", "city": "Beirut"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(create_response.status_code, 201)
+
+        me_response = self.client.get(
+            reverse("core:me"),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(me_response.status_code, 200)
+        payload = me_response.json()
+        self.assertEqual(len(payload["owned_clubs"]), 1)
+        self.assertEqual(payload["owned_clubs"][0]["name"], "Fresh Club")
+        self.assertTrue(payload["is_director_or_staff"])
+
 
 class CreateTeamEndpointTests(TestCase):
     def test_create_team_allows_club_director(self):
