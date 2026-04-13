@@ -87,7 +87,7 @@ export default function MemberHubPage() {
   const pendingParentLinks = me?.pending_parent_links || [];
   const showParentLinking =
     accountRoles.includes("parent") ||
-    me?.user?.assigned_account_role === "parent" ||
+    me?.user?.role === "parent" ||
     children.length > 0 ||
     pendingParentLinks.length > 0;
   const coachOnlyPayer =
@@ -246,15 +246,10 @@ export default function MemberHubPage() {
     (me?.coached_teams || []).some((t) => t.can_manage_training) ||
     (me?.director_teams || []).some((t) => t.can_manage_training);
 
-  const directorLabelWithoutMembership =
-    me?.user?.assigned_account_role === "director" &&
-    !me?.is_director_or_staff &&
-    ownedClubs.length === 0;
-
   return (
     <ClubWorkspaceLayout
       activeTab="dashboard"
-      viewerAccountRole={me?.user?.assigned_account_role || null}
+      viewerAccountRole={me?.user?.role || null}
       showPlayerSessionsTab={playing.length > 0}
       showCoachAttendanceTab={showCoachAttendanceTab}
     >
@@ -271,21 +266,6 @@ export default function MemberHubPage() {
 
         {!loading && !error ? (
           <>
-            {directorLabelWithoutMembership ? (
-              <div
-                className="vc-director-error"
-                role="status"
-                style={{ marginBottom: "1.25rem", lineHeight: 1.55 }}
-              >
-                Your profile is set to <strong>Director</strong>, but there is no active{" "}
-                <strong>club director</strong> membership for your account. Director tools stay off until that is
-                restored (for example from the project backend:{" "}
-                <code style={{ fontSize: "0.85em" }}>
-                  python manage.py set_club_director YOUR_EMAIL --club-id=CLUB_ID
-                </code>
-                ). After fixing, refresh this page or sign out and back in.
-              </div>
-            ) : null}
             <section
               className="vc-dash-kpi-card"
               style={{ marginBottom: "1.25rem" }}

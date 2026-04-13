@@ -25,6 +25,7 @@ class UserManager(BaseUserManager):
         if not email:
             raise ValueError("An email address is required.")
 
+        extra_fields.pop("assigned_account_role", None)
         email = self.normalize_email(email)
 
         user = self.model(email=email, **extra_fields)
@@ -55,13 +56,6 @@ class User(AbstractUser):
         max_length=20,
         choices=VerificationStatus.choices,
         default=VerificationStatus.VERIFIED,
-    )
-    assigned_account_role = models.CharField(
-        max_length=20,
-        choices=AssignedAccountRole.choices,
-        blank=True,
-        default="",
-        help_text="Primary app role set and maintained by club directors.",
     )
 
     USERNAME_FIELD = "email"

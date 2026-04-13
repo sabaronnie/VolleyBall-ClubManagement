@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchNotifications, markNotificationsRead } from "../api";
+import { BellIcon } from "./AppIcons";
 import { navigate } from "../navigation";
 
 const AUTH_TOKEN_KEY = "netup.auth.token";
@@ -98,7 +99,7 @@ export default function NotificationBell({ teamId = null }) {
         onClick={() => setOpen((v) => !v)}
       >
         <span className="notification-bell__icon" aria-hidden="true">
-          {"\u{1F514}"}
+          <BellIcon />
         </span>
         {unreadCount > 0 ? (
           <span className="notification-bell__badge" aria-hidden="true">

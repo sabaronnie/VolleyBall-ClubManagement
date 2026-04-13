@@ -85,15 +85,15 @@ button {
   overflow-x: clip;
 }
 
-.homepage-shell--in-workspace .hero-section {
-  min-height: auto;
-}
-
 .hero-section {
   position: relative;
   min-height: 720px;
   padding: 1.3rem 1.3rem 2.8rem;
   overflow: visible;
+}
+
+.hero-section--overlay-nav .hero-content {
+  padding-top: 8rem;
 }
 
 .hero-backdrop {
@@ -121,6 +121,21 @@ button {
   background: rgba(36, 49, 91, 0.64);
   backdrop-filter: blur(14px);
   box-shadow: 0 18px 48px rgba(10, 14, 31, 0.2);
+}
+
+.site-nav--guest {
+  justify-content: flex-end;
+  width: fit-content;
+  max-width: calc(100% - 2.6rem);
+  margin: 0 0 0 auto;
+}
+
+.guest-nav-group {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  justify-content: center;
 }
 
 .nav-left {
@@ -205,9 +220,14 @@ button {
   border-radius: 999px;
   width: 46px;
   height: 46px;
+  padding: 0;
   background: rgba(255, 255, 255, 0.12);
   color: #fff;
   cursor: pointer;
+  display: grid;
+  place-items: center;
+  line-height: 0;
+  transition: transform 180ms ease, background-color 180ms ease, box-shadow 180ms ease, color 180ms ease;
 }
 
 .notification-bell--light {
@@ -227,7 +247,13 @@ button {
 }
 
 .notification-bell__icon {
-  font-size: 1.1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  line-height: 0;
+  transform: translateY(-0.75px);
 }
 
 .notification-bell__badge {
@@ -1358,13 +1384,26 @@ button {
   letter-spacing: 0.01em;
 }
 
-.brand-mark {
-  margin-right: 0.55rem;
+.homepage-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
   color: #fff;
-  font-family: var(--font-display);
-  font-size: 1rem;
-  font-weight: 700;
-  letter-spacing: 0.03em;
+}
+
+.homepage-brand__wordmark h1 {
+  margin: 0;
+  font-family: "Sansita One", system-ui, sans-serif;
+  font-size: clamp(1.05rem, 1.8vw, 1.35rem);
+  font-weight: 800;
+  line-height: 0.88;
+}
+
+.homepage-brand img {
+  width: clamp(24px, 2.2vw, 30px);
+  margin-top: 0.08rem;
+  margin-left: -0.04rem;
+  margin-right: 0.6rem;
 }
 
 .action-button {
@@ -1967,11 +2006,21 @@ button {
     padding: 1rem 1rem 2.2rem;
   }
 
+  .hero-section--overlay-nav .hero-content {
+    padding-top: 7rem;
+  }
+
   .site-nav {
     width: calc(100% - 2rem);
     max-width: calc(100% - 2rem);
     margin: 0 auto;
     border-radius: 1.2rem;
+  }
+
+  .site-nav--guest {
+    width: fit-content;
+    max-width: calc(100% - 2rem);
+    margin: 0 0 0 auto;
   }
 
   .hero-content {
@@ -2127,11 +2176,25 @@ button {
 }
 
 .auth-page--register {
-  background: #005888;
+  position: relative;
+  background:
+    linear-gradient(180deg, rgba(12, 29, 58, 0.4), rgba(7, 22, 43, 0.62)),
+    url("/homepage/hero-volleyball.png") center center / cover no-repeat;
   display: flex;
   justify-content: center;
   align-items: center;
-  padding: 1.2rem 1rem;
+  padding: 2rem 1rem;
+  overflow: hidden;
+}
+
+.auth-page--register::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at top right, rgba(124, 194, 235, 0.2), transparent 28%),
+    radial-gradient(circle at bottom left, rgba(0, 88, 136, 0.36), transparent 34%);
+  pointer-events: none;
 }
 
 .login-left-panel {
@@ -2152,9 +2215,10 @@ button {
 
 .login-brand-lockup {
   display: flex;
-  align-items: flex-start;
-  gap: 0.4rem;
+  align-items: center;
+  gap: 0.7rem;
   width: fit-content;
+  margin-bottom: 1rem;
 }
 
 .login-brand-wordmark h1,
@@ -2173,13 +2237,16 @@ button {
 .login-brand-lockup img {
   width: clamp(34px, 4.5vw, 50px);
   margin-top: 0.1rem;
+  margin-left: -0.6rem;
+  margin-right: 0.45rem;
 }
 
 .login-title {
-  margin: 0.2rem 0 0.5rem 5.5rem;
-  font-size: clamp(1rem, 2vw, 1.25rem);
+  margin: 0;
+  font-size: clamp(1.9rem, 4.4vw, 2.45rem);
   font-family: "Sansita", system-ui, sans-serif;
-  font-weight: 700;
+  font-weight: 800;
+  line-height: 1;
 }
 
 .auth-form {
@@ -2189,6 +2256,12 @@ button {
 
 .auth-form--login {
   width: 100%;
+  gap: 0.35rem;
+  margin-top: 0.65rem;
+}
+
+.auth-form--login label {
+  margin-top: 0.75rem;
 }
 
 .auth-form label {
@@ -2287,6 +2360,15 @@ button {
   letter-spacing: 0.02em;
 }
 
+.auth-form--login .auth-submit {
+  background: #b31735;
+  color: #fff;
+}
+
+.auth-form--login .auth-submit:hover {
+  background: #98102b;
+}
+
 .auth-submit:disabled {
   opacity: 0.7;
   cursor: wait;
@@ -2337,6 +2419,11 @@ button {
   font-weight: 800;
 }
 
+.auth-flow-hint--register {
+  color: rgba(255, 255, 255, 0.96);
+  text-align: center;
+}
+
 .auth-input-readonly {
   opacity: 0.85;
   cursor: default;
@@ -2353,7 +2440,7 @@ button {
 }
 
 .auth-success {
-  color: #0c7a2a;
+  color: #39b85f;
 }
 
 .login-right-visual {
@@ -2398,6 +2485,14 @@ button {
 
 .register-shell {
   width: min(100%, 480px);
+  position: relative;
+  z-index: 1;
+  padding: clamp(1.6rem, 4vw, 2.5rem);
+  border-radius: 0;
+  background: linear-gradient(180deg, rgba(0, 88, 136, 0.94), rgba(0, 74, 118, 0.96));
+  box-shadow: 0 22px 56px rgba(0, 0, 0, 0.5);
+  border: 0;
+  backdrop-filter: blur(4px);
   font-family: "Sansita", system-ui, sans-serif;
   color: #fff;
 }
@@ -2405,8 +2500,8 @@ button {
 .register-brand {
   display: flex;
   justify-content: center;
-  align-items: flex-start;
-  gap: 0.35rem;
+  align-items: center;
+  gap: 0.7rem;
 }
 
 .register-wordmark h1 {
@@ -2416,30 +2511,34 @@ button {
 .register-brand img {
   width: clamp(32px, 5vw, 48px);
   margin-top: 0.1rem;
+  margin-left: -0.6rem;
+  margin-right: 0.45rem;
 }
 
-.register-shell h2 {
-  margin: 0.3rem 0 0;
-  text-align: center;
+.register-brand h2 {
+  margin: 0;
   font-family: "Sansita", system-ui, sans-serif;
-  font-size: clamp(1rem, 2.5vw, 1.3rem);
-  font-weight: 700;
+  font-size: clamp(1.7rem, 4vw, 2.2rem);
+  font-weight: 800;
+  line-height: 1;
 }
 
 .register-shell > p {
-  margin: 0.1rem 0 0;
+  margin: 0.6rem 0 0;
   text-align: center;
-  font-size: 0.85rem;
+  font-size: 0.88rem;
   font-weight: 600;
+  color: rgba(255, 255, 255, 0.88);
 }
 
 .auth-form--register {
   width: min(100%, 400px);
-  margin: 0.6rem auto 0;
+  margin: 0.95rem auto 0;
+  gap: 0.32rem;
 }
 
 .auth-form--register label {
-  margin-top: 0.45rem;
+  margin-top: 0.7rem;
   color: #fff;
   font-size: 0.95rem;
 }
@@ -2447,6 +2546,11 @@ button {
 .auth-form--register input,
 .auth-form--register .role-dropdown-trigger {
   font-size: 0.95rem;
+}
+
+.auth-form--register input {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(245, 248, 252, 0.96);
 }
 
 .register-role-row {
@@ -2529,14 +2633,34 @@ button {
 
 .auth-form--register .auth-submit {
   align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   margin-top: 0.8rem;
   border-radius: 24px;
   font-size: 1rem;
   padding: 0.55rem 1.6rem;
+  background: #b31735;
+  color: #fff;
+  text-align: center;
+}
+
+.auth-form--register .auth-submit:hover {
+  background: #98102b;
+}
+
+.auth-form--register .auth-submit--secondary {
+  margin-top: 0.45rem;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+}
+
+.auth-form--register .auth-submit--secondary:hover {
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .auth-switch--light {
-  color: #fff;
+  color: rgba(255, 255, 255, 0.94);
   text-align: center;
 }
 
@@ -2564,6 +2688,15 @@ button {
   .player-dive {
     position: static;
     display: none;
+  }
+
+  .auth-page--register {
+    padding: 1.25rem 0.9rem;
+    align-items: flex-start;
+  }
+
+  .register-shell {
+    border-radius: 0;
   }
 }
 

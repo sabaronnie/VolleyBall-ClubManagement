@@ -4,6 +4,7 @@ from .notification import Notification
 from .parent_player_relation import ParentLinkApprovalStatus, ParentPlayerRelation
 from .player_access_policy import PlayerAccessPolicy
 from .player_profile import PlayerProfile
+from .registration_otp import RegistrationOTP
 from .schedule import TeamScheduleEntry, TrainingSession, TrainingSessionConfirmation
 from .team import Team
 from .password_reset_otp import PasswordResetOTP

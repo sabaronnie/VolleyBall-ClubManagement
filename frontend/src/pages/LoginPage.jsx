@@ -60,8 +60,8 @@ export default function LoginPage() {
               <h1>Up</h1>
             </div>
             <img src="/auth/logo-ball.png" alt="" />
+            <h2 className="login-title">Login</h2>
           </div>
-          <h2 className="login-title">LOGIN</h2>
 
           <form className="auth-form auth-form--login" onSubmit={onSubmit}>
             <label htmlFor="login-email">Email</label>

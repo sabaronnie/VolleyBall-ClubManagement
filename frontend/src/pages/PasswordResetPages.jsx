@@ -31,8 +31,8 @@ function AuthLoginChrome({ title, children, footer }) {
               <h1>Up</h1>
             </div>
             <img src="/auth/logo-ball.png" alt="" />
+            <h2 className="login-title">{title}</h2>
           </div>
-          <h2 className="login-title">{title}</h2>
           {children}
           {footer}
         </div>

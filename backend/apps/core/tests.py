@@ -3,6 +3,7 @@ from decimal import Decimal
 import json
 
 from django.core import mail
+from django.contrib.auth.hashers import check_password
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -28,6 +29,7 @@ from .models import (
     PlayerAccessPolicy,
     PlayerFeeRecord,
     PlayerProfile,
+    RegistrationOTP,
     Team,
     TeamMembership,
     TeamRole,
@@ -44,8 +46,14 @@ from .permissions import (
 from .tokens import generate_auth_token, verify_auth_token
 
 
+@override_settings(
+    EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+    EMAIL_HOST_USER="sender@example.com",
+    EMAIL_HOST_PASSWORD="secret",
+    REGISTRATION_OTP_MINUTES=15,
+)
 class RegisterEndpointTests(TestCase):
-    def test_register_creates_user(self):
+    def test_register_sends_verification_code_without_creating_user(self):
         response = self.client.post(
             reverse("core:register"),
             data=json.dumps(
@@ -60,17 +68,16 @@ class RegisterEndpointTests(TestCase):
             content_type="application/json",
         )
 
-        self.assertEqual(response.status_code, 201)
-        self.assertEqual(User.objects.count(), 1)
-        self.assertIn("pending", response.json()["message"].lower())
-        self.assertEqual(response.json()["user"]["verification_status"], VerificationStatus.PENDING)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(User.objects.count(), 0)
+        self.assertIn("verification code", response.json()["message"].lower())
 
-        user = User.objects.get(email="player@example.com")
-        self.assertEqual(user.first_name, "Ronnie")
-        self.assertEqual(user.last_name, "Saba")
-        self.assertTrue(user.check_password("StrongPassword123!"))
-        self.assertEqual(user.verification_status, VerificationStatus.PENDING)
-        self.assertIsNotNone(user.date_of_birth)
+        pending = RegistrationOTP.objects.get(email="player@example.com")
+        self.assertEqual(pending.first_name, "Ronnie")
+        self.assertEqual(pending.last_name, "Saba")
+        self.assertTrue(check_password("StrongPassword123!", pending.password_hash))
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn("signup verification code", mail.outbox[0].subject.lower())
 
     def test_register_requires_date_of_birth(self):
         response = self.client.post(
@@ -113,6 +120,68 @@ class RegisterEndpointTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(User.objects.count(), 1)
+
+    def test_register_verify_creates_user_and_signs_them_in(self):
+        response = self.client.post(
+            reverse("core:register"),
+            data=json.dumps(
+                {
+                    "email": "player@example.com",
+                    "password": "StrongPassword123!",
+                    "first_name": "Ronnie",
+                    "last_name": "Saba",
+                    "date_of_birth": "2005-04-01",
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        otp = mail.outbox[0].body.split("is: ", 1)[1].split("\n", 1)[0].strip()
+
+        verify_response = self.client.post(
+            reverse("core:register-verify"),
+            data=json.dumps({"email": "player@example.com", "otp": otp}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(verify_response.status_code, 201)
+        self.assertEqual(User.objects.count(), 1)
+        self.assertEqual(RegistrationOTP.objects.count(), 0)
+
+        user = User.objects.get(email="player@example.com")
+        self.assertEqual(user.first_name, "Ronnie")
+        self.assertEqual(user.last_name, "Saba")
+        self.assertTrue(user.check_password("StrongPassword123!"))
+        self.assertEqual(user.verification_status, VerificationStatus.VERIFIED)
+
+        token = verify_response.json()["token"]
+        payload = verify_auth_token(token)
+        self.assertEqual(payload["user_id"], user.id)
+
+    def test_register_verify_rejects_invalid_otp(self):
+        self.client.post(
+            reverse("core:register"),
+            data=json.dumps(
+                {
+                    "email": "player@example.com",
+                    "password": "StrongPassword123!",
+                    "first_name": "Ronnie",
+                    "last_name": "Saba",
+                    "date_of_birth": "2005-04-01",
+                }
+            ),
+            content_type="application/json",
+        )
+
+        response = self.client.post(
+            reverse("core:register-verify"),
+            data=json.dumps({"email": "player@example.com", "otp": "000000"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(User.objects.count(), 0)
 
 
 class LoginEndpointTests(TestCase):
@@ -162,7 +231,7 @@ class LoginEndpointTests(TestCase):
 
         self.assertEqual(response.status_code, 401)
 
-    def test_login_rejects_pending_verification(self):
+    def test_login_allows_legacy_pending_user_now_that_director_approval_is_removed(self):
         User.objects.create_user(
             email="pending@example.com",
             password="StrongPassword123!",
@@ -182,8 +251,7 @@ class LoginEndpointTests(TestCase):
             content_type="application/json",
         )
 
-        self.assertEqual(response.status_code, 403)
-        self.assertIn("pending", response.json()["errors"]["verification"].lower())
+        self.assertEqual(response.status_code, 200)
 
 
 class LoginRequiredDecoratorTests(TestCase):

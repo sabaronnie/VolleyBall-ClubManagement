@@ -44,6 +44,7 @@ from .models import (
     ParentLinkApprovalStatus,
     ParentPlayerRelation,
     PasswordResetOTP,
+    RegistrationOTP,
     PlayerAccessPolicy,
     PlayerFeeRecord,
     PlayerProfile,
@@ -87,6 +88,10 @@ def _password_reset_email_configured():
     return bool(settings.EMAIL_HOST_USER and settings.EMAIL_HOST_PASSWORD)
 
 
+def _registration_otp_minutes():
+    return int(getattr(settings, "REGISTRATION_OTP_MINUTES", settings.PASSWORD_RESET_OTP_MINUTES))
+
+
 def _generate_numeric_otp():
     return f"{secrets.randbelow(10**6):06d}"
 
@@ -105,6 +110,24 @@ def _send_password_reset_otp_email(user, otp_plain):
         body,
         settings.DEFAULT_FROM_EMAIL,
         [user.email],
+        fail_silently=False,
+    )
+
+
+def _send_registration_otp_email(email, otp_plain, first_name=""):
+    minutes = _registration_otp_minutes()
+    subject = "Your signup verification code"
+    body = (
+        f"Hello {first_name or 'there'},\n\n"
+        f"Your NetUp signup verification code is: {otp_plain}\n\n"
+        f"This code expires in {minutes} minute(s).\n\n"
+        f"If you did not request this, you can ignore this email.\n"
+    )
+    send_mail(
+        subject,
+        body,
+        settings.DEFAULT_FROM_EMAIL,
+        [email],
         fail_silently=False,
     )
 
@@ -211,8 +234,7 @@ def _get_user_age(user):
 
 def _can_player_self_confirm_training(player_user):
     """Adult-capable players (14+) with the Player account role may self-confirm (EP-24)."""
-    assigned = (getattr(player_user, "assigned_account_role", None) or "").strip()
-    if assigned != AssignedAccountRole.PLAYER:
+    if _canonical_app_role(player_user) != AssignedAccountRole.PLAYER:
         return False
 
     age = _get_user_age(player_user)
@@ -487,9 +509,22 @@ def _serialize_basic_user(user):
         "last_name": user.last_name,
         "date_of_birth": user.date_of_birth.isoformat() if user.date_of_birth else None,
         "verification_status": user.verification_status,
-        "assigned_account_role": user.assigned_account_role or None,
         "role": _canonical_app_role(user) or None,
     }
+
+
+def _auth_success_response(user, *, message="Authentication successful.", status=200):
+    user.last_login = timezone.now()
+    user.save(update_fields=["last_login"])
+    token = generate_auth_token(user)
+    return JsonResponse(
+        {
+            "message": message,
+            "token": token,
+            "user": _serialize_basic_user(user),
+        },
+        status=status,
+    )
 
 
 def _account_roles_for_user(user):
@@ -506,7 +541,7 @@ def _account_roles_for_user(user):
 
 
 def _canonical_app_role(user) -> str:
-    """Single primary role for admin UI (membership-backed roles win over the stored label)."""
+    """Single primary role for admin UI derived from memberships and parent links."""
     if ClubMembership.objects.active().filter(user=user, role=ClubRole.CLUB_DIRECTOR).exists():
         return AssignedAccountRole.DIRECTOR
     if TeamMembership.objects.active().filter(user=user, role=TeamRole.COACH).exists():
@@ -515,14 +550,11 @@ def _canonical_app_role(user) -> str:
         return AssignedAccountRole.PLAYER
     if ParentPlayerRelation.objects.approved().filter(parent=user).exists():
         return AssignedAccountRole.PARENT
-    assigned = (user.assigned_account_role or "").strip().lower()
-    if assigned in AssignedAccountRole.values:
-        return assigned
     return ""
 
 
 def _display_role_for_account(request_user):
-    """Single human-readable role line for profile (membership wins over approval-only label)."""
+    """Single human-readable role line for profile derived from memberships and parent links."""
     membership_roles = _account_roles_for_user(request_user)
     labels = {
         "director": "Club director",
@@ -536,10 +568,6 @@ def _display_role_for_account(request_user):
         extras = [r.replace("_", " ").strip().title() for r in membership_roles if r not in labels]
         parts = ordered + extras
         return ", ".join(parts) if parts else "Member"
-    assigned = (request_user.assigned_account_role or "").strip()
-    if assigned:
-        label = dict(AssignedAccountRole.choices).get(assigned) or assigned.replace("_", " ").strip().title()
-        return f"{label} (roster link pending)"
     return "No club role yet"
 
 
@@ -629,6 +657,10 @@ def _send_registration_approved_email(user):
             "Failed to send registration approval email to %s",
             user.email,
         )
+
+
+def _delete_registration_otp(email):
+    RegistrationOTP.objects.filter(email=email).delete()
 
 
 def _serialize_pending_account_user(user):
@@ -786,6 +818,16 @@ def _parent_user_ids_for_players(player_ids):
 @csrf_exempt
 @require_POST
 def register(request):
+    if not _password_reset_email_configured():
+        return JsonResponse(
+            {
+                "errors": {
+                    "server": "Outbound email is not configured. Set EMAIL_HOST_USER and EMAIL_HOST_PASSWORD.",
+                }
+            },
+            status=503,
+        )
+
     payload = _parse_json_request(request)
     if payload is None:
         return JsonResponse({"errors": {"body": "Invalid JSON."}}, status=400)
@@ -832,30 +874,111 @@ def register(request):
         messages = exc.messages if hasattr(exc, "messages") else [str(exc)]
         return JsonResponse({"errors": {"password": messages}}, status=400)
 
+    if User.objects.filter(email=email).exists():
+        return JsonResponse(
+            {"errors": {"email": "An account with this email already exists."}},
+            status=400,
+        )
+
+    otp_plain = _generate_numeric_otp()
+    expires_at = timezone.now() + timedelta(minutes=_registration_otp_minutes())
+
+    with transaction.atomic():
+        RegistrationOTP.objects.update_or_create(
+            email=email,
+            defaults={
+                "first_name": first_name,
+                "last_name": last_name,
+                "date_of_birth": date_of_birth,
+                "password_hash": make_password(password),
+                "otp_hash": make_password(otp_plain),
+                "expires_at": expires_at,
+            },
+        )
+
+    try:
+        _send_registration_otp_email(email, otp_plain, first_name=first_name)
+    except Exception:
+        logger.exception("Signup verification email failed for %s", email)
+        _delete_registration_otp(email)
+        return JsonResponse(
+            {
+                "errors": {
+                    "email": "Could not send the verification email. Check server email settings and try again."
+                }
+            },
+            status=503,
+        )
+
+    return JsonResponse(
+        {
+            "message": (
+                "We sent a verification code to your email. "
+                "Enter it to finish creating your account."
+            ),
+            "email": email,
+        },
+        status=200,
+    )
+
+
+@csrf_exempt
+@require_POST
+def register_verify(request):
+    payload = _parse_json_request(request)
+    if payload is None:
+        return JsonResponse({"errors": {"body": "Invalid JSON."}}, status=400)
+
+    email = (payload.get("email") or "").strip().lower()
+    otp = (payload.get("otp") or "").strip()
+
+    errors = {}
+    if not email:
+        errors["email"] = "Email is required."
+    if not otp:
+        errors["otp"] = "Verification code is required."
+    if errors:
+        return JsonResponse({"errors": errors}, status=400)
+
+    registration = (
+        RegistrationOTP.objects.filter(email=email, expires_at__gt=timezone.now())
+        .order_by("-created_at")
+        .first()
+    )
+    if registration is None or not check_password(otp, registration.otp_hash):
+        return JsonResponse(
+            {"errors": {"otp": "Invalid or expired verification code."}},
+            status=400,
+        )
+
     try:
         with transaction.atomic():
-            user = User.objects.create_user(
-                email=email,
-                password=password,
-                first_name=first_name,
-                last_name=last_name,
-                date_of_birth=date_of_birth,
-                verification_status=VerificationStatus.PENDING,
+            if User.objects.filter(email=email).exists():
+                _delete_registration_otp(email)
+                return JsonResponse(
+                    {"errors": {"email": "An account with this email already exists."}},
+                    status=400,
+                )
+
+            user = User(
+                email=registration.email,
+                first_name=registration.first_name,
+                last_name=registration.last_name,
+                date_of_birth=registration.date_of_birth,
+                verification_status=VerificationStatus.VERIFIED,
             )
+            user.password = registration.password_hash
+            user.save()
+            _delete_registration_otp(email)
     except IntegrityError:
         return JsonResponse(
             {"errors": {"email": "An account with this email already exists."}},
             status=400,
         )
 
-    return JsonResponse(
-        {
-            "message": (
-                "Registration received. Your account is pending director approval. "
-                "You will receive an email at this address when you can sign in."
-            ),
-            "user": _serialize_basic_user(user),
-        },
+    return _auth_success_response(
+        user,
+        message="Registration complete. You are now signed in.",
         status=201,
     )
 
@@ -886,42 +1009,7 @@ def login(request):
             status=401,
         )
 
-    if not user.is_superuser:
-        if user.verification_status == VerificationStatus.PENDING:
-            return JsonResponse(
-                {
-                    "errors": {
-                        "verification": (
-                            "Your account is pending approval by a club director. "
-                            "You will receive an email when you can log in."
-                        ),
-                    },
-                },
-                status=403,
-            )
-        if user.verification_status == VerificationStatus.REJECTED:
-            return JsonResponse(
-                {
-                    "errors": {
-                        "verification": (
-                            "Your registration was not approved. "
-                            "Contact the club if you believe this is a mistake."
-                        ),
-                    },
-                },
-                status=403,
-            )
-
-    user.last_login = timezone.now()
-    user.save(update_fields=["last_login"])
-    token = generate_auth_token(user)
-    return JsonResponse(
-        {
-            "message": "Authentication successful.",
-            "token": token,
-            "user": _serialize_basic_user(user),
-        }
-    )
+    return _auth_success_response(user)
 
 
 @login_required
@@ -933,34 +1021,11 @@ def directors_pending_users(request):
             status=403,
         )
 
-    pending = (
-        User.objects.filter(verification_status=VerificationStatus.PENDING)
-        .exclude(is_superuser=True)
-        .order_by("date_joined", "id")
-    )
-
-    if is_staff_user(request.user):
-        assignable_teams = (
-            Team.objects.select_related("club").order_by("club__name", "name")[:500]
-        )
-    else:
-        assignable_teams = (
-            Team.objects.filter(
-                club__memberships__user=request.user,
-                club__memberships__role=ClubRole.CLUB_DIRECTOR,
-                club__memberships__is_active=True,
-            )
-            .select_related("club")
-            .distinct()
-            .order_by("club__name", "name")
-        )
-
     return JsonResponse(
         {
-            "pending_users": [_serialize_pending_account_user(u) for u in pending],
-            "assignable_teams": [
-                {"id": t.id, "name": t.name, "club_name": t.club.name} for t in assignable_teams
-            ],
+            "pending_users": [],
+            "assignable_teams": [],
+            "message": "Signup verification is handled by email OTP now. Director approval is no longer required.",
         },
     )
 
@@ -975,70 +1040,13 @@ def directors_verify_user(request, user_id):
             status=403,
         )
 
-    payload = _parse_json_request(request) or {}
-    role = (payload.get("role") or "").strip().lower()
-    if role not in ("player", "parent", "coach"):
-        return JsonResponse(
-            {"errors": {"role": "Choose a role: player, parent, or coach."}},
-            status=400,
-        )
-
-    target = get_object_or_404(User, pk=user_id)
-    if target.is_superuser:
-        return JsonResponse(
-            {"errors": {"user": "Cannot change verification for this account."}},
-            status=403,
-        )
-
-    if target.verification_status != VerificationStatus.PENDING:
-        return JsonResponse(
-            {"errors": {"user": "This account is not pending approval."}},
-            status=400,
-        )
-
-    team = None
-    if role in ("player", "coach"):
-        raw_team_id = payload.get("team_id")
-        if raw_team_id is not None and str(raw_team_id).strip() != "":
-            try:
-                team_id = int(raw_team_id)
-            except (TypeError, ValueError):
-                return JsonResponse(
-                    {"errors": {"team_id": "Invalid team id."}},
-                    status=400,
-                )
-            team = get_object_or_404(Team.objects.select_related("club"), pk=team_id)
-            team_role = TeamRole.PLAYER if role == "player" else TeamRole.COACH
-            if not can_add_team_member(request.user, team, team_role):
-                return JsonResponse(
-                    {"errors": {"team_id": "You cannot assign this user to the selected team."}},
-                    status=403,
-                )
-
-    try:
-        with transaction.atomic():
-            if team is not None:
-                team_role = TeamRole.PLAYER if role == "player" else TeamRole.COACH
-                TeamMembership.objects.add_member(
-                    user=target,
-                    team=team,
-                    role=team_role,
-                )
-            target.assigned_account_role = role
-            target.verification_status = VerificationStatus.VERIFIED
-            target.save(update_fields=["verification_status", "assigned_account_role"])
-    except IntegrityError:
-        return JsonResponse(
-            {"errors": {"user": "Could not complete approval (data conflict). Try again."}},
-            status=400,
-        )
-
-    _send_registration_approved_email(target)
     return JsonResponse(
         {
-            "message": "Account verified.",
-            "user": _serialize_basic_user(target),
-        }
+            "errors": {
+                "user": "Email OTP verification is now self-serve. Director approval is no longer used for signup."
+            }
+        },
+        status=410,
     )
 
 
@@ -1052,29 +1060,13 @@ def directors_reject_user(request, user_id):
             status=403,
         )
 
-    target = get_object_or_404(User, pk=user_id)
-    if target.is_superuser or target.is_staff:
-        return JsonResponse(
-            {"errors": {"user": "Cannot reject this account."}},
-            status=403,
-        )
-    if target.id == request.user.id:
-        return JsonResponse(
-            {"errors": {"user": "You cannot reject your own account."}},
-            status=400,
-        )
-
-    target.verification_status = VerificationStatus.REJECTED
-    target.save(update_fields=["verification_status"])
     return JsonResponse(
         {
-            "message": "Account rejected.",
-            "user": {
-                "id": target.id,
-                "email": target.email,
-                "verification_status": target.verification_status,
-            },
-        }
+            "errors": {
+                "user": "Email OTP verification is now self-serve. Director rejection is no longer used for signup."
+            }
+        },
+        status=410,
     )
 
 
@@ -1086,7 +1078,6 @@ def _serialize_user_directory_row(user):
         "last_name": user.last_name,
         "verification_status": user.verification_status,
         "role": _canonical_app_role(user) or None,
-        "assigned_account_role": user.assigned_account_role or None,
         "is_staff": user.is_staff,
     }
 
@@ -1137,8 +1128,6 @@ def directors_set_user_account_role(request, user_id):
 
     payload = _parse_json_request(request) or {}
     raw = payload.get("role")
-    if raw is None:
-        raw = payload.get("assigned_account_role")
     if raw is None or (isinstance(raw, str) and not str(raw).strip()):
         return JsonResponse({"errors": {"role": "Role is required."}}, status=400)
     new_role = str(raw).strip().lower()
@@ -1210,9 +1199,6 @@ def directors_set_user_account_role(request, user_id):
         with transaction.atomic():
             if new_role == AssignedAccountRole.DIRECTOR:
                 ClubMembership.objects.assign_director(user=target, club=director_club)
-                User.objects.filter(pk=target.pk).update(
-                    assigned_account_role=AssignedAccountRole.DIRECTOR,
-                )
             elif new_role in (
                 AssignedAccountRole.PLAYER,
                 AssignedAccountRole.PARENT,
@@ -1224,7 +1210,6 @@ def directors_set_user_account_role(request, user_id):
                     club_id__in=manageable_club_ids,
                 ):
                     ClubMembership.objects.deactivate(membership)
-                User.objects.filter(pk=target.pk).update(assigned_account_role=new_role)
     except IntegrityError:
         return JsonResponse(
             {"errors": {"user": "Could not update role (data conflict). Try again."}},
@@ -1232,11 +1217,6 @@ def directors_set_user_account_role(request, user_id):
         )
 
     target.refresh_from_db()
-    canon = _canonical_app_role(target)
-    if canon and canon != (target.assigned_account_role or ""):
-        target.assigned_account_role = canon
-        target.save(update_fields=["assigned_account_role"])
-
     return JsonResponse({"user": _serialize_basic_user(target)})
 
 
@@ -1456,8 +1436,7 @@ def me(request):
 @require_GET
 def parent_child_attendance_history(request):
     """EP-23: Linked children's training session attendance for assigned parent accounts only."""
-    assigned = (getattr(request.user, "assigned_account_role", None) or "").strip()
-    if assigned != AssignedAccountRole.PARENT:
+    if _canonical_app_role(request.user) != AssignedAccountRole.PARENT:
         return JsonResponse(
             {"errors": {"authorization": "Only accounts with the parent role can view child attendance history."}},
             status=403,

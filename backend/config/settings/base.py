@@ -120,6 +120,9 @@ def _env_bool(name: str, default: str = "true") -> bool:
 PAYMENTS_REQUIRE_TEAM_ROSTER = _env_bool("DJANGO_PAYMENTS_REQUIRE_TEAM_ROSTER", "true")
 
 PASSWORD_RESET_OTP_MINUTES = int(os.getenv("PASSWORD_RESET_OTP_MINUTES", "15"))
+REGISTRATION_OTP_MINUTES = int(
+    os.getenv("REGISTRATION_OTP_MINUTES", os.getenv("PASSWORD_RESET_OTP_MINUTES", "15"))
+)
 
 EMAIL_BACKEND = os.getenv(
     "EMAIL_BACKEND",

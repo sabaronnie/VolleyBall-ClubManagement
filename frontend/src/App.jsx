@@ -5,7 +5,8 @@ import {
   fetchTeamSchedule,
   saveTeamSchedule,
 } from "./api";
-import ClubWorkspaceLayout, { ClubTeamSelect } from "./components/ClubWorkspaceLayout";
+import ClubWorkspaceLayout from "./components/ClubWorkspaceLayout";
+import SiteNavbar from "./components/SiteNavbar";
 import { navigate } from "./navigation";
 import DashboardPage from "./pages/DashboardPage";
 import DirectorPaymentLogsPage from "./pages/DirectorPaymentLogsPage";
@@ -1048,7 +1049,7 @@ function App() {
           return;
         }
 
-        setViewerAccountRole(payload.user?.assigned_account_role || null);
+        setViewerAccountRole(payload.user?.role || null);
 
         const owned = (payload.owned_clubs || []).length > 0;
         const flaggedDirector = payload.is_director_or_staff === true;
@@ -1296,6 +1297,31 @@ function App() {
     const nextTeamId = String(team.id);
     setActiveTeamId(nextTeamId);
     localStorage.setItem(ACTIVE_TEAM_KEY, nextTeamId);
+  };
+
+  const defaultTeamNavProps = {
+    teamOptions: teams,
+    activeTeamId,
+    onChangeTeam: handleSelectTeam,
+  };
+
+  const scheduleTeamNavProps = {
+    teamOptions: scheduleTeams,
+    activeTeamId,
+    onChangeTeam: handleSelectTeam,
+    includeAllTeamsOption: scheduleTeams.length > 1,
+  };
+
+  const playerTeamNavProps = {
+    teamOptions: playerTeamsOnly,
+    activeTeamId,
+    onChangeTeam: handleSelectTeam,
+  };
+
+  const coachAttendanceNavProps = {
+    teamOptions: coachAttendanceTeams,
+    activeTeamId,
+    onChangeTeam: handleSelectTeam,
   };
 
   const openTeamSchedule = (team) => {
@@ -1546,6 +1572,7 @@ function App() {
       <ClubWorkspaceLayout
         activeTab="parent-attendance"
         viewerAccountRole={viewerAccountRole}
+        {...defaultTeamNavProps}
         showPlayerSessionsTab={showPlayerSessionsTab}
         showCoachAttendanceTab={showCoachAttendanceTab}
       >
@@ -1563,6 +1590,7 @@ function App() {
         <ClubWorkspaceLayout
           activeTab=""
           viewerAccountRole={viewerAccountRole}
+          {...defaultTeamNavProps}
           showPlayerSessionsTab={showPlayerSessionsTab}
           showCoachAttendanceTab={showCoachAttendanceTab}
         >
@@ -1579,16 +1607,9 @@ function App() {
       <ClubWorkspaceLayout
         activeTab="coach-attendance"
         viewerAccountRole={viewerAccountRole}
+        {...coachAttendanceNavProps}
         showPlayerSessionsTab={showPlayerSessionsTab}
         showCoachAttendanceTab={showCoachAttendanceTab}
-        beforeIconActions={
-          <ClubTeamSelect
-            teams={coachAttendanceTeams}
-            activeTeamId={activeTeamId}
-            onChangeTeam={handleSelectTeam}
-            selectId="coach-attendance-team"
-          />
-        }
       >
         <CoachSessionAttendancePage activeTeam={activeTeam} />
       </ClubWorkspaceLayout>
@@ -1604,6 +1625,7 @@ function App() {
         <ClubWorkspaceLayout
           activeTab="player-attendance"
           viewerAccountRole={viewerAccountRole}
+          {...defaultTeamNavProps}
           showPlayerSessionsTab={showPlayerSessionsTab}
           showCoachAttendanceTab={showCoachAttendanceTab}
         >
@@ -1621,16 +1643,9 @@ function App() {
       <ClubWorkspaceLayout
         activeTab="player-attendance"
         viewerAccountRole={viewerAccountRole}
+        {...playerTeamNavProps}
         showPlayerSessionsTab={showPlayerSessionsTab}
         showCoachAttendanceTab={showCoachAttendanceTab}
-        beforeIconActions={
-          <ClubTeamSelect
-            teams={playerTeamsOnly}
-            activeTeamId={activeTeamId}
-            onChangeTeam={handleSelectTeam}
-            selectId="player-attendance-team"
-          />
-        }
       >
         <PlayerAttendancePage activeTeam={activeTeam} />
       </ClubWorkspaceLayout>
@@ -1642,16 +1657,9 @@ function App() {
       <ClubWorkspaceLayout
         activeTab=""
         viewerAccountRole={viewerAccountRole}
+        {...defaultTeamNavProps}
         showPlayerSessionsTab={showPlayerSessionsTab}
         showCoachAttendanceTab={showCoachAttendanceTab}
-        beforeIconActions={
-          <ClubTeamSelect
-            teams={teams}
-            activeTeamId={activeTeamId}
-            onChangeTeam={handleSelectTeam}
-            selectId="teams-workspace-team"
-          />
-        }
       >
         <TeamsPage />
       </ClubWorkspaceLayout>
@@ -1663,16 +1671,9 @@ function App() {
       <ClubWorkspaceLayout
         activeTab=""
         viewerAccountRole={viewerAccountRole}
+        {...defaultTeamNavProps}
         showPlayerSessionsTab={showPlayerSessionsTab}
         showCoachAttendanceTab={showCoachAttendanceTab}
-        beforeIconActions={
-          <ClubTeamSelect
-            teams={teams}
-            activeTeamId={activeTeamId}
-            onChangeTeam={handleSelectTeam}
-            selectId="roster-workspace-team"
-          />
-        }
       >
         <TeamRosterPage team={activeTeam} />
       </ClubWorkspaceLayout>
@@ -1687,16 +1688,9 @@ function App() {
       <ClubWorkspaceLayout
         activeTab=""
         viewerAccountRole={viewerAccountRole}
+        {...defaultTeamNavProps}
         showPlayerSessionsTab={showPlayerSessionsTab}
         showCoachAttendanceTab={showCoachAttendanceTab}
-        beforeIconActions={
-          <ClubTeamSelect
-            teams={teams}
-            activeTeamId={activeTeamId}
-            onChangeTeam={handleSelectTeam}
-            selectId="payments-workspace-team"
-          />
-        }
       >
         {directorDashboardAllowed ||
         teams.some((t) => t.source === "Coach") ||
@@ -1717,16 +1711,9 @@ function App() {
       <ClubWorkspaceLayout
         activeTab=""
         viewerAccountRole={viewerAccountRole}
+        {...defaultTeamNavProps}
         showPlayerSessionsTab={showPlayerSessionsTab}
         showCoachAttendanceTab={showCoachAttendanceTab}
-        beforeIconActions={
-          <ClubTeamSelect
-            teams={teams}
-            activeTeamId={activeTeamId}
-            onChangeTeam={handleSelectTeam}
-            selectId="myfees-workspace-team"
-          />
-        }
       >
         <MyFeesPage />
       </ClubWorkspaceLayout>
@@ -1741,17 +1728,9 @@ function App() {
       <ClubWorkspaceLayout
         activeTab="schedule"
         viewerAccountRole={viewerAccountRole}
+        {...scheduleTeamNavProps}
         showPlayerSessionsTab={showPlayerSessionsTab}
         showCoachAttendanceTab={showCoachAttendanceTab}
-        beforeIconActions={
-          <ClubTeamSelect
-            teams={scheduleTeams}
-            activeTeamId={activeTeamId}
-            onChangeTeam={handleSelectTeam}
-            selectId="schedule-workspace-team"
-            includeAllTeamsOption={scheduleTeams.length > 1}
-          />
-        }
       >
         <section className="teams-page-shell">
             <header className="teams-page-header">
@@ -1833,32 +1812,14 @@ function App() {
     );
   }
 
-  const renderHomepageMarketing = ({ withSiteNav }) => (
-    <div className={`homepage-shell${withSiteNav ? "" : " homepage-shell--in-workspace"}`}>
-      <section id="home" className="hero-section">
+  const renderHomepageMarketing = ({ withSiteNav, overlayNav = false }) => (
+    <div className="homepage-shell">
+      <section id="home" className={`hero-section${overlayNav ? " hero-section--overlay-nav" : ""}`}>
         <div
           className="hero-backdrop"
           style={{ "--hero-image": `url(${homepageImages.hero})` }}
         />
-        {withSiteNav ? (
-          <header className="site-nav">
-            <div className="nav-left">
-              <span className="brand-mark">NetUp</span>
-            </div>
-            <div className="nav-right">
-              <button
-                className="action-button action-button--ghost"
-                type="button"
-                onClick={() => navigate("/register")}
-              >
-                Register
-              </button>
-              <button className="action-button" type="button" onClick={() => navigate("/login")}>
-                Login
-              </button>
-            </div>
-          </header>
-        ) : null}
+        {withSiteNav ? <SiteNavbar mode="guest" /> : null}
 
         <div className="hero-content">
           <div className="hero-copy reveal-on-scroll" data-reveal="left">
@@ -2125,24 +2086,18 @@ function App() {
     return (
       <ClubWorkspaceLayout
         activeTab="home"
+        heroOverlay
         viewerAccountRole={viewerAccountRole}
+        {...defaultTeamNavProps}
         showPlayerSessionsTab={showPlayerSessionsTab}
         showCoachAttendanceTab={showCoachAttendanceTab}
-        beforeIconActions={
-          <ClubTeamSelect
-            teams={teams}
-            activeTeamId={activeTeamId}
-            onChangeTeam={handleSelectTeam}
-            selectId="home-workspace-team"
-          />
-        }
       >
-        {renderHomepageMarketing({ withSiteNav: false })}
+        {renderHomepageMarketing({ withSiteNav: false, overlayNav: true })}
       </ClubWorkspaceLayout>
     );
   }
 
-  return renderHomepageMarketing({ withSiteNav: true });
+  return renderHomepageMarketing({ withSiteNav: true, overlayNav: false });
 }
 
 export default App;
