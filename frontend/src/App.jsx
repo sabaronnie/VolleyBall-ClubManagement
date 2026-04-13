@@ -78,12 +78,12 @@ const platformStats = [
 ];
 
 const trustBrands = [
-  { name: "Mikasa", mark: "M" },
-  { name: "Molten", mark: "MO" },
-  { name: "Wilson", mark: "W" },
-  { name: "Mizuno", mark: "MI" },
-  { name: "ASICS", mark: "A" },
-  { name: "adidas", mark: "ad" },
+  { name: "Mikasa", logo: "/assets/logos/mikasa.svg" },
+  { name: "Molten", logo: "/assets/logos/molten.svg" },
+  { name: "Wilson", logo: "/assets/logos/wilson.svg" },
+  { name: "Mizuno", logo: "/assets/logos/mizuno.svg" },
+  { name: "ASICS", logo: "/assets/logos/asics.svg" },
+  { name: "adidas", logo: "/assets/logos/adidas.svg" },
 ];
 
 const valueHighlights = [
@@ -1985,10 +1985,13 @@ function App() {
                 data-reveal="up"
                 style={{ "--reveal-delay": `${index * 70}ms` }}
               >
-                <span className="brand-logo__mark" aria-hidden="true">
-                  {brand.mark}
-                </span>
-                <span className="brand-logo__name">{brand.name}</span>
+                <img
+                  className="brand-logo__img"
+                  src={brand.logo}
+                  alt={brand.name}
+                  loading="lazy"
+                  decoding="async"
+                />
               </span>
             ))}
           </div>
