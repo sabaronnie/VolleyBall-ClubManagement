@@ -115,16 +115,16 @@ export default function DashboardPage() {
     ownedClubs[0] ||
     null;
 
-  const paymentRows =
-    overview?.payments_overview ??
-    (overview?.family_summaries || []).map((b) => ({
-      player_id: b.player_id,
-      family_label: b.family_label,
-      total_paid: b.total_paid,
-      total_remaining: b.total_remaining,
-      currency: b.currency,
-      status: b.overall_status,
-    }));
+  const paymentRows = Array.isArray(overview?.payments_overview)
+    ? overview.payments_overview
+    : (overview?.family_summaries || []).map((b) => ({
+        player_id: b.player_id,
+        family_label: b.family_label,
+        total_paid: b.total_paid,
+        total_remaining: b.total_remaining,
+        currency: b.currency,
+        status: b.overall_status,
+      }));
 
   const shortcutLinks = [
     { label: "Users", onClick: () => navigate("/director/users") },

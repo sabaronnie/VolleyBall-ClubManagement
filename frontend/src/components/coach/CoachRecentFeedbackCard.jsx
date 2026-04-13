@@ -15,7 +15,7 @@ export default function CoachRecentFeedbackCard({ items }) {
       </div>
       {list.length === 0 ? (
         <p className="vc-modal__muted" style={{ margin: 0 }}>
-          No feedback entries yet.
+          No recent feedback yet.
         </p>
       ) : (
         <ul className="vc-coach-dash-feedback__list">

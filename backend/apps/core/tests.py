@@ -1854,6 +1854,34 @@ class DirectorPaymentApiTests(TestCase):
         self.assertEqual(data["family_summaries"][0]["overall_status"], "pending")
         self.assertEqual(data["family_summaries"][0]["player_id"], player.id)
 
+    def test_payment_overview_empty_club_returns_stable_json_shape(self):
+        director = User.objects.create_user(
+            email="dir-empty-overview@example.com",
+            password="StrongPassword123!",
+        )
+        club = Club.objects.create_club(name="Empty Overview Club", director=director)
+        token = generate_auth_token(director)
+        response = self.client.get(
+            reverse("core:director-payment-overview", kwargs={"club_id": club.id}),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn("club", data)
+        self.assertIn("kpis", data)
+        self.assertEqual(data["kpis"]["registration_player_count"], 0)
+        self.assertEqual(data["kpis"]["outstanding_payer_count"], 0)
+        self.assertIsNone(data["kpis"]["attendance_rate"])
+        self.assertEqual(data["payments_overview"], [])
+        self.assertEqual(data["family_summaries"], [])
+        self.assertIn("roles_permission_matrix", data)
+        self.assertIn("rows", data["roles_permission_matrix"])
+        self.assertTrue(data["roles_permission_matrix"]["rows"])
+        self.assertIn("club_summary", data)
+        self.assertIn("attendance_trend_30d", data)
+        self.assertIn("points", data["attendance_trend_30d"])
+        self.assertEqual(len(data["attendance_trend_30d"]["points"]), 30)
+
     def test_renewals_due_today_lists_only_unpaid_due_today(self):
         director = User.objects.create_user(
             email="dir-renew@example.com",
@@ -2351,6 +2379,34 @@ class DirectorPaymentApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertTrue(PaymentSchedule.objects.filter(id=sched.id).exists())
+
+
+class CoachTeamDashboardApiTests(TestCase):
+    def test_coach_dashboard_includes_has_skill_metrics_flag(self):
+        director = User.objects.create_user(
+            email="dir-coach-dash@example.com",
+            password="StrongPassword123!",
+        )
+        coach = User.objects.create_user(
+            email="coach-dash-api@example.com",
+            password="StrongPassword123!",
+        )
+        club = Club.objects.create_club(name="Coach Dash Club", director=director)
+        team = Team.objects.create_team(club=club, name="Dash Team", season="2026")
+        TeamMembership.objects.add_member(user=coach, team=team, role=TeamRole.COACH)
+        token = generate_auth_token(coach)
+        response = self.client.get(
+            reverse("core:coach-team-dashboard", kwargs={"team_id": team.id}),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn("has_skill_metrics", data)
+        self.assertFalse(data["has_skill_metrics"])
+        self.assertIn("kpis", data)
+        self.assertIn("attendance_vs_performance", data)
+        self.assertEqual(data["player_stats"], [])
+        self.assertEqual(data["recent_feedback"], [])
 
 
 class DirectorDashboardOverviewTests(TestCase):

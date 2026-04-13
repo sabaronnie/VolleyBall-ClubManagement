@@ -228,8 +228,10 @@ def build_coach_team_dashboard(*, team: Team) -> dict[str, Any]:
     from . import views as core_views
 
     practice_time_display, practice_session_id = _practice_time_fields(team)
+    has_skill_metrics = TeamSkillDashboardMetric.objects.filter(team=team).exists()
     return {
         "team": core_views._serialize_team_summary(team),
+        "has_skill_metrics": has_skill_metrics,
         "kpis": {
             "players_today": _players_confirmed_today(team),
             "practice_time_display": practice_time_display,

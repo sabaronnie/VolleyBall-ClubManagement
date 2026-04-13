@@ -3,13 +3,25 @@ const PAD_R = 12;
 const PAD_T = 16;
 const PAD_B = 52;
 
-export default function CoachAttendancePerformanceChart({ series }) {
+export default function CoachAttendancePerformanceChart({ series, hasSkillMetrics }) {
+  const metricsMissing = hasSkillMetrics === false;
+  if (metricsMissing) {
+    return (
+      <div className="vc-coach-dash-chart">
+        <h2 className="vc-panel-title">Attendance vs. Performance</h2>
+        <p className="vc-modal__muted" style={{ margin: 0 }}>
+          No attendance vs. performance data yet. Skill metrics appear here once they are recorded for this team.
+        </p>
+      </div>
+    );
+  }
+
   if (!series || !Array.isArray(series.labels) || !series.labels.length) {
     return (
       <div className="vc-coach-dash-chart">
         <h2 className="vc-panel-title">Attendance vs. Performance</h2>
         <p className="vc-modal__muted" style={{ margin: 0 }}>
-          No chart data for this team yet.
+          No chart data available for this team yet.
         </p>
       </div>
     );

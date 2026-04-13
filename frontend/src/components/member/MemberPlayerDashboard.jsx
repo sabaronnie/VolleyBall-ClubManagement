@@ -58,7 +58,8 @@ function MemberProgressChart({ weeks }) {
     return (
       <div className="vc-member-progress__empty">
         <p className="vc-modal__muted" style={{ margin: 0 }}>
-          No weekly performance history yet. Your coach can add skill scores over time.
+          No attendance or progress data available yet. Weekly skill scores will appear here when your coach
+          records them.
         </p>
       </div>
     );
@@ -176,11 +177,73 @@ export default function MemberPlayerDashboard() {
       {error ? <p className="vc-modal__error">{error}</p> : null}
 
       {!loading && !error && !focus ? (
-        <section className="vc-member-dash__empty vc-panel vc-panel--dashboard">
-          <p className="vc-modal__muted" style={{ margin: 0, lineHeight: 1.55 }}>
-            When you are on a team roster or linked as a parent, your personalized dashboard appears here.
+        <>
+          <p className="vc-modal__muted" style={{ margin: "0 0 1rem", lineHeight: 1.55, maxWidth: 640 }}>
+            You are not on a player roster yet and have no linked players. The layout below stays available so
+            you can see what will appear once your director assigns teams or approves parent linking.
           </p>
-        </section>
+          <div className="vc-member-dash__top-row">
+            <section className="vc-panel vc-panel--dashboard vc-member-card vc-member-card--profile">
+              <h2 className="vc-member-card__title">Profile</h2>
+              <p className="vc-modal__muted" style={{ margin: 0, lineHeight: 1.55 }}>
+                No player profile to show yet. Join a team roster or complete parent linking to see name, team,
+                and coach details here.
+              </p>
+            </section>
+            <section className="vc-panel vc-panel--dashboard vc-member-card vc-member-card--payment">
+              <h2 className="vc-member-card__title">Payment status</h2>
+              <p className="vc-modal__muted" style={{ margin: "0 0 0.75rem", lineHeight: 1.55 }}>
+                No payments available yet for a linked player account.
+              </p>
+              <button type="button" className="vc-member-btn vc-member-btn--primary" onClick={() => navigate("/my-fees")}>
+                Open fees
+              </button>
+            </section>
+          </div>
+          <div className="vc-member-dash__mid-row">
+            <section className="vc-panel vc-panel--dashboard vc-member-card vc-member-card--progress">
+              <h2 className="vc-member-card__title">Progress</h2>
+              <MemberProgressChart weeks={[]} />
+            </section>
+            <div className="vc-member-dash__side">
+              <section className="vc-panel vc-panel--dashboard vc-member-card vc-member-card--compact">
+                <h2 className="vc-member-card__title vc-member-card__title--sm">Club summary</h2>
+                <p className="vc-modal__muted" style={{ margin: 0 }}>
+                  No sessions available on your teams yet.
+                </p>
+              </section>
+              <button
+                type="button"
+                className="vc-member-btn vc-member-btn--primary vc-member-btn--block"
+                onClick={() => goWithTeam(qa.confirm_attendance_path || "/player/attendance", null)}
+              >
+                Confirm attendance
+              </button>
+              <button
+                type="button"
+                className="vc-panel vc-panel--dashboard vc-member-quick"
+                onClick={() => {
+                  window.dispatchEvent(new CustomEvent(qa.messages_event_name || "vc-open-notifications"));
+                }}
+              >
+                <span className="vc-member-quick__title">Messages</span>
+                {unread > 0 ? (
+                  <span className="vc-member-quick__badge">{unread > 99 ? "99+" : unread}</span>
+                ) : (
+                  <span className="vc-modal__muted vc-member-quick__sub">Inbox</span>
+                )}
+              </button>
+              <button
+                type="button"
+                className="vc-panel vc-panel--dashboard vc-member-quick"
+                onClick={() => navigate(qa.development_progress_path || "/teams")}
+              >
+                <span className="vc-member-quick__title">Development progress</span>
+                <span className="vc-modal__muted vc-member-quick__sub">Statistics &amp; trends</span>
+              </button>
+            </div>
+          </div>
+        </>
       ) : null}
 
       {!loading && !error && focus ? (

@@ -1,26 +1,50 @@
+const NO_DATA = "No data available";
+
+function registrationLabel(count) {
+  if (!Number.isFinite(count)) {
+    return NO_DATA;
+  }
+  const n = Math.trunc(count);
+  return `${n} Player${n === 1 ? "" : "s"}`;
+}
+
+function outstandingLabel(count) {
+  if (!Number.isFinite(count)) {
+    return NO_DATA;
+  }
+  const n = Math.trunc(count);
+  return `${n} famil${n === 1 ? "y" : "ies"}`;
+}
+
 export default function DirectorSummaryRow({ loading, kpis, formatMoney, formatPercent }) {
   const items = [
     {
       label: "Registration",
-      value:
-        loading || !kpis
-          ? "—"
-          : `${Number(kpis.registration_player_count)} Player${Number(kpis.registration_player_count) === 1 ? "" : "s"}`,
+      value: loading ? "—" : !kpis ? NO_DATA : registrationLabel(Number(kpis.registration_player_count)),
     },
     {
       label: "Monthly Revenue",
-      value: loading || !kpis ? "—" : formatMoney(kpis.monthly_revenue_currency, kpis.monthly_revenue),
+      value: loading
+        ? "—"
+        : !kpis
+          ? NO_DATA
+          : kpis.monthly_revenue != null && kpis.monthly_revenue !== ""
+            ? formatMoney(kpis.monthly_revenue_currency, kpis.monthly_revenue)
+            : NO_DATA,
     },
     {
       label: "Attendance Rate",
-      value: loading || !kpis ? "—" : formatPercent(kpis.attendance_rate),
+      value: loading
+        ? "—"
+        : !kpis
+          ? NO_DATA
+          : kpis.attendance_rate == null || kpis.attendance_rate === ""
+            ? NO_DATA
+            : formatPercent(kpis.attendance_rate),
     },
     {
       label: "Outstanding Payments",
-      value:
-        loading || !kpis
-          ? "—"
-          : `${Number(kpis.outstanding_payer_count)} famil${Number(kpis.outstanding_payer_count) === 1 ? "y" : "ies"}`,
+      value: loading ? "—" : !kpis ? NO_DATA : outstandingLabel(Number(kpis.outstanding_payer_count)),
     },
   ];
 

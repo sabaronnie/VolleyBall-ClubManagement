@@ -48,7 +48,7 @@ export default function DirectorPaymentsOverviewCard({ loading, clubId, rows, fo
               {list.length === 0 ? (
                 <tr>
                   <td colSpan={4} style={{ color: "#6b7580", fontWeight: 600 }}>
-                    No fee records yet for this club. Use Payments to add schedules and invoices.
+                    No payments available yet for this club. Use Payments to add schedules and invoices.
                   </td>
                 </tr>
               ) : (

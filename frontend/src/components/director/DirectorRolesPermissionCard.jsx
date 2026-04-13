@@ -27,7 +27,7 @@ export default function DirectorRolesPermissionCard({ loading, matrix }) {
       {loading ? (
         <p className="vc-modal__muted">Loading…</p>
       ) : rows.length === 0 ? (
-        <p className="vc-modal__muted">Permission summary is not available.</p>
+        <p className="vc-modal__muted">No permission matrix loaded. Try refreshing the dashboard.</p>
       ) : (
         <div className="vc-dashboard-table-wrap">
           <table className="vc-table vc-table--dashboard" style={{ fontSize: "0.88rem" }}>

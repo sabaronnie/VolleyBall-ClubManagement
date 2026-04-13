@@ -76,8 +76,8 @@ export default function DirectorAttendanceTrendCard({ loading, clubId, trend }) 
           </p>
         ) : !hasData ? (
           <p className="vc-modal__muted" style={{ margin: 0 }}>
-            No closed session attendance in the last 30 days yet. Schedule and close sessions to see this
-            chart fill in.
+            No attendance data available yet for the last 30 days. Schedule and close sessions so this chart
+            can show club-wide trends.
           </p>
         ) : (
           <>

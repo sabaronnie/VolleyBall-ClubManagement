@@ -16,30 +16,26 @@ export default function CoachDashboardBody({ dashboard, loading, error }) {
     );
   }
 
-  if (error) {
-    return (
-      <div className="vc-coach-dash-body">
-        <p className="vc-modal__error" style={{ margin: 0 }}>
-          {error}
-        </p>
-      </div>
-    );
-  }
-
-  if (!dashboard) {
-    return null;
-  }
-
-  const { kpis, attendance_vs_performance: avp, player_stats: playerStats, recent_feedback: recentFeedback } =
-    dashboard;
+  const safe = dashboard && typeof dashboard === "object" ? dashboard : {};
+  const kpis = safe.kpis;
+  const avp = safe.attendance_vs_performance;
+  const playerStats = safe.player_stats;
+  const recentFeedback = safe.recent_feedback;
+  const hasSkillMetrics = safe.has_skill_metrics;
 
   return (
     <div className="vc-coach-dash-body">
+      {error ? (
+        <p className="vc-modal__error" style={{ margin: "0 0 1rem" }}>
+          {error}
+        </p>
+      ) : null}
+
       <CoachSummaryRow kpi={kpis} />
 
       <div className="vc-dash-row vc-coach-dash-analytics-row">
         <div className="vc-panel vc-coach-dash-panel--chart">
-          <CoachAttendancePerformanceChart series={avp} />
+          <CoachAttendancePerformanceChart series={avp} hasSkillMetrics={hasSkillMetrics} />
         </div>
         <div className="vc-panel vc-coach-dash-panel--table">
           <CoachPlayerStatsTable rows={playerStats} />

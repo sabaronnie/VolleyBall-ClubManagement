@@ -36,7 +36,7 @@ export default function CoachPlayerStatsTable({ rows }) {
             {list.length === 0 ? (
               <tr>
                 <td colSpan={5} className="vc-modal__muted">
-                  No player stats recorded for this team.
+                  No attendance or performance stats available for this team yet.
                 </td>
               </tr>
             ) : (
