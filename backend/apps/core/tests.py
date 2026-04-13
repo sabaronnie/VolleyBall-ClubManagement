@@ -22,6 +22,7 @@ from .models import (
     ClubMembership,
     ClubRole,
     DirectorPaymentAuditLog,
+    FeePaymentLedgerEntry,
     Notification,
     ParentLinkApprovalStatus,
     ParentPlayerRelation,
@@ -2348,6 +2349,186 @@ class DirectorPaymentApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertTrue(PaymentSchedule.objects.filter(id=sched.id).exists())
+
+
+class DirectorDashboardOverviewTests(TestCase):
+    def test_overview_includes_trend_roles_club_summary_and_payments_overview(self):
+        director = User.objects.create_user(
+            email="dash-ext@example.com",
+            password="StrongPassword123!",
+        )
+        club = Club.objects.create_club(name="Dash Ext Club", director=director)
+        token = generate_auth_token(director)
+        response = self.client.get(
+            reverse("core:director-payment-overview", kwargs={"club_id": club.id}),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn("attendance_trend_30d", data)
+        self.assertEqual(len(data["attendance_trend_30d"]["points"]), 30)
+        self.assertIn("roles_permission_matrix", data)
+        self.assertEqual(len(data["roles_permission_matrix"]["rows"]), 3)
+        self.assertIn("club_summary", data)
+        self.assertIn("payments_overview", data)
+
+    def test_attendance_trend_day_matches_closed_session_slots(self):
+        director = User.objects.create_user(
+            email="dash-trend@example.com",
+            password="StrongPassword123!",
+        )
+        club = Club.objects.create_club(name="Trend Club", director=director)
+        player = User.objects.create_user(
+            email="trend-player@example.com",
+            password="StrongPassword123!",
+        )
+        team = Team.objects.create_team(club=club, name="Trend Team", season="2026")
+        TeamMembership.objects.add_member(user=player, team=team, role=TeamRole.PLAYER)
+        past = timezone.localdate() - timedelta(days=2)
+        session = TrainingSession.objects.create(
+            team=team,
+            title="Trend practice",
+            session_type=TrainingSession.SessionType.TRAINING,
+            scheduled_date=past,
+            start_time=time(18, 0),
+            end_time=time(19, 30),
+            location="Gym",
+        )
+        TrainingSessionConfirmation.objects.create(
+            training_session=session,
+            player=player,
+            confirmed_by=director,
+        )
+        token = generate_auth_token(director)
+        response = self.client.get(
+            reverse("core:director-payment-overview", kwargs={"club_id": club.id}),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        points = response.json()["attendance_trend_30d"]["points"]
+        day = next(p for p in points if p["date"] == past.isoformat())
+        self.assertEqual(day["closed_slots"], 1)
+        self.assertEqual(day["attended_slots"], 1)
+        self.assertEqual(day["rate_percent"], 100.0)
+
+    def test_monthly_revenue_matches_ledger_and_payments_overview_columns(self):
+        director = User.objects.create_user(
+            email="dash-rev@example.com",
+            password="StrongPassword123!",
+        )
+        club = Club.objects.create_club(name="Rev Club", director=director)
+        player = User.objects.create_user(
+            email="rev-player@example.com",
+            password="StrongPassword123!",
+            first_name="Rev",
+            last_name="Player",
+        )
+        team = Team.objects.create_team(club=club, name="Rev Team", season="2026")
+        TeamMembership.objects.add_member(user=player, team=team, role=TeamRole.PLAYER)
+        rec = PlayerFeeRecord.objects.create(
+            club=club,
+            player=player,
+            team=team,
+            description="Fee",
+            amount_due=Decimal("50.00"),
+            amount_paid=Decimal("20.00"),
+            due_date=timezone.localdate(),
+        )
+        FeePaymentLedgerEntry.objects.create(fee_record=rec, amount=Decimal("20.00"), note="t")
+        token = generate_auth_token(director)
+        response = self.client.get(
+            reverse("core:director-payment-overview", kwargs={"club_id": club.id}),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(Decimal(data["kpis"]["monthly_revenue"]), Decimal("20.00"))
+        row = next(r for r in data["payments_overview"] if r["player_id"] == player.id)
+        self.assertEqual(Decimal(row["total_paid"]), Decimal("20.00"))
+        self.assertEqual(Decimal(row["total_remaining"]), Decimal("30.00"))
+
+    def test_club_summary_identifies_best_and_low_team(self):
+        director = User.objects.create_user(
+            email="dash-balance@example.com",
+            password="StrongPassword123!",
+        )
+        club = Club.objects.create_club(name="Balance Club", director=director)
+        good = User.objects.create_user(email="good-p@example.com", password="StrongPassword123!")
+        bad = User.objects.create_user(email="bad-p@example.com", password="StrongPassword123!")
+        team_high = Team.objects.create_team(club=club, name="High Att Team", season="2026")
+        team_low = Team.objects.create_team(club=club, name="Low Att Team", season="2026")
+        TeamMembership.objects.add_member(user=good, team=team_high, role=TeamRole.PLAYER)
+        TeamMembership.objects.add_member(user=bad, team=team_low, role=TeamRole.PLAYER)
+        past_base = timezone.localdate() - timedelta(days=10)
+        for i in range(2):
+            s = TrainingSession.objects.create(
+                team=team_high,
+                title=f"High {i}",
+                session_type=TrainingSession.SessionType.TRAINING,
+                scheduled_date=past_base - timedelta(days=i),
+                start_time=time(18, 0),
+                end_time=time(19, 0),
+                location="A",
+            )
+            TrainingSessionConfirmation.objects.create(
+                training_session=s,
+                player=good,
+                confirmed_by=director,
+            )
+        for j in range(4):
+            TrainingSession.objects.create(
+                team=team_low,
+                title=f"Low {j}",
+                session_type=TrainingSession.SessionType.TRAINING,
+                scheduled_date=past_base - timedelta(days=j + 3),
+                start_time=time(18, 0),
+                end_time=time(19, 0),
+                location="B",
+            )
+        token = generate_auth_token(director)
+        response = self.client.get(
+            reverse("core:director-payment-overview", kwargs={"club_id": club.id}),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        summary = response.json()["club_summary"]
+        self.assertEqual(summary["best_participating_team"]["team_id"], team_high.id)
+        self.assertEqual(summary["low_participation"]["team_id"], team_low.id)
+        self.assertIn("Low Att Team", summary["low_participation"]["message"])
+
+    def test_overview_empty_club_has_no_attendance_denominator(self):
+        director = User.objects.create_user(
+            email="dash-empty@example.com",
+            password="StrongPassword123!",
+        )
+        club = Club.objects.create_club(name="Empty Dash Club", director=director)
+        token = generate_auth_token(director)
+        response = self.client.get(
+            reverse("core:director-payment-overview", kwargs={"club_id": club.id}),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIsNone(data["kpis"]["attendance_rate"])
+        self.assertEqual(data["kpis"]["registration_player_count"], 0)
+        self.assertEqual(data["kpis"]["outstanding_payer_count"], 0)
+        self.assertFalse(any(p["closed_slots"] > 0 for p in data["attendance_trend_30d"]["points"]))
+        self.assertIsNone(data["club_summary"]["best_participating_team"])
+        self.assertIsNone(data["club_summary"]["low_participation"])
+
+    def test_overview_rejects_non_director(self):
+        director = User.objects.create_user(
+            email="dash-denied-dir@example.com",
+            password="StrongPassword123!",
+        )
+        club = Club.objects.create_club(name="Denied Dash Club", director=director)
+        other = User.objects.create_user(email="dash-denied-other@example.com", password="StrongPassword123!")
+        token = generate_auth_token(other)
+        response = self.client.get(
+            reverse("core:director-payment-overview", kwargs={"club_id": club.id}),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 403)
 
 
 class DirectorUserDirectoryApiTests(TestCase):

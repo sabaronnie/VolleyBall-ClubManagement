@@ -10,6 +10,10 @@ Default login password for most seeded accounts: Sprint1Demo123!
 Exception: taymamerhebi@gmail.com uses password taymamerhebi (club director on all demo clubs).
 Coach dashboard: log in as lyn.coach@sprint1.local, open Dashboard, select Riyadi U16 in the team
 dropdown (or rely on default), data is read from the database only.
+
+Director dashboard: log in as taymamerhebi@gmail.com, open Club dashboard — KPIs, 30-day attendance
+trend, payments overview, and club summary are populated from fees, ledger entries, sessions, and
+audit logs (see _seed_riyadi_fees_and_ledgers / _seed_nahda_low_attendance).
 """
 
 from datetime import date, time, timedelta
@@ -24,7 +28,10 @@ from apps.core.models import (
     Club,
     ClubMembership,
     CoachFeedbackStatus,
+    DirectorPaymentAuditLog,
+    FeePaymentLedgerEntry,
     ParentPlayerRelation,
+    PlayerFeeRecord,
     PlayerProfile,
     Team,
     TeamCoachFeedback,
@@ -136,8 +143,12 @@ class Command(BaseCommand):
 
             team_riyadi = self._ensure_team(clubs["Riyadi"], "Riyadi U16")
             team_cpf = self._ensure_team(clubs["CPF"], "CPF Juniors")
-            self._ensure_team(clubs["Nahda"], "Nahda Development")
+            team_nahda = self._ensure_team(clubs["Nahda"], "Nahda Development")
             self._ensure_team(clubs["AUB"], "AUB Academy")
+
+            club_riyadi = clubs["Riyadi"]
+            club_riyadi.default_monthly_player_fee = Decimal("50.00")
+            club_riyadi.save(update_fields=["default_monthly_player_fee"])
 
             TeamMembership.objects.add_member(user=lyn, team=team_riyadi, role=TeamRole.COACH)
             TeamMembership.objects.add_member(user=farouk, team=team_cpf, role=TeamRole.COACH)
@@ -171,6 +182,17 @@ class Command(BaseCommand):
                         "Seeded Riyadi U16 sessions, attendance, skill metrics, roster stats, and feedback."
                     )
                 )
+
+            self._seed_riyadi_fees_and_ledgers(
+                club_riyadi,
+                team_riyadi,
+                karma,
+                racha,
+                nay,
+                tayma_director_gmail,
+            )
+            self._seed_nahda_low_attendance(team_nahda, karma)
+            self.stdout.write(self.style.SUCCESS("Seeded director dashboard fees, ledger, Nahda sessions, and audit logs."))
 
         self.stdout.write(
             self.style.SUCCESS(
@@ -238,7 +260,7 @@ class Command(BaseCommand):
                 defaults={"confirmed_by": by_user},
             )
 
-        past_offsets = [56, 49, 42, 35, 28, 21, 14, 7]
+        past_offsets = [56, 49, 42, 35, 28, 24, 21, 17, 14, 10, 7, 3]
         sessions = []
         for i, off in enumerate(past_offsets):
             s = TrainingSession.objects.create(
@@ -387,6 +409,89 @@ class Command(BaseCommand):
             body="work on the serve",
             status=CoachFeedbackStatus.PENDING,
         )
+
+    def _seed_riyadi_fees_and_ledgers(self, club, team, karma, racha, nay, director_user):
+        today = timezone.localdate()
+        period_start = date(today.year, today.month, 1)
+        due_date = period_start + timedelta(days=14)
+        specs = [
+            (karma, Decimal("120.00"), Decimal("48.00"), "Monthly dues + kit (Karma)"),
+            (racha, Decimal("95.00"), Decimal("95.00"), "Monthly dues (Racha)"),
+            (nay, Decimal("80.00"), Decimal("22.50"), "Monthly dues (Nay)"),
+        ]
+        for player, amount_due, amount_paid, desc in specs:
+            rec, _ = PlayerFeeRecord.objects.update_or_create(
+                club=club,
+                player=player,
+                team=team,
+                billing_period_start=period_start,
+                defaults={
+                    "description": desc,
+                    "amount_due": amount_due,
+                    "amount_paid": amount_paid,
+                    "currency": "USD",
+                    "due_date": due_date,
+                },
+            )
+            FeePaymentLedgerEntry.objects.filter(fee_record=rec).delete()
+            if amount_paid > 0:
+                entry = FeePaymentLedgerEntry.objects.create(
+                    fee_record=rec,
+                    amount=amount_paid,
+                    note="Sprint 1 demo ledger entry",
+                )
+                FeePaymentLedgerEntry.objects.filter(pk=entry.pk).update(recorded_at=timezone.now())
+
+        if (
+            DirectorPaymentAuditLog.objects.filter(
+                club=club,
+                detail="Sprint1 demo: materialized fee lines for director dashboard.",
+            ).count()
+            == 0
+        ):
+            DirectorPaymentAuditLog.objects.create(
+                club=club,
+                actor=director_user,
+                action=DirectorPaymentAuditLog.Action.FEE_CREATED,
+                detail="Sprint1 demo: materialized fee lines for director dashboard.",
+            )
+        if (
+            DirectorPaymentAuditLog.objects.filter(
+                club=club,
+                detail="Sprint1 demo: recorded demo ledger payments.",
+            ).count()
+            == 0
+        ):
+            DirectorPaymentAuditLog.objects.create(
+                club=club,
+                actor=director_user,
+                action=DirectorPaymentAuditLog.Action.PAYMENT_RECORDED,
+                detail="Sprint1 demo: recorded demo ledger payments.",
+            )
+
+    def _seed_nahda_low_attendance(self, team, karma_player):
+        """Second-team roster + past sessions with no confirmations → low club-wide participation signal."""
+        TeamMembership.objects.add_member(user=karma_player, team=team, role=TeamRole.PLAYER)
+        today = timezone.localdate()
+        for off in (26, 21, 16, 11, 6):
+            session_date = today - timedelta(days=off)
+            exists = TrainingSession.objects.filter(
+                team=team,
+                scheduled_date=session_date,
+                title="Nahda development (demo)",
+            ).exists()
+            if exists:
+                continue
+            TrainingSession.objects.create(
+                team=team,
+                title="Nahda development (demo)",
+                session_type=TrainingSession.SessionType.TRAINING,
+                scheduled_date=session_date,
+                start_time=time(17, 0),
+                end_time=time(18, 30),
+                location="Nahda training hall",
+                status=TrainingSession.Status.SCHEDULED,
+            )
 
 
 def date_from_year(year):

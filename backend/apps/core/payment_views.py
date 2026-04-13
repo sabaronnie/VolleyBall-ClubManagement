@@ -21,9 +21,11 @@ from django.views.decorators.http import require_GET, require_POST
 
 from .attendance_summary import (
     CALCULATION_SUMMARY_TEXT,
+    club_attendance_daily_series,
     club_team_attendance_snapshot,
     club_weighted_average_attendance_percent,
 )
+from .director_dashboard import build_club_director_summary, roles_permission_matrix
 from .decorators import login_required
 from .models import (
     Club,
@@ -623,15 +625,43 @@ def director_payment_overview(request, club_id):
     family_summaries = _family_bundles_from_records(all_records)
     outstanding_summaries = [b for b in family_summaries if Decimal(b["total_remaining"]) > 0]
     outstanding_summaries.sort(key=lambda b: (-Decimal(b["total_remaining"]), b["family_label"].lower()))
-    preview_families = outstanding_summaries[:8]
+    paid_summaries = [b for b in family_summaries if Decimal(b["total_remaining"]) <= 0]
+    paid_summaries.sort(key=lambda b: (b["family_label"].lower(), b["player_id"]))
+    preview_families = list(outstanding_summaries[:8])
+    if len(preview_families) < 8:
+        preview_families.extend(paid_summaries[: 8 - len(preview_families)])
 
     today_local = timezone.localdate()
-    att_start = today_local - timedelta(days=84)
+    att_start = today_local - timedelta(days=29)
+    att_end = today_local
     club_att_pct = club_weighted_average_attendance_percent(
         club,
         start_date=att_start,
-        end_date=today_local,
+        end_date=att_end,
     )
+    attendance_trend_points = club_attendance_daily_series(
+        club,
+        start_date=att_start,
+        end_date=att_end,
+    )
+    club_summary = build_club_director_summary(
+        club,
+        monthly_revenue=monthly_revenue,
+        monthly_revenue_currency="USD",
+        trend_start=att_start,
+        trend_end=att_end,
+    )
+    payments_overview = [
+        {
+            "player_id": b["player_id"],
+            "family_label": b["family_label"],
+            "total_paid": b["total_paid"],
+            "total_remaining": b["total_remaining"],
+            "currency": b["currency"],
+            "status": b["overall_status"],
+        }
+        for b in preview_families
+    ]
 
     return JsonResponse(
         {
@@ -647,15 +677,26 @@ def director_payment_overview(request, club_id):
                 "calculation_summary": CALCULATION_SUMMARY_TEXT,
                 "filters": {
                     "start_date": att_start.isoformat(),
-                    "end_date": today_local.isoformat(),
+                    "end_date": att_end.isoformat(),
                 },
                 "club_average_rate_percent": club_att_pct,
                 "by_team": club_team_attendance_snapshot(
                     club,
                     start_date=att_start,
-                    end_date=today_local,
+                    end_date=att_end,
                 ),
             },
+            "attendance_trend_30d": {
+                "calculation_summary": CALCULATION_SUMMARY_TEXT,
+                "filters": {
+                    "start_date": att_start.isoformat(),
+                    "end_date": att_end.isoformat(),
+                },
+                "points": attendance_trend_points,
+            },
+            "payments_overview": payments_overview,
+            "roles_permission_matrix": roles_permission_matrix(),
+            "club_summary": club_summary,
             "family_summaries": preview_families,
         }
     )
