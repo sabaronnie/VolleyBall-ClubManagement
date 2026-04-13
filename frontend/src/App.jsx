@@ -1841,11 +1841,9 @@ function App() {
           style={{ "--hero-image": `url(${homepageImages.hero})` }}
         />
         {withSiteNav ? (
-          <header className="site-nav">
-            <div className="nav-left">
+          <header className="site-nav site-nav--guest">
+            <div className="guest-nav-group">
               <span className="brand-mark">NetUp</span>
-            </div>
-            <div className="nav-right">
               <button
                 className="action-button action-button--ghost"
                 type="button"

@@ -123,6 +123,21 @@ button {
   box-shadow: 0 18px 48px rgba(10, 14, 31, 0.2);
 }
 
+.site-nav--guest {
+  justify-content: flex-end;
+  width: fit-content;
+  max-width: calc(100% - 2.6rem);
+  margin: 0 0 0 auto;
+}
+
+.guest-nav-group {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
 .nav-left {
   display: flex;
   align-items: center;
@@ -1359,7 +1374,7 @@ button {
 }
 
 .brand-mark {
-  margin-right: 0.55rem;
+  margin-right: 0.2rem;
   color: #fff;
   font-family: var(--font-display);
   font-size: 1rem;
@@ -1967,6 +1982,12 @@ button {
     max-width: calc(100% - 2rem);
     margin: 0 auto;
     border-radius: 1.2rem;
+  }
+
+  .site-nav--guest {
+    width: fit-content;
+    max-width: calc(100% - 2rem);
+    margin: 0 0 0 auto;
   }
 
   .hero-content {
