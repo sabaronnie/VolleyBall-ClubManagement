@@ -1843,7 +1843,13 @@ function App() {
         {withSiteNav ? (
           <header className="site-nav site-nav--guest">
             <div className="guest-nav-group">
-              <span className="brand-mark">NetUp</span>
+              <div className="homepage-brand" aria-label="NetUp">
+                <div className="homepage-brand__wordmark" aria-hidden="true">
+                  <h1>Net</h1>
+                  <h1>Up</h1>
+                </div>
+                <img src="/auth/logo-ball.png" alt="" />
+              </div>
               <button
                 className="action-button action-button--ghost"
                 type="button"

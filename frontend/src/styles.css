@@ -1373,13 +1373,26 @@ button {
   letter-spacing: 0.01em;
 }
 
-.brand-mark {
-  margin-right: 0.2rem;
+.homepage-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
   color: #fff;
-  font-family: var(--font-display);
-  font-size: 1rem;
-  font-weight: 700;
-  letter-spacing: 0.03em;
+}
+
+.homepage-brand__wordmark h1 {
+  margin: 0;
+  font-family: "Sansita One", system-ui, sans-serif;
+  font-size: clamp(1.05rem, 1.8vw, 1.35rem);
+  font-weight: 800;
+  line-height: 0.88;
+}
+
+.homepage-brand img {
+  width: clamp(24px, 2.2vw, 30px);
+  margin-top: 0.08rem;
+  margin-left: -0.04rem;
+  margin-right: 0.6rem;
 }
 
 .action-button {
