@@ -11,6 +11,7 @@ from django.contrib.auth import authenticate, get_user_model
 from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
+from django.core.signing import BadSignature, SignatureExpired
 from django.core.validators import EmailValidator
 from django.core.mail import send_mail
 from django.db import IntegrityError, transaction
@@ -52,6 +53,8 @@ from .models import (
     PlayerFeeRecord,
     PlayerProfile,
     Team,
+    TeamInvitation,
+    TeamInvitationStatus,
     TeamMembership,
     TeamRole,
     TeamScheduleEntry,
@@ -78,7 +81,7 @@ from .permissions import (
     is_team_player,
     is_user_adult,
 )
-from .tokens import generate_auth_token
+from .tokens import generate_auth_token, verify_auth_token
 
 
 logger = logging.getLogger(__name__)
@@ -772,6 +775,63 @@ def _send_club_membership_removed_email(*, recipient, club_name, club_id):
             recipient.email,
             club_id,
         )
+
+
+def _team_invitation_url(code: str) -> str:
+    base = getattr(settings, "TEAM_INVITATION_URL_BASE", "http://localhost:5173/invitation")
+    return f"{base.rstrip('/')}/{code}"
+
+
+def _send_team_invitation_email(*, invited_email, team_name, club_name, code):
+    if not invited_email:
+        return
+    if not _password_reset_email_configured():
+        return
+    invite_url = _team_invitation_url(code)
+    subject = f"Invitation to join {team_name}"
+    body = (
+        "Hello,\n\n"
+        f"You were invited to join the team '{team_name}' in '{club_name}'.\n"
+        "Use the invitation link below to accept or decline:\n"
+        f"{invite_url}\n\n"
+        "If you do not have an account, register first with this same email, then open the same invitation link.\n"
+    )
+    try:
+        send_mail(
+            subject,
+            body,
+            settings.DEFAULT_FROM_EMAIL,
+            [invited_email],
+            fail_silently=False,
+        )
+    except Exception:
+        logger.exception("Failed to send team invitation email to %s", invited_email)
+
+
+def _serialize_team_invitation(invite):
+    return {
+        "id": invite.id,
+        "code": invite.code,
+        "status": invite.status,
+        "invited_email": invite.invited_email,
+        "role": invite.role,
+        "created_at": invite.created_at.isoformat() if invite.created_at else None,
+        "expires_at": invite.expires_at.isoformat() if invite.expires_at else None,
+        "responded_at": invite.responded_at.isoformat() if invite.responded_at else None,
+        "team": _serialize_team(invite.team),
+    }
+
+
+def _expire_invitation_if_needed(invite):
+    if (
+        invite.status == TeamInvitationStatus.PENDING
+        and invite.expires_at is not None
+        and invite.expires_at <= timezone.now()
+    ):
+        invite.status = TeamInvitationStatus.EXPIRED
+        invite.responded_at = timezone.now()
+        invite.save(update_fields=["status", "responded_at"])
+    return invite
 
 
 def _delete_registration_otp(email):
@@ -2894,6 +2954,185 @@ def add_team_member(request, team_id):
             "member": _serialize_team_member(membership),
         },
         status=201,
+    )
+
+
+@csrf_exempt
+@login_required
+@require_POST
+def invite_team_member(request, team_id):
+    payload = _parse_json_request(request)
+    if payload is None:
+        return JsonResponse({"errors": {"body": "Invalid JSON."}}, status=400)
+
+    team = get_object_or_404(Team.objects.select_related("club"), pk=team_id)
+    invited_email = (payload.get("email") or "").strip().lower()
+    role = (payload.get("role") or TeamRole.PLAYER).strip() or TeamRole.PLAYER
+
+    errors = {}
+    if not invited_email:
+        errors["email"] = "Email is required."
+    else:
+        try:
+            EmailValidator()(invited_email)
+        except ValidationError:
+            errors["email"] = "Enter a valid email address."
+    if role not in TeamRole.values:
+        errors["role"] = "Role must be either 'coach' or 'player'."
+    if errors:
+        return JsonResponse({"errors": errors}, status=400)
+
+    if not can_add_team_member(request.user, team, role):
+        return JsonResponse(
+            {"errors": {"authorization": "You cannot invite that type of member to this team."}},
+            status=403,
+        )
+
+    existing_user = User.objects.filter(email=invited_email).first()
+    if existing_user is not None:
+        if TeamMembership.objects.active().filter(team=team, user=existing_user).exists():
+            return JsonResponse(
+                {"errors": {"email": "This user is already an active member of this team."}},
+                status=400,
+            )
+        if not coach_may_add_user_to_team_roster(request.user, team, existing_user, role):
+            return JsonResponse(
+                {
+                    "errors": {
+                        "authorization": (
+                            "Coaches may only invite player accounts; parent or director accounts cannot be invited by a coach."
+                        )
+                    }
+                },
+                status=403,
+            )
+
+    TeamInvitation.objects.filter(
+        team=team,
+        invited_email=invited_email,
+        status=TeamInvitationStatus.PENDING,
+    ).update(
+        status=TeamInvitationStatus.EXPIRED,
+        responded_at=timezone.now(),
+    )
+    invitation = TeamInvitation.objects.create(
+        team=team,
+        invited_email=invited_email,
+        role=role,
+        invited_by=request.user,
+    )
+
+    _send_team_invitation_email(
+        invited_email=invited_email,
+        team_name=team.name,
+        club_name=team.club.name,
+        code=invitation.code,
+    )
+    return JsonResponse(
+        {
+            "message": "Invitation sent successfully.",
+            "invitation": _serialize_team_invitation(invitation),
+        },
+        status=201,
+    )
+
+
+@require_GET
+def invitation_detail(request, code):
+    invite = TeamInvitation.objects.select_related("team__club").filter(code=code).first()
+    if invite is None:
+        return JsonResponse({"errors": {"invitation": "Invitation not found."}}, status=404)
+
+    invite = _expire_invitation_if_needed(invite)
+
+    viewer_email = ""
+    viewer_is_authenticated = False
+    authorization_header = request.headers.get("Authorization", "").strip()
+    scheme, _, token = authorization_header.partition(" ")
+    if scheme == "Bearer" and token:
+        try:
+            auth_payload = verify_auth_token(token)
+            authed_user = User.objects.filter(
+                pk=auth_payload.get("user_id"),
+                email=auth_payload.get("email"),
+                is_active=True,
+            ).first()
+            if authed_user is not None:
+                viewer_is_authenticated = True
+                viewer_email = (authed_user.email or "").strip().lower()
+        except (SignatureExpired, BadSignature):
+            viewer_is_authenticated = False
+            viewer_email = ""
+
+    return JsonResponse(
+        {
+            "invitation": _serialize_team_invitation(invite),
+            "requires_login": True,
+            "viewer_is_authenticated": viewer_is_authenticated,
+            "viewer_email_matches_invite": bool(
+                viewer_email and viewer_email == (invite.invited_email or "").strip().lower()
+            ),
+        }
+    )
+
+
+@csrf_exempt
+@login_required
+@require_POST
+def respond_team_invitation(request, code):
+    payload = _parse_json_request(request)
+    if payload is None:
+        return JsonResponse({"errors": {"body": "Invalid JSON."}}, status=400)
+
+    action = (payload.get("action") or "").strip().lower()
+    if action not in ("accept", "decline"):
+        return JsonResponse({"errors": {"action": "Action must be 'accept' or 'decline'."}}, status=400)
+
+    invite = TeamInvitation.objects.select_related("team__club").filter(code=code).first()
+    if invite is None:
+        return JsonResponse({"errors": {"invitation": "Invitation not found."}}, status=404)
+
+    invite = _expire_invitation_if_needed(invite)
+    if invite.status != TeamInvitationStatus.PENDING:
+        return JsonResponse(
+            {"errors": {"invitation": f"This invitation is already {invite.status}."}},
+            status=400,
+        )
+
+    viewer_email = (request.user.email or "").strip().lower()
+    if viewer_email != (invite.invited_email or "").strip().lower():
+        return JsonResponse(
+            {"errors": {"authorization": "This invitation belongs to a different email address."}},
+            status=403,
+        )
+
+    if action == "decline":
+        invite.status = TeamInvitationStatus.DECLINED
+        invite.responded_at = timezone.now()
+        invite.save(update_fields=["status", "responded_at"])
+        return JsonResponse(
+            {
+                "message": "Invitation declined.",
+                "invitation": _serialize_team_invitation(invite),
+            }
+        )
+
+    TeamMembership.objects.add_member(
+        user=request.user,
+        team=invite.team,
+        role=invite.role,
+    )
+    if invite.role == TeamRole.PLAYER:
+        ensure_monthly_fee_for_new_player(invite.team, request.user)
+    invite.status = TeamInvitationStatus.ACCEPTED
+    invite.responded_at = timezone.now()
+    invite.save(update_fields=["status", "responded_at"])
+    return JsonResponse(
+        {
+            "message": "Invitation accepted. You are now a team member.",
+            "invitation": _serialize_team_invitation(invite),
+            "team": _serialize_team(invite.team),
+        }
     )
 
 
