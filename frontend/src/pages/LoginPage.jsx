@@ -14,6 +14,7 @@ function navigate(path) {
 }
 
 export default function LoginPage() {
+  const invitationCode = new URLSearchParams(window.location.search).get("invitation") || "";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -42,7 +43,7 @@ export default function LoginPage() {
       localStorage.setItem(AUTH_TOKEN_KEY, payload.token || "");
       localStorage.setItem(AUTH_USER_KEY, JSON.stringify(payload.user || {}));
       notifyAuthStateChanged();
-      navigate("/");
+      navigate(invitationCode ? `/invitation/${encodeURIComponent(invitationCode)}` : "/");
     } catch (requestError) {
       setError(requestError.message || "Could not log in.");
     } finally {
@@ -107,7 +108,16 @@ export default function LoginPage() {
 
           <p className="auth-switch">
             Don&apos;t have an account?{" "}
-            <button type="button" onClick={() => navigate("/register")}>
+            <button
+              type="button"
+              onClick={() =>
+                navigate(
+                  invitationCode
+                    ? `/register?invitation=${encodeURIComponent(invitationCode)}`
+                    : "/register",
+                )
+              }
+            >
               Create one
             </button>
           </p>

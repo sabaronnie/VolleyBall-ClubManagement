@@ -516,6 +516,22 @@ export async function directorAddTeamMember(teamId, body) {
   return authenticatedJson(`/api/teams/${teamId}/members/add/`, "POST", body);
 }
 
+export async function directorRemoveTeamMember(teamId, userId) {
+  return authenticatedJson(`/api/teams/${teamId}/members/${userId}/remove/`, "DELETE", {});
+}
+
+export async function inviteTeamMemberByEmail(teamId, body) {
+  return authenticatedJson(`/api/teams/${teamId}/invitations/`, "POST", body);
+}
+
+export async function fetchInvitationByCode(code) {
+  return authenticatedGet(`/api/invitations/${encodeURIComponent(code)}/`);
+}
+
+export async function respondToInvitation(code, action) {
+  return authenticatedJson(`/api/invitations/${encodeURIComponent(code)}/respond/`, "POST", { action });
+}
+
 export async function fetchTeamPlayerPayments(teamId) {
   return authenticatedGet(`/api/teams/${teamId}/payments/`);
 }

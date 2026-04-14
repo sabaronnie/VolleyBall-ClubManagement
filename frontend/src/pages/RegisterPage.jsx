@@ -14,6 +14,7 @@ function navigate(path) {
 }
 
 export default function RegisterPage() {
+  const invitationCode = new URLSearchParams(window.location.search).get("invitation") || "";
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
@@ -96,7 +97,10 @@ export default function RegisterPage() {
       localStorage.setItem(AUTH_USER_KEY, JSON.stringify(payload.user || {}));
       notifyAuthStateChanged();
       setSuccess(payload.message || "Registration complete. You are now signed in.");
-      window.setTimeout(() => navigate("/"), 250);
+      window.setTimeout(
+        () => navigate(invitationCode ? `/invitation/${encodeURIComponent(invitationCode)}` : "/"),
+        250,
+      );
     } catch (requestError) {
       setError(requestError.message || "Could not verify the code.");
     } finally {
@@ -244,7 +248,16 @@ export default function RegisterPage() {
 
         <p className="auth-switch auth-switch--light">
           Already have an account?{" "}
-          <button type="button" onClick={() => navigate("/login")}>
+          <button
+            type="button"
+            onClick={() =>
+              navigate(
+                invitationCode
+                  ? `/login?invitation=${encodeURIComponent(invitationCode)}`
+                  : "/login",
+              )
+            }
+          >
             Log in
           </button>
         </p>

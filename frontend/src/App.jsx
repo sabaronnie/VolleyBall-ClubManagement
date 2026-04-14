@@ -24,6 +24,7 @@ import TeamRosterPage from "./pages/TeamRosterPage";
 import { ForgotPasswordPage, ResetPasswordPage } from "./pages/PasswordResetPages";
 import RegisterPage from "./pages/RegisterPage";
 import ContactUsPage from "./pages/ContactUsPage";
+import TeamInvitationPage from "./pages/TeamInvitationPage";
 
 const AUTH_TOKEN_KEY = "netup.auth.token";
 const ACTIVE_TEAM_KEY = "netup.active.team";
@@ -1428,6 +1429,18 @@ function App() {
 
   if (pathname === "/register") {
     return <RegisterPage />;
+  }
+
+  if (pathname.startsWith("/invitation/")) {
+    const invitationCode = decodeURIComponent(pathname.replace("/invitation/", "").replace(/\/+$/, ""));
+    if (!invitationCode) {
+      return (
+        <div className="vc-app vc-dashboard" style={{ padding: "3rem", textAlign: "center" }}>
+          <p className="vc-modal__muted">Invalid invitation link.</p>
+        </div>
+      );
+    }
+    return <TeamInvitationPage invitationCode={invitationCode} isAuthenticated={isAuthenticated} />;
   }
 
   if (pathname === "/contact" || pathname === "/contact/") {
