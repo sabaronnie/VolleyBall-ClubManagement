@@ -1,22 +1,108 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
-  directorAddTeamMember,
   directorCreateTeam,
   directorDeleteClub,
-  directorRemoveTeamMember,
   directorDeleteTeam,
   fetchCurrentUser,
-  fetchTeamMembers,
-  inviteTeamMemberByEmail,
+  inviteTeamMember,
 } from "../api";
+import { ChevronDownIcon } from "../components/AppIcons";
 import { navigate } from "../navigation";
 
 const AUTH_TOKEN_KEY = "netup.auth.token";
+const INVITE_ROLE_OPTIONS = [
+  { value: "player", label: "Player" },
+  { value: "coach", label: "Coach" },
+];
 
-function roleLabel(role) {
-  if (role === "coach") return "Coach";
-  if (role === "player") return "Player";
-  return role || "—";
+function CreateTeamFieldLabel({ htmlFor, children, optional = false }) {
+  return (
+    <label className="vc-director-modal__label" htmlFor={htmlFor}>
+      {children}
+      {optional ? (
+        <>
+          {" "}
+          <span className="vc-director-modal__optional">(optional)</span>
+        </>
+      ) : (
+        <span className="vc-director-modal__required" aria-hidden="true">
+          *
+        </span>
+      )}
+    </label>
+  );
+}
+
+function InlineDropdown({ value, onChange, options, ariaLabel, className = "" }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+  const menuId = useId();
+  const selectedOption = options.find((option) => option.value === value) || options[0];
+
+  useEffect(() => {
+    setOpen(false);
+  }, [value]);
+
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+
+    const onPointerDown = (event) => {
+      if (wrapRef.current && !wrapRef.current.contains(event.target)) {
+        setOpen(false);
+      }
+    };
+
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    };
+
+    document.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div className={`vc-inline-dropdown${open ? " is-open" : ""}${className ? ` ${className}` : ""}`} ref={wrapRef}>
+      <button
+        type="button"
+        className={`vc-inline-dropdown__trigger${open ? " is-open" : ""}`}
+        aria-label={ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={menuId}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className="vc-inline-dropdown__value">{selectedOption?.label || "Select role"}</span>
+        <ChevronDownIcon className={`vc-inline-dropdown__chevron${open ? " is-open" : ""}`} />
+      </button>
+      {open ? (
+        <div className="vc-inline-dropdown__menu" id={menuId} role="listbox" aria-label={ariaLabel}>
+          {options.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              role="option"
+              aria-selected={selectedOption?.value === option.value}
+              className={`vc-inline-dropdown__option${selectedOption?.value === option.value ? " is-selected" : ""}`}
+              onClick={() => {
+                onChange(option.value);
+                setOpen(false);
+              }}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export default function DirectorTeamSetupPage({
@@ -30,21 +116,26 @@ export default function DirectorTeamSetupPage({
   const [ownedClubs, setOwnedClubs] = useState([]);
   const [directorTeams, setDirectorTeams] = useState([]);
   const [teamId, setTeamId] = useState("");
-  const [membersPayload, setMembersPayload] = useState(null);
-  const [membersLoading, setMembersLoading] = useState(false);
-  const [createDraftByClub, setCreateDraftByClub] = useState({});
+  const [createTeamDialogClub, setCreateTeamDialogClub] = useState(null);
+  const [createTeamError, setCreateTeamError] = useState("");
+  const [newTeamName, setNewTeamName] = useState("");
+  const [newTeamShortName, setNewTeamShortName] = useState("");
+  const [newTeamDescription, setNewTeamDescription] = useState("");
+  const [newTeamSeason, setNewTeamSeason] = useState("");
+  const [newTeamAgeGroup, setNewTeamAgeGroup] = useState("");
+  const [newTeamGender, setNewTeamGender] = useState("");
+  const [newTeamHomeVenue, setNewTeamHomeVenue] = useState("");
   const [createBusyClubId, setCreateBusyClubId] = useState(null);
   const [deleteTeamBusyId, setDeleteTeamBusyId] = useState(null);
   const [deleteClubBusy, setDeleteClubBusy] = useState(null);
   const [deleteClubBusyId, setDeleteClubBusyId] = useState(null);
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteBusy, setInviteBusy] = useState(false);
-  const [removeBusyKey, setRemoveBusyKey] = useState("");
-
-  const [memberUserId, setMemberUserId] = useState("");
-  const [memberRole, setMemberRole] = useState("player");
-  const [addBusy, setAddBusy] = useState(false);
+  const [inviteEmailRole, setInviteEmailRole] = useState("player");
+  const [inviteEmailBusy, setInviteEmailBusy] = useState(false);
+  const [inviteUserId, setInviteUserId] = useState("");
+  const [inviteUserIdRole, setInviteUserIdRole] = useState("player");
+  const [inviteUserIdBusy, setInviteUserIdBusy] = useState(false);
 
   const bumpTeams = () => window.dispatchEvent(new Event("netup-teams-changed"));
 
@@ -73,7 +164,6 @@ export default function DirectorTeamSetupPage({
 
   useEffect(() => {
     setSuccessMessage("");
-    setMembersPayload(null);
   }, [ownedClubs.length]);
 
   const teamsByClubId = useMemo(() => {
@@ -88,83 +178,73 @@ export default function DirectorTeamSetupPage({
     return out;
   }, [directorTeams]);
 
+  const invitationTeamOptions = useMemo(
+    () => [
+      { value: "", label: "Select a team…" },
+      ...directorTeams.map((team) => ({
+        value: String(team.id),
+        label: `${team.club_name ? `${team.club_name} — ` : ""}${team.name}${team.season ? ` (${team.season})` : ""}`,
+      })),
+    ],
+    [directorTeams],
+  );
+
   useEffect(() => {
     if (!teamId) {
-      setMembersPayload(null);
       return;
     }
-    let cancelled = false;
-    (async () => {
-      setMembersLoading(true);
-      setError("");
-      try {
-        const data = await fetchTeamMembers(Number(teamId));
-        if (!cancelled) {
-          setMembersPayload(data);
-        }
-      } catch (e) {
-        if (!cancelled) {
-          setMembersPayload(null);
-          setError(e.message || "Could not load team members.");
-        }
-      } finally {
-        if (!cancelled) {
-          setMembersLoading(false);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [teamId]);
-
-  useEffect(() => {
-    if (!membersPayload) {
-      return;
+    const teamStillExists = directorTeams.some((team) => String(team.id) === String(teamId));
+    if (!teamStillExists) {
+      setTeamId("");
     }
-    setMemberRole((prev) => {
-      if (prev === "coach" && !membersPayload.can_add_coach && membersPayload.can_add_player) {
-        return "player";
-      }
-      if (prev === "player" && !membersPayload.can_add_player && membersPayload.can_add_coach) {
-        return "coach";
-      }
-      return prev;
-    });
-  }, [membersPayload]);
+  }, [directorTeams, teamId]);
 
-  const updateCreateDraft = (targetClubId, field, value) => {
-    const key = Number(targetClubId);
-    setCreateDraftByClub((prev) => ({
-      ...prev,
-      [key]: {
-        name: prev[key]?.name || "",
-        season: prev[key]?.season || "",
-        [field]: value,
-      },
-    }));
+  const openCreateTeamModal = (club) => {
+    setCreateTeamDialogClub(club);
+    setCreateTeamError("");
+    setNewTeamName("");
+    setNewTeamShortName("");
+    setNewTeamDescription("");
+    setNewTeamSeason("");
+    setNewTeamAgeGroup("");
+    setNewTeamGender("");
+    setNewTeamHomeVenue("");
   };
 
-  const onCreateTeam = async (targetClubId) => {
-    const resolvedClubId = Number(targetClubId);
-    const draft = createDraftByClub[resolvedClubId] || { name: "", season: "" };
-    if (!resolvedClubId || !draft.name.trim()) {
-      setError("Team name is required.");
+  const onCreateTeam = async (event) => {
+    event?.preventDefault?.();
+    const resolvedClubId = Number(createTeamDialogClub?.id);
+    const name = newTeamName.trim();
+    const shortName = newTeamShortName.trim();
+    const ageGroup = newTeamAgeGroup.trim();
+    const gender = newTeamGender.trim();
+    const homeVenue = newTeamHomeVenue.trim();
+
+    if (!resolvedClubId) {
+      setCreateTeamError("Choose a club first.");
       return;
     }
+    if (!name || !shortName || !ageGroup || !gender || !homeVenue) {
+      setCreateTeamError("Please fill in every required field.");
+      return;
+    }
+
     setCreateBusyClubId(resolvedClubId);
+    setCreateTeamError("");
     setError("");
     setSuccessMessage("");
     try {
-      const body = { name: draft.name.trim() };
-      if ((draft.season || "").trim()) {
-        body.season = draft.season.trim();
-      }
+      const body = {
+        name,
+        short_name: shortName,
+        description: newTeamDescription.trim(),
+        season: newTeamSeason.trim(),
+        age_group: ageGroup,
+        gender,
+        home_venue: homeVenue,
+      };
       const res = await directorCreateTeam(resolvedClubId, body);
-      setCreateDraftByClub((prev) => ({
-        ...prev,
-        [resolvedClubId]: { name: "", season: "" },
-      }));
+      setCreateTeamDialogClub(null);
       setSuccessMessage(res?.message || "Team created.");
       await loadMe();
       bumpTeams();
@@ -172,7 +252,7 @@ export default function DirectorTeamSetupPage({
         setTeamId(String(res.team.id));
       }
     } catch (e) {
-      setError(e.message || "Could not create team.");
+      setCreateTeamError(e.message || "Could not create team.");
     } finally {
       setCreateBusyClubId(null);
     }
@@ -190,7 +270,6 @@ export default function DirectorTeamSetupPage({
       setSuccessMessage(res?.message || "Team deleted successfully.");
       if (String(teamId) === String(targetTeam.id)) {
         setTeamId("");
-        setMembersPayload(null);
       }
       await loadMe();
       bumpTeams();
@@ -214,7 +293,6 @@ export default function DirectorTeamSetupPage({
       const res = await directorDeleteClub(resolvedClubId);
       setSuccessMessage(res?.message || "Club deleted successfully.");
       setTeamId("");
-      setMembersPayload(null);
       await loadMe();
       bumpTeams();
     } catch (e) {
@@ -246,55 +324,52 @@ export default function DirectorTeamSetupPage({
     });
   };
 
-  const openRemoveMemberConfirm = (team, memberRow) => {
-    setConfirmDialog({
-      kind: "member",
-      teamId: team.id,
-      memberUserId: memberRow?.user?.id,
-      message: `Remove ${memberRow?.user?.email || "this member"} from "${team.name}"?`,
-    });
-  };
-
   const onInviteByEmail = async (team) => {
     const email = inviteEmail.trim().toLowerCase();
     if (!email) {
       setError("Enter an email address.");
       return;
     }
-    setInviteBusy(true);
+    setInviteEmailBusy(true);
     setError("");
     setSuccessMessage("");
     try {
-      const res = await inviteTeamMemberByEmail(Number(team.id), { email, role: "player" });
+      const res = await inviteTeamMember(Number(team.id), {
+        email,
+        role: inviteEmailRole,
+      });
       setInviteEmail("");
+      setInviteEmailRole("player");
       setSuccessMessage(res?.message || "Invitation sent successfully.");
     } catch (e) {
       setError(e.message || "Could not invite member.");
     } finally {
-      setInviteBusy(false);
+      setInviteEmailBusy(false);
     }
   };
 
-  const performRemoveMember = async (teamIdValue, userId) => {
-    if (!teamIdValue || !userId) {
+  const onInviteById = async (team) => {
+    const uid = Number(inviteUserId.trim());
+    if (!inviteUserId.trim() || Number.isNaN(uid) || uid < 1) {
+      setError("Enter a valid user ID.");
       return;
     }
-    const busyKey = `${teamIdValue}:${userId}`;
-    setRemoveBusyKey(busyKey);
+    setInviteUserIdBusy(true);
     setError("");
     setSuccessMessage("");
     try {
-      const res = await directorRemoveTeamMember(Number(teamIdValue), Number(userId));
-      setSuccessMessage(res?.message || "Member removed successfully.");
-      if (String(teamId) === String(teamIdValue)) {
-        const data = await fetchTeamMembers(Number(teamIdValue));
-        setMembersPayload(data);
-      }
+      const res = await inviteTeamMember(Number(team.id), {
+        user_id: uid,
+        role: inviteUserIdRole,
+      });
+      setInviteUserId("");
+      setInviteUserIdRole("player");
+      setSuccessMessage(res?.message || "Invitation sent successfully.");
       bumpTeams();
     } catch (e) {
-      setError(e.message || "Could not remove member.");
+      setError(e.message || "Could not send invitation.");
     } finally {
-      setRemoveBusyKey("");
+      setInviteUserIdBusy(false);
     }
   };
 
@@ -309,46 +384,8 @@ export default function DirectorTeamSetupPage({
       }
     } else if (confirmDialog.kind === "club") {
       await performDeleteClub(confirmDialog.clubId);
-    } else if (confirmDialog.kind === "member") {
-      await performRemoveMember(confirmDialog.teamId, confirmDialog.memberUserId);
     }
     setConfirmDialog(null);
-  };
-
-  const onAddMember = async () => {
-    if (!teamId) {
-      setError("Choose a team first.");
-      return;
-    }
-    const uid = Number(memberUserId.trim());
-    if (!memberUserId.trim() || Number.isNaN(uid) || uid < 1) {
-      setError("Enter the member’s numeric user id (they must already have an account).");
-      return;
-    }
-    if (memberRole === "player" && membersPayload && !membersPayload.can_add_player) {
-      setError("You cannot add players to this team with your current role.");
-      return;
-    }
-    if (memberRole === "coach" && membersPayload && !membersPayload.can_add_coach) {
-      setError("You cannot add coaches to this team with your current role.");
-      return;
-    }
-    setAddBusy(true);
-    setError("");
-    setSuccessMessage("");
-    try {
-      await directorAddTeamMember(Number(teamId), { user_id: uid, role: memberRole });
-      setMemberUserId("");
-      setSuccessMessage("Member added to the team.");
-      await loadMe();
-      bumpTeams();
-      const data = await fetchTeamMembers(Number(teamId));
-      setMembersPayload(data);
-    } catch (e) {
-      setError(e.message || "Could not add member.");
-    } finally {
-      setAddBusy(false);
-    }
   };
 
   if (!localStorage.getItem(AUTH_TOKEN_KEY)) {
@@ -391,7 +428,6 @@ export default function DirectorTeamSetupPage({
           </p>
           {ownedClubs.map((club) => {
             const clubTeams = teamsByClubId[Number(club.id)] || [];
-            const draft = createDraftByClub[Number(club.id)] || { name: "", season: "" };
             return (
               <div
                 key={club.id}
@@ -412,7 +448,7 @@ export default function DirectorTeamSetupPage({
                   <h3 style={{ margin: 0, fontSize: "1rem" }}>{club.name}</h3>
                   <button
                     type="button"
-                    className="vc-du-action"
+                    className="vc-du-action vc-du-action--danger"
                     disabled={deleteClubBusy != null || createBusyClubId != null || deleteTeamBusyId != null}
                     onClick={() => openDeleteClubConfirm(club)}
                   >
@@ -442,7 +478,7 @@ export default function DirectorTeamSetupPage({
                             <td style={{ textAlign: "right", width: "1%", whiteSpace: "nowrap" }}>
                               <button
                                 type="button"
-                                className="vc-du-action"
+                                className="vc-du-action vc-du-action--danger"
                                 disabled={deleteTeamBusyId === team.id || deleteClubBusy != null}
                                 onClick={() => openDeleteTeamConfirm(team, club)}
                               >
@@ -456,29 +492,14 @@ export default function DirectorTeamSetupPage({
                   </table>
                 </div>
 
-                <p className="vc-modal__muted" style={{ marginTop: "0.75rem", marginBottom: "0.5rem" }}>
-                  Create a team form for this club:
-                </p>
-                <div className="vc-pay-create-grid">
-                  <input
-                    className="vc-director-modal__select"
-                    placeholder="Team name (required)"
-                    value={draft.name}
-                    onChange={(e) => updateCreateDraft(club.id, "name", e.target.value)}
-                  />
-                  <input
-                    className="vc-director-modal__select"
-                    placeholder="Season (optional, e.g. 2026)"
-                    value={draft.season}
-                    onChange={(e) => updateCreateDraft(club.id, "season", e.target.value)}
-                  />
+                <div style={{ marginTop: "0.85rem" }}>
                   <button
                     type="button"
                     className="vc-director-modal__btn"
                     disabled={createBusyClubId != null || deleteClubBusy != null || deleteTeamBusyId != null}
-                    onClick={() => void onCreateTeam(club.id)}
+                    onClick={() => openCreateTeamModal(club)}
                   >
-                    {createBusyClubId === Number(club.id) ? "Creating…" : "Create team"}
+                    Create a new team
                   </button>
                 </div>
               </div>
@@ -487,85 +508,34 @@ export default function DirectorTeamSetupPage({
         </section>
 
         <section className="vc-director-section">
-          <h2 className="vc-panel-title">Team members</h2>
-          <p className="vc-modal__muted" style={{ marginTop: 0 }}>
-            Choose a team to see who is on it. Add a coach or player by user ID — they must already have an account.
-          </p>
-          <div className="vc-pay-toolbar">
-            <label className="vc-pay-toolbar__field">
-              Team
-              <select
+          <div className="vc-team-invitations__header">
+            <div className="vc-team-invitations__copy">
+              <h2 className="vc-panel-title" style={{ marginBottom: 0 }}>
+                Team invitations
+              </h2>
+              <p className="vc-modal__muted" style={{ marginTop: "0.35rem", marginBottom: 0 }}>
+                Invite coaches or players by email or by ID.
+              </p>
+            </div>
+            <div className="vc-team-invitations__picker">
+              <span className="vc-team-invitations__picker-label">Team</span>
+              <InlineDropdown
                 value={teamId}
-                onChange={(e) => setTeamId(e.target.value)}
-                className="vc-director-modal__select"
-              >
-                <option value="">Select a team…</option>
-                {directorTeams.map((t) => (
-                  <option key={t.id} value={String(t.id)}>
-                    {(t.club_name ? `${t.club_name} — ` : "") + t.name}
-                    {t.season ? ` (${t.season})` : ""}
-                  </option>
-                ))}
-              </select>
-            </label>
+                onChange={setTeamId}
+                options={invitationTeamOptions}
+                ariaLabel="Select a team for invitations"
+                className="vc-inline-dropdown--team-picker"
+              />
+            </div>
           </div>
 
-          {membersLoading ? <p className="vc-modal__muted">Loading members…</p> : null}
-
-          {!membersLoading && membersPayload?.members?.length ? (
-            <table className="vc-table" style={{ marginTop: "0.75rem" }}>
-              <thead>
-                <tr>
-                  <th>User</th>
-                  <th>Email</th>
-                  <th>Role</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {membersPayload.members.map((row) => (
-                  <tr key={row.user?.id}>
-                    <td>
-                      {[row.user?.first_name, row.user?.last_name].filter(Boolean).join(" ").trim() ||
-                        row.user?.email ||
-                        "—"}
-                    </td>
-                    <td>{row.user?.email || "—"}</td>
-                    <td>{roleLabel(row.membership?.role)}</td>
-                    <td style={{ textAlign: "right", width: "1%", whiteSpace: "nowrap" }}>
-                      {(() => {
-                        const selectedTeam = directorTeams.find((team) => String(team.id) === String(teamId));
-                        const canInvitePlayer = !!membersPayload?.can_add_player;
-                        const canInviteCoach = !!membersPayload?.can_add_coach;
-                        const canRemove =
-                          canInviteCoach || (row.membership?.role === "player" && canInvitePlayer);
-                        const busyKey = `${teamId}:${row.user?.id}`;
-                        if (!selectedTeam || !canRemove) {
-                          return <span className="vc-modal__muted">—</span>;
-                        }
-                        return (
-                          <button
-                            type="button"
-                            className="vc-du-action"
-                            disabled={removeBusyKey === busyKey || deleteClubBusy != null || deleteTeamBusyId != null}
-                            onClick={() => openRemoveMemberConfirm(selectedTeam, row)}
-                          >
-                            {removeBusyKey === busyKey ? "…" : "Remove"}
-                          </button>
-                        );
-                      })()}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          {!teamId ? (
+            <p className="vc-modal__muted" style={{ marginTop: "0.25rem" }}>
+              Select a team to start inviting people.
+            </p>
           ) : null}
 
-          {!membersLoading && teamId && membersPayload && !membersPayload.members?.length ? (
-            <p className="vc-modal__muted">No one on this team yet. Add a coach or player below.</p>
-          ) : null}
-
-          {teamId && membersPayload ? (
+          {teamId ? (
             <>
               <p className="vc-modal__muted" style={{ marginTop: "1rem", marginBottom: "0.45rem" }}>
                 Invite by email
@@ -576,12 +546,25 @@ export default function DirectorTeamSetupPage({
                   placeholder="Email address"
                   value={inviteEmail}
                   onChange={(e) => setInviteEmail(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      const selectedTeam = directorTeams.find((team) => String(team.id) === String(teamId));
+                      if (selectedTeam) {
+                        void onInviteByEmail(selectedTeam);
+                      }
+                    }
+                  }}
                 />
-                <div />
+                <InlineDropdown
+                  value={inviteEmailRole}
+                  onChange={setInviteEmailRole}
+                  options={INVITE_ROLE_OPTIONS}
+                  ariaLabel="Invitation role for email"
+                />
                 <button
                   type="button"
                   className="vc-director-modal__btn"
-                  disabled={inviteBusy || !membersPayload.can_add_player || !teamId}
+                  disabled={inviteEmailBusy || !teamId}
                   onClick={() => {
                     const selectedTeam = directorTeams.find((team) => String(team.id) === String(teamId));
                     if (selectedTeam) {
@@ -589,69 +572,59 @@ export default function DirectorTeamSetupPage({
                     }
                   }}
                 >
-                  {inviteBusy ? "Inviting…" : "Invite"}
+                  {inviteEmailBusy ? "Inviting…" : "Invite"}
+                </button>
+              </div>
+
+              <p className="vc-modal__muted" style={{ marginTop: "1rem", marginBottom: "0.45rem" }}>
+                Invite by ID
+              </p>
+              <div className="vc-pay-create-grid">
+                <input
+                  className="vc-director-modal__select"
+                  placeholder="User ID"
+                  value={inviteUserId}
+                  onChange={(e) => setInviteUserId(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      const selectedTeam = directorTeams.find((team) => String(team.id) === String(teamId));
+                      if (selectedTeam) {
+                        void onInviteById(selectedTeam);
+                      }
+                    }
+                  }}
+                />
+                <InlineDropdown
+                  value={inviteUserIdRole}
+                  onChange={setInviteUserIdRole}
+                  options={INVITE_ROLE_OPTIONS}
+                  ariaLabel="Invitation role for user ID"
+                />
+                <button
+                  type="button"
+                  className="vc-director-modal__btn"
+                  disabled={inviteUserIdBusy || !teamId}
+                  onClick={() => {
+                    const selectedTeam = directorTeams.find((team) => String(team.id) === String(teamId));
+                    if (selectedTeam) {
+                      void onInviteById(selectedTeam);
+                    }
+                  }}
+                >
+                  {inviteUserIdBusy ? "Inviting…" : "Invite by ID"}
                 </button>
               </div>
             </>
-          ) : null}
-
-          {teamId && membersPayload && (membersPayload.can_add_player || membersPayload.can_add_coach) ? (
-            <>
-              <p className="vc-modal__muted" style={{ marginTop: "1rem", marginBottom: "0.45rem" }}>
-                Add existing user by ID
-              </p>
-              <div className="vc-pay-create-grid">
-              {membersPayload.can_add_player && !membersPayload.can_add_coach ? (
-                <p className="vc-modal__muted" style={{ gridColumn: "1 / -1", margin: 0 }}>
-                  Coaches may add <strong>players</strong> only; parent or director accounts cannot be added here.
-                </p>
-              ) : null}
-              <input
-                className="vc-director-modal__select"
-                placeholder="Member user id"
-                value={memberUserId}
-                onChange={(e) => setMemberUserId(e.target.value)}
-              />
-              <select
-                className="vc-director-modal__select"
-                value={memberRole}
-                onChange={(e) => setMemberRole(e.target.value)}
-              >
-                {membersPayload.can_add_player ? <option value="player">Player</option> : null}
-                {membersPayload.can_add_coach ? <option value="coach">Coach</option> : null}
-              </select>
-              <button
-                type="button"
-                className="vc-director-modal__btn"
-                disabled={
-                  addBusy ||
-                  !teamId ||
-                  (memberRole === "player" && !membersPayload.can_add_player) ||
-                  (memberRole === "coach" && !membersPayload.can_add_coach)
-                }
-                onClick={() => void onAddMember()}
-              >
-                {addBusy ? "Adding…" : "Add to team"}
-              </button>
-              </div>
-            </>
-          ) : null}
-          {teamId && membersPayload && !membersPayload.can_add_player && !membersPayload.can_add_coach ? (
-            <p className="vc-modal__muted" style={{ marginTop: "0.75rem" }}>
-              Your account cannot add people to this team.
-            </p>
           ) : null}
         </section>
       </div>
   );
 
-  const confirmBusy = deleteTeamBusyId != null || deleteClubBusy != null || !!removeBusyKey;
+  const confirmBusy = deleteTeamBusyId != null || deleteClubBusy != null;
   const confirmTitle =
     confirmDialog?.kind === "club"
       ? "Delete club"
-      : confirmDialog?.kind === "member"
-        ? "Remove member"
-        : "Delete team";
+      : "Delete team";
 
   if (loading) {
     return embedded ? (
@@ -688,6 +661,138 @@ export default function DirectorTeamSetupPage({
     return (
       <>
         {cardContent}
+        {createTeamDialogClub ? (
+          <div
+            className="vc-director-modal-backdrop"
+            role="presentation"
+            onClick={(event) => {
+              if (event.target === event.currentTarget && createBusyClubId == null) {
+                setCreateTeamDialogClub(null);
+              }
+            }}
+          >
+            <div
+              className="vc-director-modal vc-director-modal--wide"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="vc-create-team-title"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <h3 id="vc-create-team-title">Create a team</h3>
+              <p className="vc-director-modal__meta">
+                This team will be created inside <strong>{createTeamDialogClub.name}</strong>.
+              </p>
+              <form onSubmit={onCreateTeam}>
+                <div className="vc-create-club-form__grid">
+                  <div className="vc-create-club-form__field">
+                    <CreateTeamFieldLabel htmlFor="vc-create-team-name">Name</CreateTeamFieldLabel>
+                    <input
+                      id="vc-create-team-name"
+                      className="vc-director-modal__select"
+                      type="text"
+                      value={newTeamName}
+                      onChange={(event) => setNewTeamName(event.target.value)}
+                      disabled={createBusyClubId != null}
+                      required
+                    />
+                  </div>
+                  <div className="vc-create-club-form__field">
+                    <CreateTeamFieldLabel htmlFor="vc-create-team-short-name">Short Name</CreateTeamFieldLabel>
+                    <input
+                      id="vc-create-team-short-name"
+                      className="vc-director-modal__select"
+                      type="text"
+                      value={newTeamShortName}
+                      onChange={(event) => setNewTeamShortName(event.target.value)}
+                      disabled={createBusyClubId != null}
+                      required
+                    />
+                  </div>
+                  <div className="vc-create-club-form__field vc-create-club-form__field--full">
+                    <CreateTeamFieldLabel htmlFor="vc-create-team-description" optional>
+                      Description
+                    </CreateTeamFieldLabel>
+                    <textarea
+                      id="vc-create-team-description"
+                      className="vc-director-modal__textarea"
+                      rows={3}
+                      value={newTeamDescription}
+                      onChange={(event) => setNewTeamDescription(event.target.value)}
+                      disabled={createBusyClubId != null}
+                    />
+                  </div>
+                  <div className="vc-create-club-form__field">
+                    <CreateTeamFieldLabel htmlFor="vc-create-team-season" optional>
+                      Season
+                    </CreateTeamFieldLabel>
+                    <input
+                      id="vc-create-team-season"
+                      className="vc-director-modal__select"
+                      type="text"
+                      value={newTeamSeason}
+                      onChange={(event) => setNewTeamSeason(event.target.value)}
+                      disabled={createBusyClubId != null}
+                    />
+                  </div>
+                  <div className="vc-create-club-form__field">
+                    <CreateTeamFieldLabel htmlFor="vc-create-team-age-group">Age Group</CreateTeamFieldLabel>
+                    <input
+                      id="vc-create-team-age-group"
+                      className="vc-director-modal__select"
+                      type="text"
+                      value={newTeamAgeGroup}
+                      onChange={(event) => setNewTeamAgeGroup(event.target.value)}
+                      disabled={createBusyClubId != null}
+                      required
+                    />
+                  </div>
+                  <div className="vc-create-club-form__field">
+                    <CreateTeamFieldLabel htmlFor="vc-create-team-gender">Gender</CreateTeamFieldLabel>
+                    <select
+                      id="vc-create-team-gender"
+                      className="vc-director-modal__select"
+                      value={newTeamGender}
+                      onChange={(event) => setNewTeamGender(event.target.value)}
+                      disabled={createBusyClubId != null}
+                      required
+                    >
+                      <option value="">Select gender…</option>
+                      <option value="boys">Boys</option>
+                      <option value="girls">Girls</option>
+                      <option value="mixed">Mixed</option>
+                    </select>
+                  </div>
+                  <div className="vc-create-club-form__field">
+                    <CreateTeamFieldLabel htmlFor="vc-create-team-home-venue">Home Venue</CreateTeamFieldLabel>
+                    <input
+                      id="vc-create-team-home-venue"
+                      className="vc-director-modal__select"
+                      type="text"
+                      value={newTeamHomeVenue}
+                      onChange={(event) => setNewTeamHomeVenue(event.target.value)}
+                      disabled={createBusyClubId != null}
+                      required
+                    />
+                  </div>
+                </div>
+                {createTeamError ? <p className="vc-director-modal__error">{createTeamError}</p> : null}
+                <div className="vc-director-modal__actions">
+                  <button
+                    type="button"
+                    className="vc-director-modal__btn vc-director-modal__btn--ghost"
+                    disabled={createBusyClubId != null}
+                    onClick={() => setCreateTeamDialogClub(null)}
+                  >
+                    Cancel
+                  </button>
+                  <button type="submit" className="vc-director-modal__btn" disabled={createBusyClubId != null}>
+                    {createBusyClubId != null ? "Creating…" : "Create team"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        ) : null}
         {confirmDialog ? (
           <div
             className="vc-director-modal-backdrop"
@@ -736,6 +841,138 @@ export default function DirectorTeamSetupPage({
     <div className="vc-director-page">
       <p className="vc-director-kicker">Teams & roster</p>
       {cardContent}
+      {createTeamDialogClub ? (
+        <div
+          className="vc-director-modal-backdrop"
+          role="presentation"
+          onClick={(event) => {
+            if (event.target === event.currentTarget && createBusyClubId == null) {
+              setCreateTeamDialogClub(null);
+            }
+          }}
+        >
+          <div
+            className="vc-director-modal vc-director-modal--wide"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="vc-create-team-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h3 id="vc-create-team-title">Create a team</h3>
+            <p className="vc-director-modal__meta">
+              This team will be created inside <strong>{createTeamDialogClub.name}</strong>.
+            </p>
+            <form onSubmit={onCreateTeam}>
+              <div className="vc-create-club-form__grid">
+                <div className="vc-create-club-form__field">
+                  <CreateTeamFieldLabel htmlFor="vc-create-team-name-standalone">Name</CreateTeamFieldLabel>
+                  <input
+                    id="vc-create-team-name-standalone"
+                    className="vc-director-modal__select"
+                    type="text"
+                    value={newTeamName}
+                    onChange={(event) => setNewTeamName(event.target.value)}
+                    disabled={createBusyClubId != null}
+                    required
+                  />
+                </div>
+                <div className="vc-create-club-form__field">
+                  <CreateTeamFieldLabel htmlFor="vc-create-team-short-name-standalone">Short Name</CreateTeamFieldLabel>
+                  <input
+                    id="vc-create-team-short-name-standalone"
+                    className="vc-director-modal__select"
+                    type="text"
+                    value={newTeamShortName}
+                    onChange={(event) => setNewTeamShortName(event.target.value)}
+                    disabled={createBusyClubId != null}
+                    required
+                  />
+                </div>
+                <div className="vc-create-club-form__field vc-create-club-form__field--full">
+                  <CreateTeamFieldLabel htmlFor="vc-create-team-description-standalone" optional>
+                    Description
+                  </CreateTeamFieldLabel>
+                  <textarea
+                    id="vc-create-team-description-standalone"
+                    className="vc-director-modal__textarea"
+                    rows={3}
+                    value={newTeamDescription}
+                    onChange={(event) => setNewTeamDescription(event.target.value)}
+                    disabled={createBusyClubId != null}
+                  />
+                </div>
+                <div className="vc-create-club-form__field">
+                  <CreateTeamFieldLabel htmlFor="vc-create-team-season-standalone" optional>
+                    Season
+                  </CreateTeamFieldLabel>
+                  <input
+                    id="vc-create-team-season-standalone"
+                    className="vc-director-modal__select"
+                    type="text"
+                    value={newTeamSeason}
+                    onChange={(event) => setNewTeamSeason(event.target.value)}
+                    disabled={createBusyClubId != null}
+                  />
+                </div>
+                <div className="vc-create-club-form__field">
+                  <CreateTeamFieldLabel htmlFor="vc-create-team-age-group-standalone">Age Group</CreateTeamFieldLabel>
+                  <input
+                    id="vc-create-team-age-group-standalone"
+                    className="vc-director-modal__select"
+                    type="text"
+                    value={newTeamAgeGroup}
+                    onChange={(event) => setNewTeamAgeGroup(event.target.value)}
+                    disabled={createBusyClubId != null}
+                    required
+                  />
+                </div>
+                <div className="vc-create-club-form__field">
+                  <CreateTeamFieldLabel htmlFor="vc-create-team-gender-standalone">Gender</CreateTeamFieldLabel>
+                  <select
+                    id="vc-create-team-gender-standalone"
+                    className="vc-director-modal__select"
+                    value={newTeamGender}
+                    onChange={(event) => setNewTeamGender(event.target.value)}
+                    disabled={createBusyClubId != null}
+                    required
+                  >
+                    <option value="">Select gender…</option>
+                    <option value="boys">Boys</option>
+                    <option value="girls">Girls</option>
+                    <option value="mixed">Mixed</option>
+                  </select>
+                </div>
+                <div className="vc-create-club-form__field">
+                  <CreateTeamFieldLabel htmlFor="vc-create-team-home-venue-standalone">Home Venue</CreateTeamFieldLabel>
+                  <input
+                    id="vc-create-team-home-venue-standalone"
+                    className="vc-director-modal__select"
+                    type="text"
+                    value={newTeamHomeVenue}
+                    onChange={(event) => setNewTeamHomeVenue(event.target.value)}
+                    disabled={createBusyClubId != null}
+                    required
+                  />
+                </div>
+              </div>
+              {createTeamError ? <p className="vc-director-modal__error">{createTeamError}</p> : null}
+              <div className="vc-director-modal__actions">
+                <button
+                  type="button"
+                  className="vc-director-modal__btn vc-director-modal__btn--ghost"
+                  disabled={createBusyClubId != null}
+                  onClick={() => setCreateTeamDialogClub(null)}
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="vc-director-modal__btn" disabled={createBusyClubId != null}>
+                  {createBusyClubId != null ? "Creating…" : "Create team"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
       {confirmDialog ? (
         <div
           className="vc-director-modal-backdrop"

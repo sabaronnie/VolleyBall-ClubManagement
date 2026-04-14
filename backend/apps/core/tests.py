@@ -34,6 +34,7 @@ from .models import (
     PlayerWeeklySkillMetric,
     RegistrationOTP,
     Team,
+    TeamInvitation,
     TeamMembership,
     TeamRole,
     TrainingSession,
@@ -588,6 +589,7 @@ class CreateTeamEndpointTests(TestCase):
                     "season": "2026",
                     "age_group": "U16",
                     "gender": "girls",
+                    "home_venue": "Main Court",
                 }
             ),
             content_type="application/json",
@@ -649,6 +651,7 @@ class CreateTeamEndpointTests(TestCase):
                     "season": "2026",
                     "age_group": "U18",
                     "gender": "girls",
+                    "home_venue": "Arena 2",
                 }
             ),
             content_type="application/json",
@@ -662,6 +665,35 @@ class CreateTeamEndpointTests(TestCase):
             .filter(user=coach, team=new_team, role=TeamRole.COACH)
             .exists()
         )
+
+    def test_create_team_requires_non_optional_fields(self):
+        user = User.objects.create_user(
+            email="director-required@example.com",
+            password="StrongPassword123!",
+            first_name="Club",
+            last_name="Director",
+        )
+        club = Club.objects.create_club(name="Required Team Club", director=user)
+        token = generate_auth_token(user)
+
+        response = self.client.post(
+            reverse("core:create-team", kwargs={"club_id": club.id}),
+            data=json.dumps(
+                {
+                    "name": "U16 Girls",
+                    "season": "2026",
+                }
+            ),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        errors = response.json().get("errors", {})
+        self.assertIn("short_name", errors)
+        self.assertIn("age_group", errors)
+        self.assertIn("gender", errors)
+        self.assertIn("home_venue", errors)
 
 
 class ViewTeamMembersEndpointTests(TestCase):
@@ -759,6 +791,87 @@ class ViewTeamMembersEndpointTests(TestCase):
             HTTP_AUTHORIZATION=f"Bearer {token}",
         )
         self.assertEqual(response.status_code, 403)
+
+
+class TeamInvitationEndpointTests(TestCase):
+    def test_director_can_invite_coach_role_and_accept_as_coach(self):
+        director = User.objects.create_user(
+            email="invite-director@example.com",
+            password="StrongPassword123!",
+        )
+        invited = User.objects.create_user(
+            email="invite-coach@example.com",
+            password="StrongPassword123!",
+        )
+        club = Club.objects.create_club(name="Invite Club", director=director)
+        team = Team.objects.create_team(club=club, name="Invite Team")
+        director_token = generate_auth_token(director)
+
+        response = self.client.post(
+            reverse("core:invite-team-member", kwargs={"team_id": team.id}),
+            data=json.dumps({"email": invited.email, "role": TeamRole.COACH}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {director_token}",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        invitation = TeamInvitation.objects.get(team=team, invited_email=invited.email)
+        self.assertEqual(invitation.role, TeamRole.COACH)
+
+        invited_token = generate_auth_token(invited)
+        accept_response = self.client.post(
+            reverse("core:respond-team-invitation", kwargs={"code": invitation.code}),
+            data=json.dumps({"action": "accept"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {invited_token}",
+        )
+
+        self.assertEqual(accept_response.status_code, 200)
+        self.assertTrue(
+            TeamMembership.objects.active().filter(user=invited, team=team, role=TeamRole.COACH).exists()
+        )
+
+    def test_coach_can_only_invite_players(self):
+        director = User.objects.create_user(
+            email="invite-dir-2@example.com",
+            password="StrongPassword123!",
+        )
+        coach = User.objects.create_user(
+            email="invite-coach-2@example.com",
+            password="StrongPassword123!",
+        )
+        club = Club.objects.create_club(name="Coach Invite Club", director=director)
+        team = Team.objects.create_team(club=club, name="Coach Invite Team")
+        TeamMembership.objects.add_member(user=coach, team=team, role=TeamRole.COACH)
+        coach_token = generate_auth_token(coach)
+
+        response = self.client.post(
+            reverse("core:invite-team-member", kwargs={"team_id": team.id}),
+            data=json.dumps({"email": "newcoach@example.com", "role": TeamRole.COACH}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {coach_token}",
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_team_invitation_rejects_director_role(self):
+        director = User.objects.create_user(
+            email="invite-dir-3@example.com",
+            password="StrongPassword123!",
+        )
+        club = Club.objects.create_club(name="Director Role Club", director=director)
+        team = Team.objects.create_team(club=club, name="Director Role Team")
+        token = generate_auth_token(director)
+
+        response = self.client.post(
+            reverse("core:invite-team-member", kwargs={"team_id": team.id}),
+            data=json.dumps({"email": "clubdirector@example.com", "role": "director"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("role", response.json().get("errors", {}))
 
 
 class AddTeamMemberEndpointTests(TestCase):

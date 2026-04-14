@@ -93,6 +93,9 @@ export default function TeamInvitationPage({ invitationCode, isAuthenticated }) 
               Team: <strong>{clubAndTeam}</strong>
             </p>
             <p className="vc-modal__muted" style={{ marginTop: "0.2rem" }}>
+              Role: <strong>{invitation.role}</strong>
+            </p>
+            <p className="vc-modal__muted" style={{ marginTop: "0.2rem" }}>
               Status: <strong>{invitation.status}</strong>
             </p>
           </>

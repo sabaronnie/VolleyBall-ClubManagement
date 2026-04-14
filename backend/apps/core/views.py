@@ -3116,17 +3116,34 @@ def invite_team_member(request, team_id):
 
     team = get_object_or_404(Team.objects.select_related("club"), pk=team_id)
     invited_email = (payload.get("email") or "").strip().lower()
+    target_user = None
+    target_user_id = payload.get("user_id")
     role = (payload.get("role") or TeamRole.PLAYER).strip() or TeamRole.PLAYER
 
     errors = {}
-    if not invited_email:
-        errors["email"] = "Email is required."
-    else:
+    if invited_email:
         try:
             EmailValidator()(invited_email)
         except ValidationError:
             errors["email"] = "Enter a valid email address."
-    if role not in TeamRole.values:
+    elif target_user_id not in (None, ""):
+        try:
+            resolved_user_id = int(target_user_id)
+        except (TypeError, ValueError):
+            errors["user_id"] = "Enter a valid user ID."
+        else:
+            target_user = User.objects.filter(pk=resolved_user_id, is_active=True).first()
+            if target_user is None:
+                errors["user_id"] = "No active user was found with that ID."
+            else:
+                invited_email = (target_user.email or "").strip().lower()
+                if not invited_email:
+                    errors["user_id"] = "That user does not have an email address."
+    else:
+        errors["email"] = "Email or user ID is required."
+    if role == "director":
+        errors["role"] = "Director invitations must be handled at the club level, not through a team invitation."
+    elif role not in TeamRole.values:
         errors["role"] = "Role must be either 'coach' or 'player'."
     if errors:
         return JsonResponse({"errors": errors}, status=400)
@@ -3137,7 +3154,7 @@ def invite_team_member(request, team_id):
             status=403,
         )
 
-    existing_user = User.objects.filter(email=invited_email).first()
+    existing_user = target_user or User.objects.filter(email=invited_email, is_active=True).first()
     if existing_user is not None:
         if TeamMembership.objects.active().filter(team=team, user=existing_user).exists():
             return JsonResponse(
@@ -3671,22 +3688,38 @@ def create_team(request, club_id):
         )
 
     name = (payload.get("name") or "").strip()
+    short_name = (payload.get("short_name") or "").strip()
+    age_group = (payload.get("age_group") or "").strip()
+    gender = (payload.get("gender") or "").strip()
+    home_venue = (payload.get("home_venue") or "").strip()
     errors = {}
 
-    if not name:
-        errors["name"] = "Team name is required."
+    required_fields = {
+        "name": (name, "Team name is required."),
+        "short_name": (short_name, "Short name is required."),
+        "age_group": (age_group, "Age group is required."),
+        "gender": (gender, "Gender is required."),
+        "home_venue": (home_venue, "Home venue is required."),
+    }
+
+    for field_name, (value, message) in required_fields.items():
+        if not value:
+            errors[field_name] = message
+
+    if gender and gender not in Team.Gender.values:
+        errors["gender"] = "Gender must be one of: boys, girls, or mixed."
 
     if errors:
         return JsonResponse({"errors": errors}, status=400)
 
     team_data = {
-        "short_name": (payload.get("short_name") or "").strip(),
+        "short_name": short_name,
         "description": payload.get("description") or "",
         "season": (payload.get("season") or "").strip(),
-        "age_group": (payload.get("age_group") or "").strip(),
-        "gender": (payload.get("gender") or "").strip(),
+        "age_group": age_group,
+        "gender": gender,
         "status": (payload.get("status") or Team.Status.ACTIVE).strip() or Team.Status.ACTIVE,
-        "home_venue": (payload.get("home_venue") or "").strip(),
+        "home_venue": home_venue,
         "notes": payload.get("notes") or "",
     }
 

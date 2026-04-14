@@ -821,6 +821,10 @@
   overflow: hidden;
 }
 
+.vc-dashboard-dropdown.is-open {
+  overflow: visible;
+}
+
 .vc-dashboard-dropdown__trigger {
   width: 100%;
   border: 0;
@@ -866,6 +870,7 @@
   padding: 0 1rem 1rem;
   border-top: 1px solid rgba(219, 227, 234, 0.8);
   background: linear-gradient(180deg, rgba(248, 250, 252, 0.88), rgba(255, 255, 255, 0.98));
+  overflow: visible;
 }
 
 .vc-director-card--embedded {
@@ -1718,6 +1723,15 @@
   background: #eef2f6;
 }
 
+.vc-du-action--danger {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.vc-du-action--danger:hover {
+  background: #fee2e2;
+}
+
 .vc-see-more {
   display: block;
   width: 100%;
@@ -1978,6 +1992,135 @@
   background: #fafbfc;
 }
 
+.vc-inline-dropdown {
+  position: relative;
+  min-width: 160px;
+  z-index: 0;
+}
+
+.vc-inline-dropdown.is-open {
+  z-index: 220;
+}
+
+.vc-inline-dropdown__trigger {
+  width: 100%;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid #d8dee6;
+  border-radius: 8px;
+  background: #fafbfc;
+  color: #1a1d21;
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    background-color 180ms ease;
+}
+
+.vc-inline-dropdown__trigger:hover,
+.vc-inline-dropdown__trigger.is-open {
+  border-color: #84c5dd;
+  background: #ffffff;
+  box-shadow: 0 0 0 3px rgba(132, 197, 221, 0.16);
+}
+
+.vc-inline-dropdown__value {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.vc-inline-dropdown__chevron {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+  transition: transform 180ms ease;
+}
+
+.vc-inline-dropdown__chevron.is-open {
+  transform: rotate(180deg);
+}
+
+.vc-inline-dropdown__menu {
+  position: absolute;
+  top: calc(100% + 0.45rem);
+  left: 0;
+  right: 0;
+  padding: 0.35rem;
+  border-radius: 0.95rem;
+  background: #ffffff;
+  box-shadow: 0 18px 40px rgba(15, 24, 35, 0.18);
+  z-index: 120;
+}
+
+.vc-inline-dropdown__option {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: #1a1d21;
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 600;
+  text-align: left;
+  border-radius: 0.75rem;
+  padding: 0.68rem 0.8rem;
+  cursor: pointer;
+}
+
+.vc-inline-dropdown__option:hover,
+.vc-inline-dropdown__option.is-selected {
+  background: #eef8fb;
+  color: #0f3a4a;
+}
+
+.vc-inline-dropdown--team-picker {
+  min-width: min(360px, 100%);
+}
+
+.vc-inline-dropdown--team-picker .vc-inline-dropdown__trigger {
+  min-height: 46px;
+  padding-inline: 0.9rem;
+}
+
+.vc-team-invitations__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.vc-team-invitations__copy {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.vc-team-invitations__picker {
+  display: flex;
+  flex: 0 0 min(360px, 100%);
+  min-width: 240px;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #5c6570;
+}
+
+.vc-team-invitations__picker-label {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
 .vc-director-modal__hint {
   margin: 0.35rem 0 0;
   font-size: 0.85rem;
@@ -2028,6 +2171,16 @@
 
   .vc-create-club-form__field--full {
     grid-column: auto;
+  }
+
+  .vc-team-invitations__header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .vc-team-invitations__picker {
+    min-width: 0;
+    width: 100%;
   }
 }
 

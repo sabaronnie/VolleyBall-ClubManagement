@@ -527,7 +527,7 @@ export async function directorRemoveTeamMember(teamId, userId) {
   return authenticatedJson(`/api/teams/${teamId}/members/${userId}/remove/`, "DELETE", {});
 }
 
-export async function inviteTeamMemberByEmail(teamId, body) {
+export async function inviteTeamMember(teamId, body) {
   return authenticatedJson(`/api/teams/${teamId}/invitations/`, "POST", body);
 }
 
