@@ -413,9 +413,13 @@ class CreateClubEndpointTests(TestCase):
                 {
                     "name": "NetUp Volleyball Club",
                     "short_name": "NetUp",
+                    "description": "Competitive indoor volleyball club.",
                     "city": "Beirut",
                     "country": "Lebanon",
                     "contact_email": "info@netup.com",
+                    "contact_phone": "+961-70-123-456",
+                    "address": "Ashrafieh Main Street",
+                    "founded_year": 2018,
                 }
             ),
             content_type="application/json",
@@ -462,6 +466,43 @@ class CreateClubEndpointTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("name", response.json().get("errors", {}))
+        self.assertEqual(Club.objects.count(), 0)
+
+    def test_create_club_requires_all_mandatory_fields_except_description_and_website(self):
+        user = User.objects.create_user(
+            email="director@example.com",
+            password="StrongPassword123!",
+            first_name="Club",
+            last_name="Director",
+        )
+        token = generate_auth_token(user)
+
+        response = self.client.post(
+            reverse("core:create-club"),
+            data=json.dumps(
+                {
+                    "name": "NetUp Volleyball Club",
+                    "description": "Optional description only",
+                    "website": "https://netup.example.com",
+                }
+            ),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            set(response.json().get("errors", {}).keys()),
+            {
+                "short_name",
+                "contact_email",
+                "contact_phone",
+                "country",
+                "city",
+                "address",
+                "founded_year",
+            },
+        )
         self.assertEqual(Club.objects.count(), 0)
 
     def test_create_club_rejects_duplicate_name(self):
@@ -2664,7 +2705,7 @@ class DirectorDashboardOverviewTests(TestCase):
 
 
 class DirectorUserDirectoryApiTests(TestCase):
-    def test_directory_forbidden_for_non_director(self):
+    def test_directory_forbidden_for_user_without_director_or_coach_scope(self):
         u = User.objects.create_user(email="nodir@example.com", password="StrongPassword123!")
         token = generate_auth_token(u)
         response = self.client.get(
@@ -2673,12 +2714,13 @@ class DirectorUserDirectoryApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 403)
 
-    def test_directory_lists_users_and_set_role_updates(self):
+    def test_directory_scopes_rows_to_directors_own_club(self):
         director = User.objects.create_user(
             email="dir-dirlist@example.com",
             password="StrongPassword123!",
         )
-        Club.objects.create_club(name="Dir List Club", director=director)
+        club = Club.objects.create_club(name="Dir List Club", director=director)
+        team = Team.objects.create_team(club=club, name="Dir List Team")
         target = User.objects.create_user(
             email="target-role@example.com",
             password="StrongPassword123!",
@@ -2686,6 +2728,30 @@ class DirectorUserDirectoryApiTests(TestCase):
             last_name="Get",
             verification_status=VerificationStatus.VERIFIED,
         )
+        TeamMembership.objects.add_member(user=target, team=team, role=TeamRole.PLAYER)
+        parent = User.objects.create_user(
+            email="club-parent@example.com",
+            password="StrongPassword123!",
+            verification_status=VerificationStatus.VERIFIED,
+        )
+        ParentPlayerRelation.objects.link(
+            parent=parent,
+            player=target,
+            approval_status=ParentLinkApprovalStatus.APPROVED,
+        )
+        other_director = User.objects.create_user(
+            email="other-director@example.com",
+            password="StrongPassword123!",
+        )
+        other_club = Club.objects.create_club(name="Other Club", director=other_director)
+        other_team = Team.objects.create_team(club=other_club, name="Other Team")
+        outsider = User.objects.create_user(
+            email="outsider@example.com",
+            password="StrongPassword123!",
+            verification_status=VerificationStatus.VERIFIED,
+        )
+        TeamMembership.objects.add_member(user=outsider, team=other_team, role=TeamRole.PLAYER)
+
         token = generate_auth_token(director)
         response = self.client.get(
             reverse("core:directors-user-directory"),
@@ -2693,10 +2759,12 @@ class DirectorUserDirectoryApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         data = response.json()
-        self.assertGreaterEqual(data["count"], 2)
+        self.assertEqual(data["scope"]["kind"], "club")
         ids = {row["id"] for row in data["users"]}
         self.assertIn(director.id, ids)
         self.assertIn(target.id, ids)
+        self.assertIn(parent.id, ids)
+        self.assertNotIn(outsider.id, ids)
 
         response2 = self.client.post(
             reverse("core:directors-set-account-role", kwargs={"user_id": target.id}),
@@ -2709,6 +2777,56 @@ class DirectorUserDirectoryApiTests(TestCase):
         self.assertEqual(response2.json()["user"]["role"], "parent")
         target.refresh_from_db()
         self.assertEqual(target.assigned_account_role, "parent")
+
+    def test_directory_scopes_rows_to_coachs_own_team(self):
+        director = User.objects.create_user(
+            email="scope-dir@example.com",
+            password="StrongPassword123!",
+        )
+        club = Club.objects.create_club(name="Scope Club", director=director)
+        team_a = Team.objects.create_team(club=club, name="Team A")
+        team_b = Team.objects.create_team(club=club, name="Team B")
+        coach = User.objects.create_user(
+            email="coach-scope@example.com",
+            password="StrongPassword123!",
+        )
+        TeamMembership.objects.add_member(user=coach, team=team_a, role=TeamRole.COACH)
+        player_a = User.objects.create_user(
+            email="player-a@example.com",
+            password="StrongPassword123!",
+            verification_status=VerificationStatus.VERIFIED,
+        )
+        TeamMembership.objects.add_member(user=player_a, team=team_a, role=TeamRole.PLAYER)
+        parent_a = User.objects.create_user(
+            email="parent-a@example.com",
+            password="StrongPassword123!",
+            verification_status=VerificationStatus.VERIFIED,
+        )
+        ParentPlayerRelation.objects.link(
+            parent=parent_a,
+            player=player_a,
+            approval_status=ParentLinkApprovalStatus.APPROVED,
+        )
+        player_b = User.objects.create_user(
+            email="player-b@example.com",
+            password="StrongPassword123!",
+            verification_status=VerificationStatus.VERIFIED,
+        )
+        TeamMembership.objects.add_member(user=player_b, team=team_b, role=TeamRole.PLAYER)
+
+        token = generate_auth_token(coach)
+        response = self.client.get(
+            reverse("core:directors-user-directory"),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["scope"]["kind"], "team")
+        ids = {row["id"] for row in data["users"]}
+        self.assertIn(coach.id, ids)
+        self.assertIn(player_a.id, ids)
+        self.assertIn(parent_a.id, ids)
+        self.assertNotIn(player_b.id, ids)
 
     def test_set_role_promotes_to_director(self):
         director = User.objects.create_user(

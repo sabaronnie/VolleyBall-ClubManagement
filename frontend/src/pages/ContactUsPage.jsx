@@ -11,7 +11,7 @@ const ROLE_OPTIONS = [
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export default function ContactUsPage() {
+export default function ContactUsPage({ showHeroBackground = false }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("");
@@ -70,7 +70,7 @@ export default function ContactUsPage() {
   };
 
   return (
-    <main className="contact-page">
+    <main className={`contact-page${showHeroBackground ? " contact-page--hero" : ""}`}>
       <div className="contact-page__inner">
         <header className="contact-page__header">
           <h1 className="contact-page__title">Contact Us</h1>
@@ -79,7 +79,7 @@ export default function ContactUsPage() {
           </p>
         </header>
 
-        <form className="contact-form auth-form" onSubmit={onSubmit} noValidate>
+        <form className="contact-form auth-form auth-form--contact" onSubmit={onSubmit} noValidate>
           <label htmlFor="contact-name">Name</label>
           <input
             id="contact-name"

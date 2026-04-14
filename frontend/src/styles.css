@@ -2464,28 +2464,52 @@ button {
 }
 
 .contact-page {
+  position: relative;
   display: flex;
   justify-content: center;
-  align-items: flex-start;
-  padding: 0.5rem 0 2rem;
+  align-items: center;
+  padding: clamp(1.25rem, 4vw, 2.5rem) 0 2rem;
 }
 
 .vc-workspace-main .contact-page {
-  padding: 1.5rem 1rem 2.5rem;
+  padding: 1rem;
+  min-height: calc(100vh - 12rem);
+}
+
+.contact-page--hero {
+  overflow: hidden;
+  border-radius: 1.5rem;
+  background:
+    linear-gradient(180deg, rgba(12, 29, 58, 0.48), rgba(7, 22, 43, 0.7)),
+    url("/homepage/hero-volleyball.png") center center / cover no-repeat;
+}
+
+.contact-page--hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at top right, rgba(124, 194, 235, 0.2), transparent 30%),
+    radial-gradient(circle at bottom left, rgba(0, 88, 136, 0.32), transparent 34%);
+  pointer-events: none;
 }
 
 .contact-page__inner {
-  width: min(100%, 520px);
-  background: rgba(255, 255, 255, 0.96);
-  border-radius: 1.25rem;
-  padding: clamp(1.25rem, 4vw, 2rem);
-  box-shadow: 0 20px 50px rgba(10, 14, 31, 0.18);
+  position: relative;
+  z-index: 1;
+  width: min(100%, 540px);
+  background: linear-gradient(180deg, rgba(0, 88, 136, 0.94), rgba(0, 74, 118, 0.96));
+  border-radius: 1.5rem;
+  padding: clamp(1.35rem, 4vw, 2.2rem);
+  box-shadow: 0 22px 56px rgba(0, 0, 0, 0.34);
   box-sizing: border-box;
+  color: #fff;
+  backdrop-filter: blur(4px);
 }
 
 .contact-page__header {
   text-align: center;
-  margin-bottom: 1.25rem;
+  margin-bottom: 1.35rem;
 }
 
 .contact-page__title {
@@ -2493,7 +2517,7 @@ button {
   font-family: "Sansita", system-ui, sans-serif;
   font-weight: 800;
   font-size: clamp(1.75rem, 4vw, 2.25rem);
-  color: #0d1b2a;
+  color: #fff;
 }
 
 .contact-page__lede {
@@ -2501,7 +2525,7 @@ button {
   font-family: "Sansita", system-ui, sans-serif;
   font-size: 1rem;
   font-weight: 600;
-  color: #334155;
+  color: rgba(255, 255, 255, 0.88);
   line-height: 1.45;
 }
 
@@ -2510,16 +2534,26 @@ button {
   margin-top: 0.5rem;
 }
 
+.auth-form--contact label {
+  color: #fff;
+}
+
+.auth-form--contact input {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(245, 248, 252, 0.96);
+}
+
 .contact-form__select,
 .contact-form__textarea {
   width: 100%;
-  border: 1px solid #dbdbdb;
+  border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 1rem;
-  background: #efefef;
+  background: rgba(245, 248, 252, 0.96);
   padding: 0.55rem 1rem;
   font-family: "Sansita", system-ui, sans-serif;
   font-size: 1rem;
   box-sizing: border-box;
+  color: #111;
 }
 
 .contact-form__textarea {
@@ -2543,15 +2577,21 @@ button {
 }
 
 .contact-form__feedback--error {
-  color: #ae0000;
+  color: #ffd2d2;
 }
 
 .contact-form__feedback--success {
-  color: #1d6f42;
+  color: #bff7cf;
 }
 
 .contact-form__submit {
   margin-top: 1rem;
+  background: #b31735;
+  color: #fff;
+}
+
+.contact-form__submit:hover {
+  background: #98102b;
 }
 
 .login-right-visual {
@@ -2809,9 +2849,26 @@ button {
   .register-shell {
     border-radius: 0;
   }
+
+  .vc-workspace-main .contact-page {
+    min-height: auto;
+  }
 }
 
 @media (max-width: 600px) {
+  .contact-public-page {
+    padding: 0.8rem 0.8rem 1.5rem;
+  }
+
+  .contact-page--hero {
+    border-radius: 1.2rem;
+  }
+
+  .contact-page__inner {
+    border-radius: 1.25rem;
+    padding: 1.2rem 1rem 1.4rem;
+  }
+
   .login-left-panel {
     padding: 1rem;
   }

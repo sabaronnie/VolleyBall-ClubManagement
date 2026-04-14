@@ -6,6 +6,7 @@ import {
   fetchPaymentSchedules,
   fetchTeamPlayerPayments,
   fetchCurrentUser,
+  fetchDirectorPaymentRows,
 } from "../api";
 import { navigate } from "../navigation";
 
@@ -29,7 +30,12 @@ const FREQ_OPTIONS = [
   { value: "monthly", label: "Monthly" },
 ];
 
-export default function CoachPaymentsPage({ team }) {
+export default function CoachPaymentsPage({
+  team,
+  embedded = false,
+  scheduleOnly = false,
+  preferredClubId = null,
+}) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -54,16 +60,34 @@ export default function CoachPaymentsPage({ team }) {
 
   const teamId = team?.id && team.id !== "__all__" ? team.id : null;
   const teamName = team?.name || "";
+  const teamClubId = team?.clubId ? Number(team.clubId) : null;
+  const teamClubName = team?.clubName || "";
 
   const loadRows = useCallback(async () => {
-    if (!teamId) { setRows([]); setLoading(false); return; }
     setLoading(true); setError("");
     try {
-      const data = await fetchTeamPlayerPayments(teamId);
-      setRows(data.fee_rows || []);
+      if (isDirector) {
+        const effectiveClubId = teamClubId || clubId;
+        if (!effectiveClubId) {
+          setRows([]);
+          setLoading(false);
+          return;
+        }
+        const data = await fetchDirectorPaymentRows(effectiveClubId);
+        const flattenedRows = (data.families || []).flatMap((family) => family.lines || []);
+        setRows(flattenedRows);
+      } else {
+        if (!teamId) {
+          setRows([]);
+          setLoading(false);
+          return;
+        }
+        const data = await fetchTeamPlayerPayments(teamId);
+        setRows(data.fee_rows || []);
+      }
     } catch (err) { setError(err.message || "Could not load payment data."); }
     finally { setLoading(false); }
-  }, [teamId]);
+  }, [teamId, isDirector, clubId, teamClubId]);
 
   useEffect(() => { void loadRows(); }, [loadRows]);
 
@@ -84,14 +108,23 @@ export default function CoachPaymentsPage({ team }) {
         const dir = Boolean(me.is_director_or_staff);
         setIsDirector(dir);
         if (dir && me.owned_clubs?.length) {
-          const c = me.owned_clubs[0];
+          const matchingClub = preferredClubId
+            ? me.owned_clubs.find((club) => Number(club.id) === Number(preferredClubId))
+            : teamClubId
+            ? me.owned_clubs.find((club) => Number(club.id) === Number(teamClubId))
+            : null;
+          const c = matchingClub || me.owned_clubs[0];
           setClubId(c.id);
-          setClubName(c.name);
-          setDirectorTeams(me.director_teams || []);
+          setClubName(teamClubName || c.name);
+          setDirectorTeams(
+            (me.director_teams || []).filter((directorTeam) =>
+              Number(directorTeam.club_id) === Number(c.id),
+            ),
+          );
         }
       } catch { /* ignore */ }
     })();
-  }, []);
+  }, [teamClubId, teamClubName, preferredClubId]);
 
   useEffect(() => {
     if (clubId) void loadSchedules();
@@ -126,15 +159,30 @@ export default function CoachPaymentsPage({ team }) {
   const cur = rows[0]?.currency || "USD";
 
   return (
-    <section className="vc-coach-payments-page" style={{ padding: "2rem 1.75rem", width: "100%", maxWidth: "min(1180px, 100%)", margin: "0 auto", boxSizing: "border-box" }}>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", alignItems: "center", marginBottom: "1.25rem" }}>
-        <button type="button" className="vc-director-back" onClick={() => navigate("/dashboard")}>
-          ← Dashboard
-        </button>
-        <h1 style={{ fontSize: "1.3rem", margin: 0 }}>
-          {teamId ? `${teamName} Payments` : "Payments"}
-        </h1>
-      </div>
+    <section
+      className="vc-coach-payments-page"
+      style={{
+        padding: embedded ? "0" : "2rem 1.75rem",
+        width: "100%",
+        maxWidth: "min(1180px, 100%)",
+        margin: "0 auto",
+        boxSizing: "border-box",
+      }}
+    >
+      {!embedded ? (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", alignItems: "center", marginBottom: "1.25rem" }}>
+          <button type="button" className="vc-director-back" onClick={() => navigate("/dashboard")}>
+            ← Dashboard
+          </button>
+          <h1 style={{ fontSize: "1.3rem", margin: 0 }}>
+            {isDirector
+              ? `${clubName || teamClubName || "Club"} Payments`
+              : teamId
+                ? `${teamName} Payments`
+                : "Payments"}
+          </h1>
+        </div>
+      ) : null}
 
       {success ? <div className="vc-director-success">{success}</div> : null}
       {error ? <div className="vc-director-error">{error}</div> : null}
@@ -146,6 +194,16 @@ export default function CoachPaymentsPage({ team }) {
         >
           You are viewing <strong>team fee records</strong> for the team selected above. This screen is for monitoring
           players&apos; balances, not for your own membership dues.
+        </p>
+      ) : null}
+
+      {isDirector ? (
+        <p
+          className="vc-modal__muted"
+          style={{ marginBottom: "1rem", padding: "0.75rem 1rem", background: "#f8fafc", borderRadius: 8, lineHeight: 1.5 }}
+        >
+          You are viewing <strong>all player fee records in your club</strong>. Coaches only see the players on their
+          own selected team.
         </p>
       ) : null}
 
@@ -301,15 +359,15 @@ export default function CoachPaymentsPage({ team }) {
         </section>
       ) : null}
 
-      {!teamId ? (
+      {!isDirector && !teamId ? (
         <p className="vc-modal__muted" style={{ marginTop: "1rem" }}>
           Select a specific team from the dropdown above to see player fee records for that team.
         </p>
       ) : null}
 
-      {teamId && loading ? <p className="vc-modal__muted">Loading fee records…</p> : null}
+      {(isDirector || teamId) && loading ? <p className="vc-modal__muted">Loading fee records…</p> : null}
 
-      {teamId && !loading ? (
+      {!scheduleOnly && (isDirector || teamId) && !loading ? (
         <>
           <div className="vc-dash-kpi-card" style={{ marginBottom: "1.25rem", display: "flex", gap: "2rem", flexWrap: "wrap" }}>
             <div><div className="vc-kpi-label">Outstanding</div><div className="vc-kpi-value">{money(cur, totalDue)}</div></div>
@@ -339,7 +397,7 @@ export default function CoachPaymentsPage({ team }) {
                 </table>
               </div>
             </section>
-          ) : <p className="vc-modal__muted">No fee records for this team yet.</p>}
+          ) : <p className="vc-modal__muted">{isDirector ? "No fee records for this club yet." : "No fee records for this team yet."}</p>}
         </>
       ) : null}
     </section>

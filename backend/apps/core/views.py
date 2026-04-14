@@ -1140,12 +1140,84 @@ def _serialize_user_directory_row(user):
     }
 
 
+def _scoped_user_directory(request_user):
+    if is_staff_user(request_user):
+        return (
+            User.objects.filter(is_superuser=False),
+            {
+                "kind": "all",
+                "label": "All people in the app",
+            },
+        )
+
+    director_clubs = list(
+        Club.objects.filter(
+            memberships__user=request_user,
+            memberships__role=ClubRole.CLUB_DIRECTOR,
+            memberships__is_active=True,
+        )
+        .order_by("name", "id")
+        .distinct()
+    )
+    if director_clubs:
+        club_ids = [club.id for club in director_clubs]
+        users = User.objects.filter(is_superuser=False).filter(
+            Q(club_memberships__club_id__in=club_ids, club_memberships__is_active=True)
+            | Q(team_memberships__team__club_id__in=club_ids, team_memberships__is_active=True)
+            | Q(
+                player_relationships__player__team_memberships__team__club_id__in=club_ids,
+                player_relationships__is_active=True,
+                player_relationships__approval_status=ParentLinkApprovalStatus.APPROVED,
+            )
+        )
+        return (
+            users,
+            {
+                "kind": "club",
+                "label": "All people in your club",
+                "names": [club.name for club in director_clubs],
+            },
+        )
+
+    coached_teams = list(
+        Team.objects.filter(
+            memberships__user=request_user,
+            memberships__role=TeamRole.COACH,
+            memberships__is_active=True,
+        )
+        .select_related("club")
+        .order_by("club__name", "name", "id")
+        .distinct()
+    )
+    if coached_teams:
+        team_ids = [team.id for team in coached_teams]
+        users = User.objects.filter(is_superuser=False).filter(
+            Q(team_memberships__team_id__in=team_ids, team_memberships__is_active=True)
+            | Q(
+                player_relationships__player__team_memberships__team_id__in=team_ids,
+                player_relationships__is_active=True,
+                player_relationships__approval_status=ParentLinkApprovalStatus.APPROVED,
+            )
+        )
+        return (
+            users,
+            {
+                "kind": "team",
+                "label": "All people on your team",
+                "names": [team.name for team in coached_teams],
+            },
+        )
+
+    return None, None
+
+
 @login_required
 @require_GET
 def directors_user_directory(request):
-    if not is_any_club_director(request.user):
+    users, scope = _scoped_user_directory(request.user)
+    if users is None:
         return JsonResponse(
-            {"errors": {"authorization": "Only club directors can view the user directory."}},
+            {"errors": {"authorization": "Only club directors or team coaches can view the user directory."}},
             status=403,
         )
 
@@ -1154,12 +1226,9 @@ def directors_user_directory(request):
     except ValueError:
         limit = 500
 
-    users = (
-        User.objects.filter(is_superuser=False)
-        .order_by("email", "id")[:limit]
-    )
+    users = users.order_by("email", "id").distinct()[:limit]
     rows = [_serialize_user_directory_row(u) for u in users]
-    return JsonResponse({"users": rows, "count": len(rows)})
+    return JsonResponse({"users": rows, "count": len(rows), "scope": scope})
 
 
 @login_required
@@ -3037,10 +3106,43 @@ def create_club(request):
         return JsonResponse({"errors": {"body": "Invalid JSON."}}, status=400)
 
     name = (payload.get("name") or "").strip()
+    short_name = (payload.get("short_name") or "").strip()
+    contact_email = (payload.get("contact_email") or "").strip().lower()
+    contact_phone = (payload.get("contact_phone") or "").strip()
+    country = (payload.get("country") or "").strip()
+    city = (payload.get("city") or "").strip()
+    address = (payload.get("address") or "").strip()
+    founded_year_raw = payload.get("founded_year")
     errors = {}
 
-    if not name:
-        errors["name"] = "Club name is required."
+    required_fields = {
+        "name": (name, "Club name is required."),
+        "short_name": (short_name, "Short name is required."),
+        "contact_email": (contact_email, "Contact email is required."),
+        "contact_phone": (contact_phone, "Contact phone is required."),
+        "country": (country, "Country is required."),
+        "city": (city, "City is required."),
+        "address": (address, "Address is required."),
+    }
+
+    for field_name, (value, message) in required_fields.items():
+        if not value:
+            errors[field_name] = message
+
+    founded_year = None
+    if founded_year_raw in (None, ""):
+        errors["founded_year"] = "Founded year is required."
+    else:
+        try:
+            founded_year = int(founded_year_raw)
+        except (TypeError, ValueError):
+            errors["founded_year"] = "Founded year must be a valid year."
+        else:
+            current_year = date.today().year
+            if founded_year < 1800 or founded_year > current_year:
+                errors["founded_year"] = (
+                    f"Founded year must be between 1800 and {current_year}."
+                )
 
     if errors:
         return JsonResponse({"errors": errors}, status=400)
@@ -3052,15 +3154,15 @@ def create_club(request):
         )
 
     club_data = {
-        "short_name": (payload.get("short_name") or "").strip(),
+        "short_name": short_name,
         "description": payload.get("description") or "",
-        "contact_email": (payload.get("contact_email") or "").strip().lower(),
-        "contact_phone": (payload.get("contact_phone") or "").strip(),
+        "contact_email": contact_email,
+        "contact_phone": contact_phone,
         "website": (payload.get("website") or "").strip(),
-        "country": (payload.get("country") or "").strip(),
-        "city": (payload.get("city") or "").strip(),
-        "address": (payload.get("address") or "").strip(),
-        "founded_year": payload.get("founded_year"),
+        "country": country,
+        "city": city,
+        "address": address,
+        "founded_year": founded_year,
     }
 
     try:

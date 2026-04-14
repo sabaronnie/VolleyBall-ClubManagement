@@ -41,7 +41,12 @@ function statusBadge(status) {
   return <span className="vc-status-pending">Pending</span>;
 }
 
-export default function DirectorPaymentsPage() {
+export default function DirectorPaymentsPage({
+  embedded = false,
+  preferredClubId = null,
+  onOpenUsers = null,
+  onOpenLogs = null,
+}) {
   const { clubId: initialClubId, status: initialStatus } = useMemo(parseQuery, []);
   const [ownedClubs, setOwnedClubs] = useState([]);
   const [clubId, setClubId] = useState(initialClubId);
@@ -77,6 +82,9 @@ export default function DirectorPaymentsPage() {
         }
         setOwnedClubs(clubs);
         setClubId((current) => {
+          if (preferredClubId && clubs.some((c) => c.id === Number(preferredClubId))) {
+            return Number(preferredClubId);
+          }
           if (current) {
             return current;
           }
@@ -99,7 +107,13 @@ export default function DirectorPaymentsPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [preferredClubId]);
+
+  useEffect(() => {
+    if (preferredClubId && ownedClubs.some((club) => club.id === Number(preferredClubId))) {
+      setClubId(Number(preferredClubId));
+    }
+  }, [preferredClubId, ownedClubs]);
 
   const loadRows = useCallback(async () => {
     if (!clubId) {
@@ -158,7 +172,9 @@ export default function DirectorPaymentsPage() {
     if (next) {
       params.set("status", next);
     }
-    navigate(`/director/payments?${params.toString()}`);
+    if (!embedded) {
+      navigate(`/director/payments?${params.toString()}`);
+    }
   };
 
   const onClubChange = (id) => {
@@ -166,6 +182,14 @@ export default function DirectorPaymentsPage() {
     const n = Number(id);
     setClubId(n);
     sessionStorage.setItem(CLUB_STORAGE_KEY, String(n));
+    if (!embedded) {
+      const params = new URLSearchParams();
+      params.set("club_id", String(n));
+      if (statusFilter) {
+        params.set("status", statusFilter);
+      }
+      navigate(`/director/payments?${params.toString()}`);
+    }
   };
 
   const toggleBalanceDetails = (playerId) => {
@@ -400,31 +424,28 @@ export default function DirectorPaymentsPage() {
     actionKey.startsWith("email-out-") ||
     actionKey.startsWith("email-renew-");
 
-  if (!ownedClubs.length && !loading) {
-    return (
-      <div className="vc-director-page">
-        <div className="vc-director-card">
-          <button type="button" className="vc-director-back" onClick={() => navigate("/dashboard")}>
-            ← Return to Dashboard
-          </button>
-          <p className="vc-director-loading">You are not a club director, or you have no clubs yet.</p>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="vc-director-page">
-      <p className="vc-director-kicker">Payments — all families</p>
-      <div className="vc-director-card">
+  const cardContent = (
+    <div className={`vc-director-card${embedded ? " vc-director-card--embedded" : ""}`}>
+      {!embedded ? (
         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", alignItems: "center" }}>
           <button type="button" className="vc-director-back" onClick={() => navigate("/dashboard")}>
             ← Dashboard
           </button>
-          <button type="button" className="vc-link-cyan" onClick={() => navigate("/director/users")}>
+          <button
+            type="button"
+            className="vc-link-cyan"
+            onClick={() => {
+              if (onOpenUsers) {
+                onOpenUsers();
+                return;
+              }
+              navigate("/director/users");
+            }}
+          >
             Registration
           </button>
         </div>
+      ) : null}
         {successMessage ? <div className="vc-director-success">{successMessage}</div> : null}
         {error ? <div className="vc-director-error">{error}</div> : null}
 
@@ -462,7 +483,13 @@ export default function DirectorPaymentsPage() {
             type="button"
             className="vc-link-cyan"
             disabled={!clubId}
-            onClick={() => navigate(`/director/payments/logs?club_id=${clubId || ""}`)}
+            onClick={() => {
+              if (onOpenLogs) {
+                onOpenLogs();
+                return;
+              }
+              navigate(`/director/payments/logs?club_id=${clubId || ""}`);
+            }}
           >
             View payment logs
           </button>
@@ -732,6 +759,33 @@ export default function DirectorPaymentsPage() {
           </section>
         ) : null}
       </div>
+  );
+
+  if (!ownedClubs.length && !loading) {
+    return embedded ? (
+      <div className="vc-director-card vc-director-card--embedded">
+        <p className="vc-director-loading">You are not a club director, or you have no clubs yet.</p>
+      </div>
+    ) : (
+      <div className="vc-director-page">
+        <div className="vc-director-card">
+          <button type="button" className="vc-director-back" onClick={() => navigate("/dashboard")}>
+            ← Return to Dashboard
+          </button>
+          <p className="vc-director-loading">You are not a club director, or you have no clubs yet.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (embedded) {
+    return cardContent;
+  }
+
+  return (
+    <div className="vc-director-page">
+      <p className="vc-director-kicker">Payments — all families</p>
+      {cardContent}
     </div>
   );
 }

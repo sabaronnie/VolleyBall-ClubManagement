@@ -13,9 +13,22 @@ function fmtPct(v) {
   return `${n.toFixed(1)}%`;
 }
 
-export default function DirectorClubSummaryCard({ loading, clubId, clubSummary, formatMoney }) {
+export default function DirectorClubSummaryCard({
+  loading,
+  clubId,
+  clubSummary,
+  formatMoney,
+  onManageTeams = null,
+}) {
   const best = clubSummary?.best_participating_team;
   const low = clubSummary?.low_participation;
+  const handleManageTeams = () => {
+    if (onManageTeams) {
+      onManageTeams();
+      return;
+    }
+    navigate("/director/teams");
+  };
 
   return (
     <section className="vc-panel vc-panel--dashboard vc-panel--director-white">
@@ -30,7 +43,7 @@ export default function DirectorClubSummaryCard({ loading, clubId, clubSummary, 
           type="button"
           className="vc-link-cyan vc-link-cyan--compact"
           style={{ margin: 0 }}
-          onClick={() => navigate("/director/teams")}
+          onClick={handleManageTeams}
         >
           Manage Teams
         </button>

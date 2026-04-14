@@ -122,6 +122,25 @@ describe("DashboardPage create-club flow", () => {
     });
   });
 
+  it("always shows a create-club card at the bottom of the director dashboard", async () => {
+    vi.mocked(api.fetchCurrentUser).mockResolvedValue(
+      baseMe({
+        is_director_or_staff: true,
+        owned_clubs: [{ id: 7, name: "My Club" }],
+      }),
+    );
+    vi.mocked(api.fetchDirectorPaymentOverview).mockResolvedValue(overviewPayload);
+
+    render(<DashboardPage />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "My Club" })).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole("heading", { name: /create another club/i })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /^create a club$/i }).length).toBeGreaterThan(0);
+  });
+
   it("creates a club, refreshes profile, and shows the director hero for the new club", async () => {
     const user = userEvent.setup();
     let clubCreated = false;
@@ -156,12 +175,26 @@ describe("DashboardPage create-club flow", () => {
     expect(screen.getByRole("heading", { name: /create a club/i })).toBeInTheDocument();
 
     await user.type(screen.getByLabelText(/club name/i), "My Club");
+    await user.type(screen.getByLabelText(/short name/i), "MC");
+    await user.type(screen.getByLabelText(/contact email/i), "hello@myclub.com");
+    await user.type(screen.getByLabelText(/contact phone/i), "+1 555 555 5555");
+    await user.type(screen.getByLabelText(/country/i), "USA");
+    await user.type(screen.getByLabelText(/^city/i), "Boston");
+    await user.type(screen.getByLabelText(/address/i), "123 Main Street");
+    await user.type(screen.getByLabelText(/founded year/i), "2020");
     await user.click(screen.getByRole("button", { name: /create club$/i }));
 
     await waitFor(() => {
       expect(api.createClub).toHaveBeenCalledWith(
         expect.objectContaining({
           name: "My Club",
+          short_name: "MC",
+          contact_email: "hello@myclub.com",
+          contact_phone: "+1 555 555 5555",
+          country: "USA",
+          city: "Boston",
+          address: "123 Main Street",
+          founded_year: 2020,
         }),
       );
     });

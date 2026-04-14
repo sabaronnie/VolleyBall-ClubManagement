@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { createClub, fetchCurrentUser, fetchDirectorPaymentOverview } from "../api";
 import ClubWorkspaceLayout from "../components/ClubWorkspaceLayout";
-import DirectorActionButtons from "../components/director/DirectorActionButtons";
 import DirectorAttendanceTrendCard from "../components/director/DirectorAttendanceTrendCard";
 import DirectorClubSummaryCard from "../components/director/DirectorClubSummaryCard";
 import DirectorPaymentsOverviewCard from "../components/director/DirectorPaymentsOverviewCard";
 import DirectorRolesPermissionCard from "../components/director/DirectorRolesPermissionCard";
 import DirectorSummaryRow from "../components/director/DirectorSummaryRow";
-import { navigate } from "../navigation";
+import CoachPaymentsPage from "./CoachPaymentsPage";
+import DirectorPaymentLogsPage from "./DirectorPaymentLogsPage";
+import DirectorPaymentsPage from "./DirectorPaymentsPage";
+import DirectorTeamSetupPage from "./DirectorTeamSetupPage";
+import DirectorUserManagementPage from "./DirectorUserManagementPage";
 
 const AUTH_TOKEN_KEY = "netup.auth.token";
 const CLUB_STORAGE_KEY = "netup.director.payment.club_id";
@@ -29,6 +32,87 @@ export function formatPercent(rate) {
     return "—";
   }
   return `${Math.round(n * 100) / 100}%`;
+}
+
+function CreateClubFieldLabel({ htmlFor, children, optional = false }) {
+  return (
+    <label className="vc-director-modal__label" htmlFor={htmlFor}>
+      {children}
+      {optional ? (
+        <>
+          {" "}
+          <span className="vc-director-modal__optional">(optional)</span>
+        </>
+      ) : (
+        <span className="vc-director-modal__required" aria-hidden="true">
+          *
+        </span>
+      )}
+    </label>
+  );
+}
+
+function DashboardCreateClubCard({
+  title,
+  description,
+  buttonLabel = "Create a Club",
+  onOpen,
+  className = "",
+  titleId,
+}) {
+  const sectionClassName = className
+    ? `vc-dashboard-onboarding ${className}`
+    : "vc-dashboard-onboarding";
+
+  return (
+    <section className={sectionClassName} aria-labelledby={titleId}>
+      <div className="vc-dashboard-onboarding__card">
+        <span className="vc-dashboard-onboarding__eyebrow">Director workspace</span>
+        <h1 id={titleId} className="vc-dashboard-onboarding__title">
+          {title}
+        </h1>
+        <p className="vc-dashboard-onboarding__text">{description}</p>
+        <button type="button" className="vc-dashboard-onboarding__cta" onClick={onOpen}>
+          {buttonLabel}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function DirectorDashboardDropdown({
+  id,
+  title,
+  description,
+  isOpen,
+  onToggle,
+  children,
+}) {
+  return (
+    <section className={`vc-dashboard-dropdown${isOpen ? " is-open" : ""}`}>
+      <button
+        id={`${id}-trigger`}
+        type="button"
+        className="vc-dashboard-dropdown__trigger"
+        aria-expanded={isOpen}
+        aria-controls={`${id}-panel`}
+        onClick={onToggle}
+      >
+        <span>
+          <strong>{title}</strong>
+          <small>{description}</small>
+        </span>
+        <span className="vc-dashboard-dropdown__caret" aria-hidden="true">
+          {isOpen ? "−" : "+"}
+        </span>
+      </button>
+      {isOpen ? (
+        <div id={`${id}-panel`} className="vc-dashboard-dropdown__panel" role="region" aria-labelledby={`${id}-trigger`}>
+          {children}
+        </div>
+      ) : null}
+    </section>
+  );
 }
 
 export function userHasAnyClubAffiliation(me) {
@@ -63,9 +147,16 @@ export default function DashboardPage() {
   const [createClubBusy, setCreateClubBusy] = useState(false);
   const [createClubError, setCreateClubError] = useState("");
   const [newClubName, setNewClubName] = useState("");
+  const [newClubShortName, setNewClubShortName] = useState("");
   const [newClubDescription, setNewClubDescription] = useState("");
+  const [newClubContactEmail, setNewClubContactEmail] = useState("");
+  const [newClubContactPhone, setNewClubContactPhone] = useState("");
+  const [newClubWebsite, setNewClubWebsite] = useState("");
   const [newClubCity, setNewClubCity] = useState("");
   const [newClubCountry, setNewClubCountry] = useState("");
+  const [newClubAddress, setNewClubAddress] = useState("");
+  const [newClubFoundedYear, setNewClubFoundedYear] = useState("");
+  const [openDirectorSection, setOpenDirectorSection] = useState("payments");
 
   useEffect(() => {
     if (!localStorage.getItem(AUTH_TOKEN_KEY)) {
@@ -161,22 +252,6 @@ export default function DashboardPage() {
         status: b.overall_status,
       }));
 
-  const shortcutLinks = [
-    { label: "Users", onClick: () => navigate("/director/users") },
-    {
-      label: "Payments",
-      onClick: () => navigate(`/director/payments?club_id=${clubId || ownedClubs[0]?.id || ""}`),
-      disabled: !clubId && !ownedClubs[0]?.id,
-    },
-    {
-      label: "Logs",
-      onClick: () => navigate(`/director/payments/logs?club_id=${clubId || ownedClubs[0]?.id || ""}`),
-      disabled: !clubId && !ownedClubs[0]?.id,
-    },
-    { label: "Teams", onClick: () => navigate("/director/teams") },
-    { label: "Schedules", onClick: () => navigate("/payments") },
-  ];
-
   const showNoClubOnboarding = !profileLoading && !hasAnyClubAffiliation;
   const showDirectorWorkspace = !profileLoading && hasAnyClubAffiliation;
   const dashboardTitle = activeClub?.name || "Club dashboard";
@@ -189,9 +264,15 @@ export default function DashboardPage() {
   const openCreateClubModal = () => {
     setCreateClubError("");
     setNewClubName("");
+    setNewClubShortName("");
     setNewClubDescription("");
+    setNewClubContactEmail("");
+    setNewClubContactPhone("");
+    setNewClubWebsite("");
     setNewClubCity("");
     setNewClubCountry("");
+    setNewClubAddress("");
+    setNewClubFoundedYear("");
     setCreateClubOpen(true);
   };
 
@@ -199,17 +280,40 @@ export default function DashboardPage() {
     e.preventDefault();
     setCreateClubError("");
     const name = newClubName.trim();
-    if (!name) {
-      setCreateClubError("Club name is required.");
+    const shortName = newClubShortName.trim();
+    const contactEmail = newClubContactEmail.trim().toLowerCase();
+    const contactPhone = newClubContactPhone.trim();
+    const website = newClubWebsite.trim();
+    const country = newClubCountry.trim();
+    const city = newClubCity.trim();
+    const address = newClubAddress.trim();
+    const foundedYearValue = newClubFoundedYear.trim();
+    const currentYear = new Date().getFullYear();
+
+    if (!name || !shortName || !contactEmail || !contactPhone || !country || !city || !address || !foundedYearValue) {
+      setCreateClubError("Please fill in every required field.");
       return;
     }
+
+    const foundedYear = Number(foundedYearValue);
+    if (!Number.isInteger(foundedYear) || foundedYear < 1800 || foundedYear > currentYear) {
+      setCreateClubError(`Founded year must be a whole number between 1800 and ${currentYear}.`);
+      return;
+    }
+
     setCreateClubBusy(true);
     try {
       const payload = await createClub({
         name,
+        short_name: shortName,
         description: newClubDescription.trim(),
-        city: newClubCity.trim(),
-        country: newClubCountry.trim(),
+        contact_email: contactEmail,
+        contact_phone: contactPhone,
+        website,
+        country,
+        city,
+        address,
+        founded_year: foundedYear,
       });
       const createdId = payload?.club?.id;
       if (createdId != null) {
@@ -227,6 +331,14 @@ export default function DashboardPage() {
     }
   };
 
+  const toggleDirectorSection = (sectionId) => {
+    setOpenDirectorSection((current) => (current === sectionId ? "" : sectionId));
+  };
+
+  const openDirectorSectionPanel = (sectionId) => {
+    setOpenDirectorSection(sectionId);
+  };
+
   return (
     <ClubWorkspaceLayout
       activeTab="dashboard"
@@ -241,20 +353,12 @@ export default function DashboardPage() {
       ) : null}
 
       {showNoClubOnboarding ? (
-        <section className="vc-dashboard-onboarding" aria-labelledby="vc-onboarding-title">
-          <div className="vc-dashboard-onboarding__card">
-            <span className="vc-dashboard-onboarding__eyebrow">Director workspace</span>
-            <h1 id="vc-onboarding-title" className="vc-dashboard-onboarding__title">
-              No Club Yet
-            </h1>
-            <p className="vc-dashboard-onboarding__text">
-              Create your club to start managing teams, schedules, attendance, and payments.
-            </p>
-            <button type="button" className="vc-dashboard-onboarding__cta" onClick={openCreateClubModal}>
-              Create a Club
-            </button>
-          </div>
-        </section>
+        <DashboardCreateClubCard
+          titleId="vc-onboarding-title"
+          title="No Club Yet"
+          description="Create your club to start managing teams, schedules, attendance, and payments."
+          onOpen={openCreateClubModal}
+        />
       ) : null}
 
       {showDirectorWorkspace ? (
@@ -273,15 +377,6 @@ export default function DashboardPage() {
                   <span className="vc-dashboard-chip vc-dashboard-chip--soft">
                     {ownedClubs.length} clubs linked
                   </span>
-                ) : null}
-                {ownedClubs.length > 0 ? (
-                  <button
-                    type="button"
-                    className="vc-dashboard-hero__ghost-btn"
-                    onClick={openCreateClubModal}
-                  >
-                    Create another club
-                  </button>
                 ) : null}
               </div>
             </div>
@@ -308,21 +403,6 @@ export default function DashboardPage() {
             ) : null}
           </div>
 
-          {ownedClubs.length > 0 || isDirectorOrStaff ? (
-            <nav className="vc-dash-subnav" aria-label="Director shortcuts">
-              {shortcutLinks.map((item) => (
-                <button
-                  key={item.label}
-                  type="button"
-                  className="vc-dash-subnav__link"
-                  disabled={item.disabled}
-                  onClick={item.onClick}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </nav>
-          ) : null}
         </section>
       ) : null}
 
@@ -349,10 +429,9 @@ export default function DashboardPage() {
               clubId={clubId}
               rows={paymentRows}
               formatMoney={formatMoney}
+              onViewAll={() => openDirectorSectionPanel("payments")}
             />
           </div>
-
-          <DirectorActionButtons clubId={clubId} />
 
           <div className="vc-dash-bottom vc-dash-bottom--dashboard">
             <DirectorRolesPermissionCard loading={loading} matrix={overview?.roles_permission_matrix} />
@@ -361,8 +440,101 @@ export default function DashboardPage() {
               clubId={clubId}
               clubSummary={overview?.club_summary}
               formatMoney={formatMoney}
+              onManageTeams={() => openDirectorSectionPanel("teams")}
             />
           </div>
+
+          <section className="vc-dashboard-toolbox" aria-labelledby="vc-dashboard-toolbox-title">
+            <div className="vc-dashboard-toolbox__header">
+              <div>
+                <p className="vc-dashboard-panel-head__eyebrow">Workspace Tools</p>
+                <h2 id="vc-dashboard-toolbox-title" className="vc-panel-title">
+                  Director Tools
+                </h2>
+              </div>
+              <p className="vc-modal__muted">
+                Expand a section below to manage users, payments, logs, teams, and payment schedules without leaving
+                the dashboard.
+              </p>
+            </div>
+
+            <DirectorDashboardDropdown
+              id="dashboard-users"
+              title="Users"
+              description="Manage roles and review parent-child link requests."
+              isOpen={openDirectorSection === "users"}
+              onToggle={() => toggleDirectorSection("users")}
+            >
+              <DirectorUserManagementPage embedded onOpenPayments={() => openDirectorSectionPanel("payments")} />
+            </DirectorDashboardDropdown>
+
+            <DirectorDashboardDropdown
+              id="dashboard-payments"
+              title="Payments"
+              description="Review balances, send reminders, and record payments."
+              isOpen={openDirectorSection === "payments"}
+              onToggle={() => toggleDirectorSection("payments")}
+            >
+              <DirectorPaymentsPage
+                embedded
+                preferredClubId={clubId}
+                onOpenUsers={() => openDirectorSectionPanel("users")}
+                onOpenLogs={() => openDirectorSectionPanel("logs")}
+              />
+            </DirectorDashboardDropdown>
+
+            <DirectorDashboardDropdown
+              id="dashboard-logs"
+              title="Logs"
+              description="Audit recent payment activity for the active club."
+              isOpen={openDirectorSection === "logs"}
+              onToggle={() => toggleDirectorSection("logs")}
+            >
+              <DirectorPaymentLogsPage
+                embedded
+                preferredClubId={clubId}
+                onOpenPayments={() => openDirectorSectionPanel("payments")}
+              />
+            </DirectorDashboardDropdown>
+
+            <DirectorDashboardDropdown
+              id="dashboard-teams"
+              title="Teams"
+              description="Create teams and manage roster assignments."
+              isOpen={openDirectorSection === "teams"}
+              onToggle={() => toggleDirectorSection("teams")}
+            >
+              <DirectorTeamSetupPage
+                embedded
+                preferredClubId={clubId}
+                onOpenUsers={() => openDirectorSectionPanel("users")}
+              />
+            </DirectorDashboardDropdown>
+
+            <DirectorDashboardDropdown
+              id="dashboard-schedules"
+              title="Schedules"
+              description="Manage payment schedules for the active club."
+              isOpen={openDirectorSection === "schedules"}
+              onToggle={() => toggleDirectorSection("schedules")}
+            >
+              <CoachPaymentsPage
+                embedded
+                scheduleOnly
+                preferredClubId={clubId}
+                team={activeClub ? { clubId: activeClub.id, clubName: activeClub.name } : null}
+              />
+            </DirectorDashboardDropdown>
+          </section>
+
+          <DashboardCreateClubCard
+            className="vc-dashboard-onboarding--bottom"
+            titleId="vc-create-club-bottom-title"
+            title="Create Another Club"
+            description="Need to add another club to this workspace? Start a fresh club setup here without leaving the dashboard."
+            buttonLabel="Create a Club"
+            onOpen={openCreateClubModal}
+          />
         </>
       ) : null}
 
@@ -387,56 +559,141 @@ export default function DashboardPage() {
             <p className="vc-director-modal__meta">
               You will be assigned as the club director and can invite coaches and players next.
             </p>
-            <form onSubmit={submitCreateClub}>
-              <label className="vc-director-modal__label" htmlFor="vc-create-club-name">
-                Club name
-              </label>
-              <input
-                id="vc-create-club-name"
-                className="vc-director-modal__select"
-                type="text"
-                autoComplete="organization"
-                value={newClubName}
-                onChange={(ev) => setNewClubName(ev.target.value)}
-                disabled={createClubBusy}
-                required
-              />
-              <label className="vc-director-modal__label" htmlFor="vc-create-club-description">
-                Description{" "}
-                <span className="vc-director-modal__optional">(optional)</span>
-              </label>
-              <textarea
-                id="vc-create-club-description"
-                className="vc-director-modal__textarea"
-                rows={3}
-                value={newClubDescription}
-                onChange={(ev) => setNewClubDescription(ev.target.value)}
-                disabled={createClubBusy}
-              />
-              <label className="vc-director-modal__label" htmlFor="vc-create-club-city">
-                City <span className="vc-director-modal__optional">(optional)</span>
-              </label>
-              <input
-                id="vc-create-club-city"
-                className="vc-director-modal__select"
-                type="text"
-                autoComplete="address-level2"
-                value={newClubCity}
-                onChange={(ev) => setNewClubCity(ev.target.value)}
-                disabled={createClubBusy}
-              />
-              <label className="vc-director-modal__label" htmlFor="vc-create-club-country">
-                Country <span className="vc-director-modal__optional">(optional)</span>
-              </label>
-              <input
-                id="vc-create-club-country"
-                className="vc-director-modal__select"
-                type="text"
-                autoComplete="country-name"
-                value={newClubCountry}
-                onChange={(ev) => setNewClubCountry(ev.target.value)}
-                disabled={createClubBusy}
-              />
+            <form className="vc-create-club-form" onSubmit={submitCreateClub}>
+              <div className="vc-create-club-form__grid">
+                <div className="vc-create-club-form__field">
+                  <CreateClubFieldLabel htmlFor="vc-create-club-name">Club name</CreateClubFieldLabel>
+                  <input
+                    id="vc-create-club-name"
+                    className="vc-director-modal__select"
+                    type="text"
+                    autoComplete="organization"
+                    value={newClubName}
+                    onChange={(ev) => setNewClubName(ev.target.value)}
+                    disabled={createClubBusy}
+                    required
+                  />
+                </div>
+                <div className="vc-create-club-form__field">
+                  <CreateClubFieldLabel htmlFor="vc-create-club-short-name">Short name</CreateClubFieldLabel>
+                  <input
+                    id="vc-create-club-short-name"
+                    className="vc-director-modal__select"
+                    type="text"
+                    value={newClubShortName}
+                    onChange={(ev) => setNewClubShortName(ev.target.value)}
+                    disabled={createClubBusy}
+                    required
+                  />
+                </div>
+                <div className="vc-create-club-form__field vc-create-club-form__field--full">
+                  <CreateClubFieldLabel htmlFor="vc-create-club-description" optional>
+                    Description
+                  </CreateClubFieldLabel>
+                  <textarea
+                    id="vc-create-club-description"
+                    className="vc-director-modal__textarea"
+                    rows={3}
+                    value={newClubDescription}
+                    onChange={(ev) => setNewClubDescription(ev.target.value)}
+                    disabled={createClubBusy}
+                  />
+                </div>
+                <div className="vc-create-club-form__field">
+                  <CreateClubFieldLabel htmlFor="vc-create-club-contact-email">Contact email</CreateClubFieldLabel>
+                  <input
+                    id="vc-create-club-contact-email"
+                    className="vc-director-modal__select"
+                    type="email"
+                    autoComplete="email"
+                    value={newClubContactEmail}
+                    onChange={(ev) => setNewClubContactEmail(ev.target.value)}
+                    disabled={createClubBusy}
+                    required
+                  />
+                </div>
+                <div className="vc-create-club-form__field">
+                  <CreateClubFieldLabel htmlFor="vc-create-club-contact-phone">Contact phone</CreateClubFieldLabel>
+                  <input
+                    id="vc-create-club-contact-phone"
+                    className="vc-director-modal__select"
+                    type="tel"
+                    autoComplete="tel"
+                    value={newClubContactPhone}
+                    onChange={(ev) => setNewClubContactPhone(ev.target.value)}
+                    disabled={createClubBusy}
+                    required
+                  />
+                </div>
+                <div className="vc-create-club-form__field">
+                  <CreateClubFieldLabel htmlFor="vc-create-club-website" optional>
+                    Website
+                  </CreateClubFieldLabel>
+                  <input
+                    id="vc-create-club-website"
+                    className="vc-director-modal__select"
+                    type="url"
+                    autoComplete="url"
+                    value={newClubWebsite}
+                    onChange={(ev) => setNewClubWebsite(ev.target.value)}
+                    disabled={createClubBusy}
+                  />
+                </div>
+                <div className="vc-create-club-form__field">
+                  <CreateClubFieldLabel htmlFor="vc-create-club-founded-year">Founded year</CreateClubFieldLabel>
+                  <input
+                    id="vc-create-club-founded-year"
+                    className="vc-director-modal__select"
+                    type="number"
+                    inputMode="numeric"
+                    min="1800"
+                    max={String(new Date().getFullYear())}
+                    value={newClubFoundedYear}
+                    onChange={(ev) => setNewClubFoundedYear(ev.target.value)}
+                    disabled={createClubBusy}
+                    required
+                  />
+                </div>
+                <div className="vc-create-club-form__field">
+                  <CreateClubFieldLabel htmlFor="vc-create-club-country">Country</CreateClubFieldLabel>
+                  <input
+                    id="vc-create-club-country"
+                    className="vc-director-modal__select"
+                    type="text"
+                    autoComplete="country-name"
+                    value={newClubCountry}
+                    onChange={(ev) => setNewClubCountry(ev.target.value)}
+                    disabled={createClubBusy}
+                    required
+                  />
+                </div>
+                <div className="vc-create-club-form__field">
+                  <CreateClubFieldLabel htmlFor="vc-create-club-city">City</CreateClubFieldLabel>
+                  <input
+                    id="vc-create-club-city"
+                    className="vc-director-modal__select"
+                    type="text"
+                    autoComplete="address-level2"
+                    value={newClubCity}
+                    onChange={(ev) => setNewClubCity(ev.target.value)}
+                    disabled={createClubBusy}
+                    required
+                  />
+                </div>
+                <div className="vc-create-club-form__field vc-create-club-form__field--full">
+                  <CreateClubFieldLabel htmlFor="vc-create-club-address">Address</CreateClubFieldLabel>
+                  <input
+                    id="vc-create-club-address"
+                    className="vc-director-modal__select"
+                    type="text"
+                    autoComplete="street-address"
+                    value={newClubAddress}
+                    onChange={(ev) => setNewClubAddress(ev.target.value)}
+                    disabled={createClubBusy}
+                    required
+                  />
+                </div>
+              </div>
               {createClubError ? <p className="vc-director-modal__error">{createClubError}</p> : null}
               <div className="vc-director-modal__actions">
                 <button

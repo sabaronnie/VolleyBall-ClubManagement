@@ -234,6 +234,8 @@ function buildRelatedTeams(payload) {
     teamsById.set(team.id, {
       id: team.id,
       name: team.name,
+      clubId: team.club_id || null,
+      clubName: team.club_name || "",
       source: "Director",
       scheduleTier: "elevated",
       coachNames: team.coach_names || [],
@@ -252,6 +254,8 @@ function buildRelatedTeams(payload) {
     teamsById.set(team.id, {
       id: team.id,
       name: team.name,
+      clubId: team.club_id || null,
+      clubName: team.club_name || "",
       source: "Coach",
       scheduleTier: "elevated",
       coachNames: team.coach_names || [],
@@ -271,6 +275,8 @@ function buildRelatedTeams(payload) {
       teamsById.set(team.id, {
         id: team.id,
         name: team.name,
+        clubId: team.club_id || null,
+        clubName: team.club_name || "",
         source: "Player",
         scheduleTier: "member",
         coachNames: team.coach_names || [],
@@ -292,6 +298,8 @@ function buildRelatedTeams(payload) {
         teamsById.set(team.id, attachChildToTeam({
           id: team.id,
           name: team.name,
+          clubId: team.club_id || null,
+          clubName: team.club_name || "",
           source: `${child.user?.first_name || "Child"}'s team`,
           scheduleTier: "member",
           coachNames: team.coach_names || [],
@@ -1441,7 +1449,7 @@ function App() {
         showPlayerSessionsTab={showPlayerSessionsTab}
         showCoachAttendanceTab={showCoachAttendanceTab}
       >
-        <ContactUsPage />
+        <ContactUsPage showHeroBackground />
       </ClubWorkspaceLayout>
     );
   }
@@ -1474,12 +1482,12 @@ function App() {
         </div>
       );
     }
-    if (!directorDashboardAllowed) {
+    if (!directorDashboardAllowed && !scheduleAccessElevated) {
       return (
         <div className="vc-app vc-dashboard" style={{ padding: "3rem", maxWidth: 520, margin: "0 auto" }}>
-          <h1 style={{ fontSize: "1.25rem", marginBottom: "0.75rem" }}>Director tools</h1>
+          <h1 style={{ fontSize: "1.25rem", marginBottom: "0.75rem" }}>User directory</h1>
           <p style={{ color: "#5c6570", lineHeight: 1.55 }}>
-            Pending account review is limited to club directors and platform staff.
+            This page is limited to club directors and team coaches.
           </p>
           <button
             type="button"

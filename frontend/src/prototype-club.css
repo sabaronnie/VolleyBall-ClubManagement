@@ -729,6 +729,11 @@
   margin-bottom: 1.5rem;
 }
 
+.vc-dashboard-onboarding--bottom {
+  margin-top: 1.5rem;
+  margin-bottom: 0;
+}
+
 .vc-dashboard-onboarding__card {
   max-width: 720px;
   padding: 2rem 2rem 2.25rem;
@@ -787,6 +792,86 @@
 
 .vc-dashboard-onboarding__cta:hover {
   filter: brightness(1.04);
+}
+
+.vc-dashboard-toolbox {
+  margin-top: 1.5rem;
+  display: grid;
+  gap: 0.9rem;
+}
+
+.vc-dashboard-toolbox__header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 0.75rem 1rem;
+}
+
+.vc-dashboard-toolbox__header > p {
+  margin: 0;
+  max-width: 58ch;
+}
+
+.vc-dashboard-dropdown {
+  border: 1px solid #dbe3ea;
+  border-radius: 22px;
+  background: #fff;
+  box-shadow: 0 16px 36px rgba(16, 28, 54, 0.06);
+  overflow: hidden;
+}
+
+.vc-dashboard-dropdown__trigger {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 1rem 1.2rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.vc-dashboard-dropdown__trigger strong {
+  display: block;
+  font-size: 1rem;
+  color: #1a1d21;
+}
+
+.vc-dashboard-dropdown__trigger small {
+  display: block;
+  margin-top: 0.18rem;
+  font-size: 0.88rem;
+  color: #5c6570;
+}
+
+.vc-dashboard-dropdown__caret {
+  flex-shrink: 0;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #eef3f8;
+  color: #24396f;
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.vc-dashboard-dropdown__panel {
+  padding: 0 1rem 1rem;
+  border-top: 1px solid rgba(219, 227, 234, 0.8);
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.88), rgba(255, 255, 255, 0.98));
+}
+
+.vc-director-card--embedded {
+  margin-top: 1rem;
+  box-shadow: none;
+  border: 1px solid rgba(219, 227, 234, 0.9);
 }
 
 .vc-dashboard-hero__select-card {
@@ -1167,6 +1252,11 @@
     width: 100%;
     max-width: none;
   }
+
+  .vc-dashboard-toolbox__header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
 
 @media (max-width: 640px) {
@@ -1180,6 +1270,10 @@
   .vc-dashboard-kpi-strip__grid,
   .vc-director-actions-bar {
     grid-template-columns: 1fr;
+  }
+
+  .vc-dashboard-onboarding--bottom {
+    margin-top: 1.25rem;
   }
 
   .vc-panel--dashboard,
@@ -1773,7 +1867,7 @@
 }
 
 .vc-director-modal--wide {
-  max-width: 480px;
+  max-width: 560px;
 }
 
 .vc-director-modal__optional {
@@ -1782,6 +1876,26 @@
   letter-spacing: 0;
   color: #8b939c;
   font-size: 0.85em;
+}
+
+.vc-director-modal__required {
+  margin-left: 0.2rem;
+  color: #b31735;
+  font-size: 1.05em;
+}
+
+.vc-create-club-form__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem 1rem;
+}
+
+.vc-create-club-form__field {
+  min-width: 0;
+}
+
+.vc-create-club-form__field--full {
+  grid-column: 1 / -1;
 }
 
 .vc-director-modal__textarea {
@@ -1825,7 +1939,7 @@
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: #6b7580;
-  margin: 0.75rem 0 0.35rem;
+  margin: 0 0 0.35rem;
 }
 
 .vc-director-modal__select {
@@ -1881,6 +1995,16 @@
 .vc-director-modal__btn:disabled {
   opacity: 0.65;
   cursor: not-allowed;
+}
+
+@media (max-width: 640px) {
+  .vc-create-club-form__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .vc-create-club-form__field--full {
+    grid-column: auto;
+  }
 }
 
 .vc-pay-toolbar {

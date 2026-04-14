@@ -11,7 +11,11 @@ function roleLabel(role) {
   return role || "—";
 }
 
-export default function DirectorTeamSetupPage() {
+export default function DirectorTeamSetupPage({
+  embedded = false,
+  preferredClubId = null,
+  onOpenUsers = null,
+}) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
@@ -49,7 +53,12 @@ export default function DirectorTeamSetupPage() {
       const fromQuery = qClub && clubs.some((c) => c.id === Number(qClub)) ? Number(qClub) : null;
       const stored = sessionStorage.getItem(CLUB_STORAGE_KEY);
       const fromStore = stored ? Number(stored) : null;
+      const preferred =
+        preferredClubId && clubs.some((c) => c.id === Number(preferredClubId))
+          ? Number(preferredClubId)
+          : null;
       const pick =
+        preferred ||
         fromQuery ||
         (fromStore && clubs.some((c) => c.id === fromStore) ? fromStore : clubs[0].id);
       setClubId(pick);
@@ -68,6 +77,12 @@ export default function DirectorTeamSetupPage() {
     }
     void loadMe();
   }, [loadMe]);
+
+  useEffect(() => {
+    if (preferredClubId && ownedClubs.some((club) => club.id === Number(preferredClubId))) {
+      setClubId(Number(preferredClubId));
+    }
+  }, [preferredClubId, ownedClubs]);
 
   useEffect(() => {
     setSuccessMessage("");
@@ -203,33 +218,9 @@ export default function DirectorTeamSetupPage() {
     return null;
   }
 
-  if (loading) {
-    return (
-      <div className="vc-director-page">
-        <div className="vc-director-card">
-          <p className="vc-director-loading">Loading…</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!ownedClubs.length) {
-    return (
-      <div className="vc-director-page">
-        <div className="vc-director-card">
-          <button type="button" className="vc-director-back" onClick={() => navigate("/dashboard")}>
-            ← Dashboard
-          </button>
-          <p className="vc-director-loading">You need an owned club (club director) to create teams and roster.</p>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="vc-director-page">
-      <p className="vc-director-kicker">Teams & roster</p>
-      <div className="vc-director-card">
+  const cardContent = (
+    <div className={`vc-director-card${embedded ? " vc-director-card--embedded" : ""}`}>
+      {!embedded ? (
         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", alignItems: "center" }}>
           <button type="button" className="vc-director-back" onClick={() => navigate("/dashboard")}>
             ← Dashboard
@@ -237,10 +228,21 @@ export default function DirectorTeamSetupPage() {
           <button type="button" className="vc-link-cyan" onClick={() => navigate("/dashboard")}>
             Director dashboard
           </button>
-          <button type="button" className="vc-link-cyan" onClick={() => navigate("/director/users")}>
+          <button
+            type="button"
+            className="vc-link-cyan"
+            onClick={() => {
+              if (onOpenUsers) {
+                onOpenUsers();
+                return;
+              }
+              navigate("/director/users");
+            }}
+          >
             User directory (ids)
           </button>
         </div>
+      ) : null}
 
         {successMessage ? <div className="vc-director-success">{successMessage}</div> : null}
         {error ? <div className="vc-director-error">{error}</div> : null}
@@ -395,6 +397,47 @@ export default function DirectorTeamSetupPage() {
           ) : null}
         </section>
       </div>
+  );
+
+  if (loading) {
+    return embedded ? (
+      <div className="vc-director-card vc-director-card--embedded">
+        <p className="vc-director-loading">Loading…</p>
+      </div>
+    ) : (
+      <div className="vc-director-page">
+        <div className="vc-director-card">
+          <p className="vc-director-loading">Loading…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!ownedClubs.length) {
+    return embedded ? (
+      <div className="vc-director-card vc-director-card--embedded">
+        <p className="vc-director-loading">You need an owned club (club director) to create teams and roster.</p>
+      </div>
+    ) : (
+      <div className="vc-director-page">
+        <div className="vc-director-card">
+          <button type="button" className="vc-director-back" onClick={() => navigate("/dashboard")}>
+            ← Dashboard
+          </button>
+          <p className="vc-director-loading">You need an owned club (club director) to create teams and roster.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (embedded) {
+    return cardContent;
+  }
+
+  return (
+    <div className="vc-director-page">
+      <p className="vc-director-kicker">Teams & roster</p>
+      {cardContent}
     </div>
   );
 }

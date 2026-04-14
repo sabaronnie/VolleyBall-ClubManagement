@@ -11,7 +11,11 @@ function parseClubId() {
   return raw ? Number(raw) : null;
 }
 
-export default function DirectorPaymentLogsPage() {
+export default function DirectorPaymentLogsPage({
+  embedded = false,
+  preferredClubId = null,
+  onOpenPayments = null,
+}) {
   const initialClubId = useMemo(parseClubId, []);
   const [ownedClubs, setOwnedClubs] = useState([]);
   const [clubId, setClubId] = useState(initialClubId);
@@ -36,6 +40,9 @@ export default function DirectorPaymentLogsPage() {
         }
         setOwnedClubs(clubs);
         setClubId((current) => {
+          if (preferredClubId && clubs.some((c) => c.id === Number(preferredClubId))) {
+            return Number(preferredClubId);
+          }
           if (current) {
             return current;
           }
@@ -58,7 +65,13 @@ export default function DirectorPaymentLogsPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [preferredClubId]);
+
+  useEffect(() => {
+    if (preferredClubId && ownedClubs.some((club) => club.id === Number(preferredClubId))) {
+      setClubId(Number(preferredClubId));
+    }
+  }, [preferredClubId, ownedClubs]);
 
   const loadLogs = useCallback(async () => {
     if (!clubId) {
@@ -83,34 +96,29 @@ export default function DirectorPaymentLogsPage() {
     loadLogs();
   }, [loadLogs]);
 
-  if (!ownedClubs.length && !loading) {
-    return (
-      <div className="vc-director-page">
-        <div className="vc-director-card">
+  const cardContent = (
+    <div className={`vc-director-card${embedded ? " vc-director-card--embedded" : ""}`}>
+      {!embedded ? (
+        <>
           <button type="button" className="vc-director-back" onClick={() => navigate("/dashboard")}>
             ← Return to Dashboard
           </button>
-          <p className="vc-director-loading">You are not a club director, or you have no clubs yet.</p>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="vc-director-page">
-      <p className="vc-director-kicker">Payment activity log</p>
-      <div className="vc-director-card">
-        <button type="button" className="vc-director-back" onClick={() => navigate("/dashboard")}>
-          ← Return to Dashboard
-        </button>
-        <button
-          type="button"
-          className="vc-director-back"
-          style={{ marginLeft: "0.5rem" }}
-          onClick={() => navigate(`/director/payments?club_id=${clubId || ""}`)}
-        >
-          ← All payments
-        </button>
+          <button
+            type="button"
+            className="vc-director-back"
+            style={{ marginLeft: "0.5rem" }}
+            onClick={() => {
+              if (onOpenPayments) {
+                onOpenPayments();
+                return;
+              }
+              navigate(`/director/payments?club_id=${clubId || ""}`);
+            }}
+          >
+            ← All payments
+          </button>
+        </>
+      ) : null}
         {error ? <div className="vc-director-error">{error}</div> : null}
 
         {ownedClubs.length > 1 ? (
@@ -118,14 +126,16 @@ export default function DirectorPaymentLogsPage() {
             Club
             <select
               value={clubId || ""}
-              onChange={(e) => {
-                const n = Number(e.target.value);
-                setClubId(n);
-                sessionStorage.setItem(CLUB_STORAGE_KEY, String(n));
-                navigate(`/director/payments/logs?club_id=${n}`);
-              }}
-              className="vc-director-modal__select"
-            >
+                onChange={(e) => {
+                  const n = Number(e.target.value);
+                  setClubId(n);
+                  sessionStorage.setItem(CLUB_STORAGE_KEY, String(n));
+                  if (!embedded) {
+                    navigate(`/director/payments/logs?club_id=${n}`);
+                  }
+                }}
+                className="vc-director-modal__select"
+              >
               {ownedClubs.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
@@ -174,6 +184,33 @@ export default function DirectorPaymentLogsPage() {
           )}
         </section>
       </div>
+  );
+
+  if (!ownedClubs.length && !loading) {
+    return embedded ? (
+      <div className="vc-director-card vc-director-card--embedded">
+        <p className="vc-director-loading">You are not a club director, or you have no clubs yet.</p>
+      </div>
+    ) : (
+      <div className="vc-director-page">
+        <div className="vc-director-card">
+          <button type="button" className="vc-director-back" onClick={() => navigate("/dashboard")}>
+            ← Return to Dashboard
+          </button>
+          <p className="vc-director-loading">You are not a club director, or you have no clubs yet.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (embedded) {
+    return cardContent;
+  }
+
+  return (
+    <div className="vc-director-page">
+      <p className="vc-director-kicker">Payment activity log</p>
+      {cardContent}
     </div>
   );
 }

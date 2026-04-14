@@ -10,8 +10,15 @@ function statusBadge(status) {
   return <span className="vc-status-pending">Pending</span>;
 }
 
-export default function DirectorPaymentsOverviewCard({ loading, clubId, rows, formatMoney }) {
+export default function DirectorPaymentsOverviewCard({ loading, clubId, rows, formatMoney, onViewAll = null }) {
   const list = Array.isArray(rows) ? rows : [];
+  const handleViewAll = () => {
+    if (onViewAll) {
+      onViewAll();
+      return;
+    }
+    navigate(`/director/payments?club_id=${clubId}`);
+  };
 
   return (
     <section className="vc-panel vc-panel--dashboard vc-panel--director-white">
@@ -24,7 +31,7 @@ export default function DirectorPaymentsOverviewCard({ loading, clubId, rows, fo
           type="button"
           className="vc-link-cyan vc-link-cyan--compact"
           disabled={!clubId}
-          onClick={() => navigate(`/director/payments?club_id=${clubId}`)}
+          onClick={handleViewAll}
         >
           View All
         </button>
