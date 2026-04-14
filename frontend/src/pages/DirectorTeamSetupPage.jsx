@@ -3,9 +3,11 @@ import {
   directorAddTeamMember,
   directorCreateTeam,
   directorDeleteClub,
+  directorRemoveTeamMember,
   directorDeleteTeam,
   fetchCurrentUser,
   fetchTeamMembers,
+  inviteTeamMemberByEmail,
 } from "../api";
 import { navigate } from "../navigation";
 
@@ -36,6 +38,9 @@ export default function DirectorTeamSetupPage({
   const [deleteClubBusy, setDeleteClubBusy] = useState(null);
   const [deleteClubBusyId, setDeleteClubBusyId] = useState(null);
   const [confirmDialog, setConfirmDialog] = useState(null);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteBusy, setInviteBusy] = useState(false);
+  const [removeBusyKey, setRemoveBusyKey] = useState("");
 
   const [memberUserId, setMemberUserId] = useState("");
   const [memberRole, setMemberRole] = useState("player");
@@ -241,6 +246,58 @@ export default function DirectorTeamSetupPage({
     });
   };
 
+  const openRemoveMemberConfirm = (team, memberRow) => {
+    setConfirmDialog({
+      kind: "member",
+      teamId: team.id,
+      memberUserId: memberRow?.user?.id,
+      message: `Remove ${memberRow?.user?.email || "this member"} from "${team.name}"?`,
+    });
+  };
+
+  const onInviteByEmail = async (team) => {
+    const email = inviteEmail.trim().toLowerCase();
+    if (!email) {
+      setError("Enter an email address.");
+      return;
+    }
+    setInviteBusy(true);
+    setError("");
+    setSuccessMessage("");
+    try {
+      const res = await inviteTeamMemberByEmail(Number(team.id), { email, role: "player" });
+      setInviteEmail("");
+      setSuccessMessage(res?.message || "Invitation sent successfully.");
+    } catch (e) {
+      setError(e.message || "Could not invite member.");
+    } finally {
+      setInviteBusy(false);
+    }
+  };
+
+  const performRemoveMember = async (teamIdValue, userId) => {
+    if (!teamIdValue || !userId) {
+      return;
+    }
+    const busyKey = `${teamIdValue}:${userId}`;
+    setRemoveBusyKey(busyKey);
+    setError("");
+    setSuccessMessage("");
+    try {
+      const res = await directorRemoveTeamMember(Number(teamIdValue), Number(userId));
+      setSuccessMessage(res?.message || "Member removed successfully.");
+      if (String(teamId) === String(teamIdValue)) {
+        const data = await fetchTeamMembers(Number(teamIdValue));
+        setMembersPayload(data);
+      }
+      bumpTeams();
+    } catch (e) {
+      setError(e.message || "Could not remove member.");
+    } finally {
+      setRemoveBusyKey("");
+    }
+  };
+
   const onConfirmDelete = async () => {
     if (!confirmDialog) {
       return;
@@ -252,6 +309,8 @@ export default function DirectorTeamSetupPage({
       }
     } else if (confirmDialog.kind === "club") {
       await performDeleteClub(confirmDialog.clubId);
+    } else if (confirmDialog.kind === "member") {
+      await performRemoveMember(confirmDialog.teamId, confirmDialog.memberUserId);
     }
     setConfirmDialog(null);
   };
@@ -380,7 +439,7 @@ export default function DirectorTeamSetupPage({
                               {team.name}
                               {team.season ? ` (${team.season})` : ""}
                             </td>
-                            <td style={{ textAlign: "right" }}>
+                            <td style={{ textAlign: "right", width: "1%", whiteSpace: "nowrap" }}>
                               <button
                                 type="button"
                                 className="vc-du-action"
@@ -460,6 +519,7 @@ export default function DirectorTeamSetupPage({
                   <th>User</th>
                   <th>Email</th>
                   <th>Role</th>
+                  <th />
                 </tr>
               </thead>
               <tbody>
@@ -472,6 +532,29 @@ export default function DirectorTeamSetupPage({
                     </td>
                     <td>{row.user?.email || "—"}</td>
                     <td>{roleLabel(row.membership?.role)}</td>
+                    <td style={{ textAlign: "right", width: "1%", whiteSpace: "nowrap" }}>
+                      {(() => {
+                        const selectedTeam = directorTeams.find((team) => String(team.id) === String(teamId));
+                        const canInvitePlayer = !!membersPayload?.can_add_player;
+                        const canInviteCoach = !!membersPayload?.can_add_coach;
+                        const canRemove =
+                          canInviteCoach || (row.membership?.role === "player" && canInvitePlayer);
+                        const busyKey = `${teamId}:${row.user?.id}`;
+                        if (!selectedTeam || !canRemove) {
+                          return <span className="vc-modal__muted">—</span>;
+                        }
+                        return (
+                          <button
+                            type="button"
+                            className="vc-du-action"
+                            disabled={removeBusyKey === busyKey || deleteClubBusy != null || deleteTeamBusyId != null}
+                            onClick={() => openRemoveMemberConfirm(selectedTeam, row)}
+                          >
+                            {removeBusyKey === busyKey ? "…" : "Remove"}
+                          </button>
+                        );
+                      })()}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -482,8 +565,42 @@ export default function DirectorTeamSetupPage({
             <p className="vc-modal__muted">No one on this team yet. Add a coach or player below.</p>
           ) : null}
 
+          {teamId && membersPayload ? (
+            <>
+              <p className="vc-modal__muted" style={{ marginTop: "1rem", marginBottom: "0.45rem" }}>
+                Invite by email
+              </p>
+              <div className="vc-pay-create-grid">
+                <input
+                  className="vc-director-modal__select"
+                  placeholder="Email address"
+                  value={inviteEmail}
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                />
+                <div />
+                <button
+                  type="button"
+                  className="vc-director-modal__btn"
+                  disabled={inviteBusy || !membersPayload.can_add_player || !teamId}
+                  onClick={() => {
+                    const selectedTeam = directorTeams.find((team) => String(team.id) === String(teamId));
+                    if (selectedTeam) {
+                      void onInviteByEmail(selectedTeam);
+                    }
+                  }}
+                >
+                  {inviteBusy ? "Inviting…" : "Invite"}
+                </button>
+              </div>
+            </>
+          ) : null}
+
           {teamId && membersPayload && (membersPayload.can_add_player || membersPayload.can_add_coach) ? (
-            <div className="vc-pay-create-grid" style={{ marginTop: "1rem" }}>
+            <>
+              <p className="vc-modal__muted" style={{ marginTop: "1rem", marginBottom: "0.45rem" }}>
+                Add existing user by ID
+              </p>
+              <div className="vc-pay-create-grid">
               {membersPayload.can_add_player && !membersPayload.can_add_coach ? (
                 <p className="vc-modal__muted" style={{ gridColumn: "1 / -1", margin: 0 }}>
                   Coaches may add <strong>players</strong> only; parent or director accounts cannot be added here.
@@ -516,7 +633,8 @@ export default function DirectorTeamSetupPage({
               >
                 {addBusy ? "Adding…" : "Add to team"}
               </button>
-            </div>
+              </div>
+            </>
           ) : null}
           {teamId && membersPayload && !membersPayload.can_add_player && !membersPayload.can_add_coach ? (
             <p className="vc-modal__muted" style={{ marginTop: "0.75rem" }}>
@@ -527,8 +645,13 @@ export default function DirectorTeamSetupPage({
       </div>
   );
 
-  const confirmBusy = deleteTeamBusyId != null || deleteClubBusy != null;
-  const confirmTitle = confirmDialog?.kind === "club" ? "Delete club" : "Delete team";
+  const confirmBusy = deleteTeamBusyId != null || deleteClubBusy != null || !!removeBusyKey;
+  const confirmTitle =
+    confirmDialog?.kind === "club"
+      ? "Delete club"
+      : confirmDialog?.kind === "member"
+        ? "Remove member"
+        : "Delete team";
 
   if (loading) {
     return embedded ? (
