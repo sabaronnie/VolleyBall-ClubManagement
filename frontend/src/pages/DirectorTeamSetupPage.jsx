@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { directorAddTeamMember, directorCreateTeam, fetchCurrentUser, fetchTeamMembers } from "../api";
+import {
+  directorAddTeamMember,
+  directorCreateTeam,
+  directorDeleteClub,
+  directorDeleteTeam,
+  fetchCurrentUser,
+  fetchTeamMembers,
+} from "../api";
 import { navigate } from "../navigation";
 
 const AUTH_TOKEN_KEY = "netup.auth.token";
-const CLUB_STORAGE_KEY = "netup.director.teams.club_id";
 
 function roleLabel(role) {
   if (role === "coach") return "Coach";
@@ -21,14 +27,15 @@ export default function DirectorTeamSetupPage({
   const [successMessage, setSuccessMessage] = useState("");
   const [ownedClubs, setOwnedClubs] = useState([]);
   const [directorTeams, setDirectorTeams] = useState([]);
-  const [clubId, setClubId] = useState(null);
   const [teamId, setTeamId] = useState("");
   const [membersPayload, setMembersPayload] = useState(null);
   const [membersLoading, setMembersLoading] = useState(false);
-
-  const [createName, setCreateName] = useState("");
-  const [createSeason, setCreateSeason] = useState("");
-  const [createBusy, setCreateBusy] = useState(false);
+  const [createDraftByClub, setCreateDraftByClub] = useState({});
+  const [createBusyClubId, setCreateBusyClubId] = useState(null);
+  const [deleteTeamBusyId, setDeleteTeamBusyId] = useState(null);
+  const [deleteClubBusy, setDeleteClubBusy] = useState(null);
+  const [deleteClubBusyId, setDeleteClubBusyId] = useState(null);
+  const [confirmDialog, setConfirmDialog] = useState(null);
 
   const [memberUserId, setMemberUserId] = useState("");
   const [memberRole, setMemberRole] = useState("player");
@@ -44,31 +51,12 @@ export default function DirectorTeamSetupPage({
       const clubs = me.owned_clubs || [];
       setOwnedClubs(clubs);
       setDirectorTeams(me.director_teams || []);
-      if (!clubs.length) {
-        setClubId(null);
-        return;
-      }
-      const params = new URLSearchParams(window.location.search);
-      const qClub = params.get("club_id");
-      const fromQuery = qClub && clubs.some((c) => c.id === Number(qClub)) ? Number(qClub) : null;
-      const stored = sessionStorage.getItem(CLUB_STORAGE_KEY);
-      const fromStore = stored ? Number(stored) : null;
-      const preferred =
-        preferredClubId && clubs.some((c) => c.id === Number(preferredClubId))
-          ? Number(preferredClubId)
-          : null;
-      const pick =
-        preferred ||
-        fromQuery ||
-        (fromStore && clubs.some((c) => c.id === fromStore) ? fromStore : clubs[0].id);
-      setClubId(pick);
-      sessionStorage.setItem(CLUB_STORAGE_KEY, String(pick));
     } catch (e) {
       setError(e.message || "Could not load your account.");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [preferredClubId]);
 
   useEffect(() => {
     if (!localStorage.getItem(AUTH_TOKEN_KEY)) {
@@ -79,21 +67,21 @@ export default function DirectorTeamSetupPage({
   }, [loadMe]);
 
   useEffect(() => {
-    if (preferredClubId && ownedClubs.some((club) => club.id === Number(preferredClubId))) {
-      setClubId(Number(preferredClubId));
-    }
-  }, [preferredClubId, ownedClubs]);
-
-  useEffect(() => {
     setSuccessMessage("");
     setMembersPayload(null);
-    setTeamId("");
-  }, [clubId]);
+  }, [ownedClubs.length]);
 
-  const clubTeams = useMemo(
-    () => directorTeams.filter((t) => Number(t.club_id) === Number(clubId)),
-    [directorTeams, clubId],
-  );
+  const teamsByClubId = useMemo(() => {
+    const out = {};
+    directorTeams.forEach((team) => {
+      const key = Number(team.club_id);
+      if (!out[key]) {
+        out[key] = [];
+      }
+      out[key].push(team);
+    });
+    return out;
+  }, [directorTeams]);
 
   useEffect(() => {
     if (!teamId) {
@@ -140,31 +128,38 @@ export default function DirectorTeamSetupPage({
     });
   }, [membersPayload]);
 
-  const onClubChange = (id) => {
-    const n = Number(id);
-    setClubId(n);
-    sessionStorage.setItem(CLUB_STORAGE_KEY, String(n));
-    const params = new URLSearchParams(window.location.search);
-    params.set("club_id", String(n));
-    window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
+  const updateCreateDraft = (targetClubId, field, value) => {
+    const key = Number(targetClubId);
+    setCreateDraftByClub((prev) => ({
+      ...prev,
+      [key]: {
+        name: prev[key]?.name || "",
+        season: prev[key]?.season || "",
+        [field]: value,
+      },
+    }));
   };
 
-  const onCreateTeam = async () => {
-    if (!clubId || !createName.trim()) {
+  const onCreateTeam = async (targetClubId) => {
+    const resolvedClubId = Number(targetClubId);
+    const draft = createDraftByClub[resolvedClubId] || { name: "", season: "" };
+    if (!resolvedClubId || !draft.name.trim()) {
       setError("Team name is required.");
       return;
     }
-    setCreateBusy(true);
+    setCreateBusyClubId(resolvedClubId);
     setError("");
     setSuccessMessage("");
     try {
-      const body = { name: createName.trim() };
-      if (createSeason.trim()) {
-        body.season = createSeason.trim();
+      const body = { name: draft.name.trim() };
+      if ((draft.season || "").trim()) {
+        body.season = draft.season.trim();
       }
-      const res = await directorCreateTeam(clubId, body);
-      setCreateName("");
-      setCreateSeason("");
+      const res = await directorCreateTeam(resolvedClubId, body);
+      setCreateDraftByClub((prev) => ({
+        ...prev,
+        [resolvedClubId]: { name: "", season: "" },
+      }));
       setSuccessMessage(res?.message || "Team created.");
       await loadMe();
       bumpTeams();
@@ -174,13 +169,96 @@ export default function DirectorTeamSetupPage({
     } catch (e) {
       setError(e.message || "Could not create team.");
     } finally {
-      setCreateBusy(false);
+      setCreateBusyClubId(null);
     }
+  };
+
+  const performDeleteTeam = async (targetTeam) => {
+    if (!targetTeam?.id) {
+      return;
+    }
+    setDeleteTeamBusyId(targetTeam.id);
+    setError("");
+    setSuccessMessage("");
+    try {
+      const res = await directorDeleteTeam(targetTeam.id);
+      setSuccessMessage(res?.message || "Team deleted successfully.");
+      if (String(teamId) === String(targetTeam.id)) {
+        setTeamId("");
+        setMembersPayload(null);
+      }
+      await loadMe();
+      bumpTeams();
+    } catch (e) {
+      setError(e.message || "Could not delete team.");
+    } finally {
+      setDeleteTeamBusyId(null);
+    }
+  };
+
+  const performDeleteClub = async (targetClubId) => {
+    const resolvedClubId = Number(targetClubId);
+    if (!resolvedClubId) {
+      return;
+    }
+    setDeleteClubBusy(resolvedClubId);
+    setDeleteClubBusyId(resolvedClubId);
+    setError("");
+    setSuccessMessage("");
+    try {
+      const res = await directorDeleteClub(resolvedClubId);
+      setSuccessMessage(res?.message || "Club deleted successfully.");
+      setTeamId("");
+      setMembersPayload(null);
+      await loadMe();
+      bumpTeams();
+    } catch (e) {
+      setError(e.message || "Could not delete club.");
+    } finally {
+      setDeleteClubBusy(null);
+      setDeleteClubBusyId(null);
+    }
+  };
+
+  const openDeleteTeamConfirm = (team, club) => {
+    setConfirmDialog({
+      kind: "team",
+      teamId: team.id,
+      teamName: team.name,
+      clubName: club.name,
+      message:
+        "Are you sure you want to delete this team? This will remove all team memberships and notify affected members.",
+    });
+  };
+
+  const openDeleteClubConfirm = (club) => {
+    setConfirmDialog({
+      kind: "club",
+      clubId: club.id,
+      clubName: club.name,
+      message:
+        "Are you sure you want to delete this club? This will delete its teams, remove affected memberships, and notify affected members.",
+    });
+  };
+
+  const onConfirmDelete = async () => {
+    if (!confirmDialog) {
+      return;
+    }
+    if (confirmDialog.kind === "team") {
+      const team = directorTeams.find((row) => Number(row.id) === Number(confirmDialog.teamId));
+      if (team) {
+        await performDeleteTeam(team);
+      }
+    } else if (confirmDialog.kind === "club") {
+      await performDeleteClub(confirmDialog.clubId);
+    }
+    setConfirmDialog(null);
   };
 
   const onAddMember = async () => {
     if (!teamId) {
-      setError("Choose a team in this club first.");
+      setError("Choose a team first.");
       return;
     }
     const uid = Number(memberUserId.trim());
@@ -247,56 +325,106 @@ export default function DirectorTeamSetupPage({
         {successMessage ? <div className="vc-director-success">{successMessage}</div> : null}
         {error ? <div className="vc-director-error">{error}</div> : null}
 
-        <div className="vc-pay-toolbar" style={{ marginTop: "1rem" }}>
-          {ownedClubs.length > 1 ? (
-            <label className="vc-pay-toolbar__field">
-              Club
-              <select
-                value={clubId || ""}
-                onChange={(e) => onClubChange(e.target.value)}
-                className="vc-director-modal__select"
-              >
-                {ownedClubs.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : (
-            <span className="vc-modal__muted" style={{ fontWeight: 600 }}>
-              {ownedClubs[0]?.name}
-            </span>
-          )}
-        </div>
-
         <section className="vc-director-section">
-          <h2 className="vc-panel-title">Create a team</h2>
+          <h2 className="vc-panel-title">Teams</h2>
           <p className="vc-modal__muted" style={{ marginTop: 0 }}>
-            Adds a team under the selected club. Name must be unique within the club.
+            Clubs and their teams are grouped below. Delete actions are available on each row.
           </p>
-          <div className="vc-pay-create-grid">
-            <input
-              className="vc-director-modal__select"
-              placeholder="Team name (required)"
-              value={createName}
-              onChange={(e) => setCreateName(e.target.value)}
-            />
-            <input
-              className="vc-director-modal__select"
-              placeholder="Season (optional, e.g. 2026)"
-              value={createSeason}
-              onChange={(e) => setCreateSeason(e.target.value)}
-            />
-            <button
-              type="button"
-              className="vc-director-modal__btn"
-              disabled={createBusy || !clubId}
-              onClick={() => void onCreateTeam()}
-            >
-              {createBusy ? "Creating…" : "Create team"}
-            </button>
-          </div>
+          {ownedClubs.map((club) => {
+            const clubTeams = teamsByClubId[Number(club.id)] || [];
+            const draft = createDraftByClub[Number(club.id)] || { name: "", season: "" };
+            return (
+              <div
+                key={club.id}
+                style={{
+                  borderTop: "1px solid #e8ecef",
+                  marginTop: "0.9rem",
+                  paddingTop: "0.9rem",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: "0.75rem",
+                  }}
+                >
+                  <h3 style={{ margin: 0, fontSize: "1rem" }}>{club.name}</h3>
+                  <button
+                    type="button"
+                    className="vc-du-action"
+                    disabled={deleteClubBusy != null || createBusyClubId != null || deleteTeamBusyId != null}
+                    onClick={() => openDeleteClubConfirm(club)}
+                  >
+                    {deleteClubBusy && Number(deleteClubBusyId) === Number(club.id) ? "…" : "Delete club"}
+                  </button>
+                </div>
+
+                <p className="vc-modal__muted" style={{ marginTop: "0.65rem", marginBottom: "0.5rem" }}>
+                  Existing teams:
+                </p>
+                <div className="vc-director-table-wrap">
+                  <table className="vc-director-table">
+                    <tbody>
+                      {!clubTeams.length ? (
+                        <tr>
+                          <td colSpan={2} style={{ color: "#6b7580", fontWeight: 600 }}>
+                            No teams under this club yet.
+                          </td>
+                        </tr>
+                      ) : (
+                        clubTeams.map((team) => (
+                          <tr key={team.id}>
+                            <td>
+                              {team.name}
+                              {team.season ? ` (${team.season})` : ""}
+                            </td>
+                            <td style={{ textAlign: "right" }}>
+                              <button
+                                type="button"
+                                className="vc-du-action"
+                                disabled={deleteTeamBusyId === team.id || deleteClubBusy != null}
+                                onClick={() => openDeleteTeamConfirm(team, club)}
+                              >
+                                {deleteTeamBusyId === team.id ? "…" : "Delete team"}
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                <p className="vc-modal__muted" style={{ marginTop: "0.75rem", marginBottom: "0.5rem" }}>
+                  Create a team form for this club:
+                </p>
+                <div className="vc-pay-create-grid">
+                  <input
+                    className="vc-director-modal__select"
+                    placeholder="Team name (required)"
+                    value={draft.name}
+                    onChange={(e) => updateCreateDraft(club.id, "name", e.target.value)}
+                  />
+                  <input
+                    className="vc-director-modal__select"
+                    placeholder="Season (optional, e.g. 2026)"
+                    value={draft.season}
+                    onChange={(e) => updateCreateDraft(club.id, "season", e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="vc-director-modal__btn"
+                    disabled={createBusyClubId != null || deleteClubBusy != null || deleteTeamBusyId != null}
+                    onClick={() => void onCreateTeam(club.id)}
+                  >
+                    {createBusyClubId === Number(club.id) ? "Creating…" : "Create team"}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
         </section>
 
         <section className="vc-director-section">
@@ -313,9 +441,9 @@ export default function DirectorTeamSetupPage({
                 className="vc-director-modal__select"
               >
                 <option value="">Select a team…</option>
-                {clubTeams.map((t) => (
+                {directorTeams.map((t) => (
                   <option key={t.id} value={String(t.id)}>
-                    {t.name}
+                    {(t.club_name ? `${t.club_name} — ` : "") + t.name}
                     {t.season ? ` (${t.season})` : ""}
                   </option>
                 ))}
@@ -399,6 +527,9 @@ export default function DirectorTeamSetupPage({
       </div>
   );
 
+  const confirmBusy = deleteTeamBusyId != null || deleteClubBusy != null;
+  const confirmTitle = confirmDialog?.kind === "club" ? "Delete club" : "Delete team";
+
   if (loading) {
     return embedded ? (
       <div className="vc-director-card vc-director-card--embedded">
@@ -431,13 +562,97 @@ export default function DirectorTeamSetupPage({
   }
 
   if (embedded) {
-    return cardContent;
+    return (
+      <>
+        {cardContent}
+        {confirmDialog ? (
+          <div
+            className="vc-director-modal-backdrop"
+            role="presentation"
+            onClick={(event) => {
+              if (event.target === event.currentTarget && !confirmBusy) {
+                setConfirmDialog(null);
+              }
+            }}
+          >
+            <div
+              className="vc-director-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="vc-confirm-delete-title"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <h3 id="vc-confirm-delete-title">{confirmTitle}</h3>
+              <p className="vc-director-modal__meta">{confirmDialog.message}</p>
+              <div className="vc-director-modal__actions">
+                <button
+                  type="button"
+                  className="vc-director-modal__btn vc-director-modal__btn--ghost"
+                  disabled={confirmBusy}
+                  onClick={() => setConfirmDialog(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="vc-director-modal__btn"
+                  disabled={confirmBusy}
+                  onClick={() => void onConfirmDelete()}
+                >
+                  {confirmBusy ? "Deleting…" : "Confirm delete"}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </>
+    );
   }
 
   return (
     <div className="vc-director-page">
       <p className="vc-director-kicker">Teams & roster</p>
       {cardContent}
+      {confirmDialog ? (
+        <div
+          className="vc-director-modal-backdrop"
+          role="presentation"
+          onClick={(event) => {
+            if (event.target === event.currentTarget && !confirmBusy) {
+              setConfirmDialog(null);
+            }
+          }}
+        >
+          <div
+            className="vc-director-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="vc-confirm-delete-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h3 id="vc-confirm-delete-title">{confirmTitle}</h3>
+            <p className="vc-director-modal__meta">{confirmDialog.message}</p>
+            <div className="vc-director-modal__actions">
+              <button
+                type="button"
+                className="vc-director-modal__btn vc-director-modal__btn--ghost"
+                disabled={confirmBusy}
+                onClick={() => setConfirmDialog(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="vc-director-modal__btn"
+                disabled={confirmBusy}
+                onClick={() => void onConfirmDelete()}
+              >
+                {confirmBusy ? "Deleting…" : "Confirm delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

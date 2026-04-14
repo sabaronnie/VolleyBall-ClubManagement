@@ -114,6 +114,35 @@ async function authenticatedJson(path, method, body) {
   return payload;
 }
 
+async function authenticatedDelete(path) {
+  const token = localStorage.getItem(AUTH_TOKEN_KEY);
+
+  let response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${token || ""}`,
+      },
+    });
+  } catch {
+    throw new Error("Cannot reach backend. Make sure Django is running on port 8000.");
+  }
+
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+
+  if (!response.ok) {
+    throw new Error(normalizeErrors(payload, "Request failed. Please try again."));
+  }
+
+  return payload;
+}
+
 export async function loginWithPassword({ email, password }) {
   return request("/api/auth/login/", { email, password });
 }
@@ -465,6 +494,14 @@ export async function directorEmailRenewalsDueTodayForFamily(clubId, playerId) {
 
 export async function directorCreateTeam(clubId, body) {
   return authenticatedJson(`/api/clubs/${clubId}/teams/create/`, "POST", body);
+}
+
+export async function directorDeleteTeam(teamId) {
+  return authenticatedDelete(`/api/teams/${teamId}/delete/`);
+}
+
+export async function directorDeleteClub(clubId) {
+  return authenticatedDelete(`/api/clubs/${clubId}/delete/`);
 }
 
 export async function fetchTeamMembers(teamId) {
