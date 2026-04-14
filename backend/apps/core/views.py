@@ -1621,6 +1621,75 @@ def directors_set_user_account_role(request, user_id):
     return JsonResponse({"user": _serialize_basic_user(target)})
 
 
+@login_required
+@csrf_exempt
+@require_POST
+def directors_remove_player_from_team(request, user_id):
+    if not is_any_club_director(request.user):
+        return JsonResponse(
+            {"errors": {"authorization": "Only club directors can remove players from teams."}},
+            status=403,
+        )
+
+    target = get_object_or_404(User, pk=user_id)
+    payload = _parse_json_request(request) or {}
+    raw_team_id = payload.get("team_id")
+
+    manageable_club_ids = list(
+        Club.objects.filter(
+            memberships__user=request.user,
+            memberships__role=ClubRole.CLUB_DIRECTOR,
+            memberships__is_active=True,
+        )
+        .values_list("id", flat=True)
+        .distinct()
+    )
+
+    memberships = (
+        TeamMembership.objects.active()
+        .filter(
+            user=target,
+            role=TeamRole.PLAYER,
+            team__club_id__in=manageable_club_ids,
+        )
+        .select_related("team", "team__club")
+    )
+
+    if raw_team_id is not None and str(raw_team_id).strip() != "":
+        try:
+            team_id = int(raw_team_id)
+        except (TypeError, ValueError):
+            return JsonResponse({"errors": {"team_id": "Invalid team id."}}, status=400)
+        memberships = memberships.filter(team_id=team_id)
+
+    membership = memberships.order_by("team__name", "team_id", "id").first()
+    if membership is None:
+        return JsonResponse(
+            {"errors": {"membership": "No active player membership was found for this user in your managed clubs."}},
+            status=404,
+        )
+
+    TeamMembership.objects.deactivate(membership)
+    return JsonResponse(
+        {
+            "message": "Player removed from team successfully.",
+            "removed": {
+                "user_id": target.id,
+                "team_id": membership.team_id,
+                "team_name": membership.team.name,
+                "club_id": membership.team.club_id,
+                "club_name": membership.team.club.name if membership.team.club_id else "",
+                "membership": {
+                    "role": membership.role,
+                    "is_captain": membership.is_captain,
+                    "is_active": membership.is_active,
+                    "left_at": membership.left_at.isoformat() if membership.left_at else None,
+                },
+            },
+        }
+    )
+
+
 @csrf_exempt
 @require_POST
 def password_reset_request(request):

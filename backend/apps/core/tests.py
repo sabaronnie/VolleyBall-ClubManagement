@@ -3056,6 +3056,69 @@ class DirectorUserDirectoryApiTests(TestCase):
             .exists()
         )
 
+    def test_director_can_remove_player_from_team_via_directory_action(self):
+        director = User.objects.create_user(
+            email="dir-remove@example.com",
+            password="StrongPassword123!",
+        )
+        club = Club.objects.create_club(name="Remove Club", director=director)
+        team = Team.objects.create_team(club=club, name="Remove Team")
+        player = User.objects.create_user(
+            email="remove-player@example.com",
+            password="StrongPassword123!",
+            verification_status=VerificationStatus.VERIFIED,
+        )
+        TeamMembership.objects.add_member(user=player, team=team, role=TeamRole.PLAYER)
+
+        token = generate_auth_token(director)
+        response = self.client.post(
+            reverse("core:directors-remove-player-from-team", kwargs={"user_id": player.id}),
+            data=json.dumps({"team_id": team.id}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(
+            TeamMembership.objects.active()
+            .filter(user=player, team=team, role=TeamRole.PLAYER)
+            .exists()
+        )
+
+    def test_coach_cannot_remove_player_from_directory_action(self):
+        director = User.objects.create_user(
+            email="dir-no-remove@example.com",
+            password="StrongPassword123!",
+        )
+        club = Club.objects.create_club(name="Coach Remove Club", director=director)
+        team = Team.objects.create_team(club=club, name="Coach Remove Team")
+        coach = User.objects.create_user(
+            email="coach-no-remove@example.com",
+            password="StrongPassword123!",
+        )
+        player = User.objects.create_user(
+            email="player-no-remove@example.com",
+            password="StrongPassword123!",
+            verification_status=VerificationStatus.VERIFIED,
+        )
+        TeamMembership.objects.add_member(user=coach, team=team, role=TeamRole.COACH)
+        TeamMembership.objects.add_member(user=player, team=team, role=TeamRole.PLAYER)
+
+        token = generate_auth_token(coach)
+        response = self.client.post(
+            reverse("core:directors-remove-player-from-team", kwargs={"user_id": player.id}),
+            data=json.dumps({"team_id": team.id}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(
+            TeamMembership.objects.active()
+            .filter(user=player, team=team, role=TeamRole.PLAYER)
+            .exists()
+        )
+
 
 class ParentLinkDirectorQueueTests(TestCase):
     def test_director_sees_pending_when_parent_is_in_club_but_child_not_on_team(self):

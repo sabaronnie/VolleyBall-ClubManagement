@@ -380,6 +380,10 @@ export async function directorSetUserAccountRole(userId, body) {
   return authenticatedJson(`/api/directors/users/${userId}/account-role/`, "POST", body);
 }
 
+export async function directorRemovePlayerFromTeam(userId, body) {
+  return authenticatedJson(`/api/directors/users/${userId}/remove-player/`, "POST", body || {});
+}
+
 export async function directorVerifyUser(userId, body) {
   return authenticatedJson(`/api/directors/users/${userId}/verify/`, "POST", body || {});
 }

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  directorRemovePlayerFromTeam,
   directorResolveParentLink,
   directorSetUserAccountRole,
   fetchCurrentUser,
@@ -64,6 +65,7 @@ export default function DirectorUserManagementPage({
   const [parentLinkSuccess, setParentLinkSuccess] = useState("");
   const [teamFilter, setTeamFilter] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [directorySuccess, setDirectorySuccess] = useState("");
   const parentLinkSuccessTimerRef = useRef(null);
 
   useEffect(() => {
@@ -75,6 +77,7 @@ export default function DirectorUserManagementPage({
   const loadDirectory = useCallback(async () => {
     setLoadingDirectory(true);
     setDirectoryError("");
+    setDirectorySuccess("");
     try {
       const me = await fetchCurrentUser();
       setViewerIsStaff(Boolean(me.viewer_is_staff));
@@ -264,6 +267,35 @@ export default function DirectorUserManagementPage({
     }
   };
 
+  const onRemovePlayer = async (row) => {
+    const rowTeams = Array.isArray(row?.teams) ? row.teams : [];
+    const targetTeamId =
+      focusedTeamId != null && focusedTeamId !== ""
+        ? Number(focusedTeamId)
+        : rowTeams.length === 1
+          ? Number(rowTeams[0]?.id)
+          : null;
+
+    if (!targetTeamId) {
+      setError("Pick a single team scope before removing a player who belongs to multiple teams.");
+      return;
+    }
+
+    const key = `remove-player-${row.id}`;
+    setActionKey(key);
+    setError("");
+    setDirectorySuccess("");
+    try {
+      const res = await directorRemovePlayerFromTeam(row.id, { team_id: targetTeamId });
+      setDirectorySuccess(res?.message || "Player removed from team successfully.");
+      await loadDirectory();
+    } catch (err) {
+      setError(err.message || "Could not remove player.");
+    } finally {
+      setActionKey("");
+    }
+  };
+
   const cardContent = (
     <div className={`vc-director-card${embedded ? " vc-director-card--embedded" : ""}`}>
       {!embedded ? (
@@ -290,6 +322,7 @@ export default function DirectorUserManagementPage({
       {error || directoryError ? (
         <div className="vc-director-error">{error || directoryError}</div>
       ) : null}
+      {directorySuccess ? <div className="vc-director-success">{directorySuccess}</div> : null}
       {parentLinkError ? <div className="vc-director-error">{parentLinkError}</div> : null}
       {parentLinkSuccess ? <div className="vc-director-success">{parentLinkSuccess}</div> : null}
 
@@ -456,7 +489,9 @@ export default function DirectorUserManagementPage({
                   ) : (
                     filteredUsers.map((u) => {
                       const fullName = `${u.first_name || ""} ${u.last_name || ""}`.trim() || u.email;
-                      const busy = actionKey === `role-${u.id}`;
+                      const saveBusy = actionKey === `role-${u.id}`;
+                      const removeBusy = actionKey === `remove-player-${u.id}`;
+                      const busy = saveBusy || removeBusy;
                       const staffLocked = u.is_staff && !viewerIsStaff;
                       const currentRole = u.role || "";
                       const selectVal = roleEdits[u.id] !== undefined ? roleEdits[u.id] : currentRole || "";
@@ -464,6 +499,16 @@ export default function DirectorUserManagementPage({
                       const rowDirty = roleEdits[u.id] !== undefined && roleEdits[u.id] !== currentRole;
                       const saveDisabled =
                         !rowDirty || staffLocked || busy || selfDirectorLocked || !selectVal;
+                      const removePlayerDisabled =
+                        currentRole !== "player" ||
+                        busy ||
+                        !Array.isArray(u.teams) ||
+                        u.teams.length === 0 ||
+                        (focusedTeamId == null && u.teams.length !== 1);
+                      const removePlayerTitle =
+                        focusedTeamId == null && Array.isArray(u.teams) && u.teams.length > 1
+                          ? "Filter to a single team before removing this player."
+                          : "";
                       return (
                         <tr key={u.id}>
                           <td>
@@ -544,14 +589,25 @@ export default function DirectorUserManagementPage({
                           </td>
                           {canManageRoles ? (
                             <td>
-                              <button
-                                type="button"
-                                className="vc-du-action"
-                                disabled={saveDisabled}
-                                onClick={() => void onSaveAccountRole(u.id)}
-                              >
-                                {busy ? "…" : "Save"}
-                              </button>
+                              <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                                <button
+                                  type="button"
+                                  className="vc-du-action"
+                                  disabled={saveDisabled}
+                                  onClick={() => void onSaveAccountRole(u.id)}
+                                >
+                                  {saveBusy ? "…" : "Save"}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="vc-du-action"
+                                  disabled={removePlayerDisabled}
+                                  title={removePlayerTitle}
+                                  onClick={() => void onRemovePlayer(u)}
+                                >
+                                  {removeBusy ? "…" : "Remove Player"}
+                                </button>
+                              </div>
                             </td>
                           ) : null}
                         </tr>
