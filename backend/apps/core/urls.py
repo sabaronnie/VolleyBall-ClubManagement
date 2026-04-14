@@ -12,6 +12,8 @@ from .views import (
     coach_training_session_attendance,
     create_club,
     create_team,
+    delete_club,
+    delete_team,
     confirm_training_session,
     directors_pending_users,
     directors_reject_user,
@@ -81,6 +83,7 @@ urlpatterns = [
     path("notifications/read/", mark_notifications_read, name="mark-notifications-read"),
     path("notifications/send/", send_team_notification, name="send-team-notification"),
     path("clubs/create/", create_club, name="create-club"),
+    path("clubs/<int:club_id>/delete/", delete_club, name="delete-club"),
     path(
         "clubs/<int:club_id>/director/payments/overview/",
         payment_views.director_payment_overview,
@@ -188,6 +191,7 @@ urlpatterns = [
         name="delete-payment-schedule",
     ),
     path("clubs/<int:club_id>/teams/create/", create_team, name="create-team"),
+    path("teams/<int:team_id>/delete/", delete_team, name="delete-team"),
     path("players/<int:player_id>/parents/", add_parent_association, name="add-parent-association"),
     path(
         "players/<int:player_id>/parents/<int:parent_id>/",

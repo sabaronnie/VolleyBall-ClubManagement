@@ -65,7 +65,6 @@ from .permissions import (
     coach_may_add_user_to_team_roster,
     can_manage_club,
     can_manage_player,
-    is_club_coach,
     can_manage_team,
     can_manage_team_member,
     can_player_confirm_attendance,
@@ -717,8 +716,74 @@ def _send_registration_approved_email(user):
         )
 
 
+def _send_team_membership_removed_email(*, recipient, team_name, club_name, team_id):
+    if not recipient.email:
+        return
+    if not _password_reset_email_configured():
+        return
+
+    subject = f"Team membership removed: {team_name}"
+    body = (
+        f"Hello {recipient.first_name or 'there'},\n\n"
+        f"The team '{team_name}' in '{club_name}' was deleted by a club director.\n"
+        "Your membership for this team has been removed.\n\n"
+        "If this seems unexpected, contact your club director.\n"
+    )
+    try:
+        send_mail(
+            subject,
+            body,
+            settings.DEFAULT_FROM_EMAIL,
+            [recipient.email],
+            fail_silently=False,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to send team removal email to %s for team %s",
+            recipient.email,
+            team_id,
+        )
+
+
+def _send_club_membership_removed_email(*, recipient, club_name, club_id):
+    if not recipient.email:
+        return
+    if not _password_reset_email_configured():
+        return
+
+    subject = f"Club membership removed: {club_name}"
+    body = (
+        f"Hello {recipient.first_name or 'there'},\n\n"
+        f"The club '{club_name}' was deleted by a club director.\n"
+        "Your related club/team memberships have been removed.\n\n"
+        "If this seems unexpected, contact your club administration.\n"
+    )
+    try:
+        send_mail(
+            subject,
+            body,
+            settings.DEFAULT_FROM_EMAIL,
+            [recipient.email],
+            fail_silently=False,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to send club removal email to %s for club %s",
+            recipient.email,
+            club_id,
+        )
+
+
 def _delete_registration_otp(email):
     RegistrationOTP.objects.filter(email=email).delete()
+
+
+def _user_is_director_of_club(user, club) -> bool:
+    return ClubMembership.objects.active().filter(
+        user=user,
+        club=club,
+        role=ClubRole.CLUB_DIRECTOR,
+    ).exists()
 
 
 def _serialize_pending_account_user(user):
@@ -3211,9 +3276,9 @@ def create_team(request, club_id):
         return JsonResponse({"errors": {"body": "Invalid JSON."}}, status=400)
 
     club = get_object_or_404(Club, pk=club_id)
-    if not (can_manage_club(request.user, club) or is_club_coach(request.user, club)):
+    if not _user_is_director_of_club(request.user, club):
         return JsonResponse(
-            {"errors": {"authorization": "You cannot create teams for this club."}},
+            {"errors": {"authorization": "Only the club director can create teams for this club."}},
             status=403,
         )
 
@@ -3249,13 +3314,6 @@ def create_team(request, club_id):
             status=400,
         )
 
-    if not can_manage_club(request.user, club):
-        TeamMembership.objects.add_member(
-            user=request.user,
-            team=team,
-            role=TeamRole.COACH,
-        )
-
     return JsonResponse(
         {
             "message": "Team created successfully.",
@@ -3274,6 +3332,109 @@ def create_team(request, club_id):
             },
         },
         status=201,
+    )
+
+
+@csrf_exempt
+@login_required
+@require_http_methods(["DELETE"])
+def delete_team(request, team_id):
+    team = get_object_or_404(Team.objects.select_related("club"), pk=team_id)
+    if not _user_is_director_of_club(request.user, team.club):
+        return JsonResponse(
+            {"errors": {"authorization": "Only club directors can delete teams for this club."}},
+            status=403,
+        )
+
+    memberships = list(
+        TeamMembership.objects.active().filter(team=team).select_related("user")
+    )
+    recipients = []
+    seen_user_ids = set()
+    for membership in memberships:
+        if membership.user_id not in seen_user_ids:
+            seen_user_ids.add(membership.user_id)
+            recipients.append(membership.user)
+
+    team_name = team.name
+    club = team.club
+    with transaction.atomic():
+        for membership in memberships:
+            TeamMembership.objects.deactivate(membership)
+        team.delete()
+
+    for recipient in recipients:
+        _send_team_membership_removed_email(
+            recipient=recipient,
+            team_name=team_name,
+            club_name=club.name,
+            team_id=team_id,
+        )
+
+    return JsonResponse(
+        {
+            "message": "Team deleted successfully.",
+            "deleted_team_id": team_id,
+            "deleted_team_name": team_name,
+            "memberships_removed_count": len(memberships),
+            "notified_members_count": len(recipients),
+        }
+    )
+
+
+@csrf_exempt
+@login_required
+@require_http_methods(["DELETE"])
+def delete_club(request, club_id):
+    club = get_object_or_404(Club, pk=club_id)
+    if not _user_is_director_of_club(request.user, club):
+        return JsonResponse(
+            {"errors": {"authorization": "Only club directors can delete this club."}},
+            status=403,
+        )
+
+    team_memberships = list(
+        TeamMembership.objects.active()
+        .filter(team__club=club)
+        .select_related("user")
+    )
+    club_memberships = list(
+        ClubMembership.objects.active()
+        .filter(club=club)
+        .select_related("user")
+    )
+
+    recipients = []
+    seen_user_ids = set()
+    for membership in team_memberships + club_memberships:
+        if membership.user_id not in seen_user_ids:
+            seen_user_ids.add(membership.user_id)
+            recipients.append(membership.user)
+
+    club_name = club.name
+    with transaction.atomic():
+        for membership in team_memberships:
+            TeamMembership.objects.deactivate(membership)
+        for membership in club_memberships:
+            ClubMembership.objects.deactivate(membership)
+        club.delete()
+
+    for recipient in recipients:
+        _send_club_membership_removed_email(
+            recipient=recipient,
+            club_name=club_name,
+            club_id=club_id,
+        )
+
+    return JsonResponse(
+        {
+            "message": "Club deleted successfully.",
+            "deleted_club_id": club_id,
+            "deleted_club_name": club_name,
+            "team_memberships_removed_count": len(team_memberships),
+            "club_memberships_removed_count": len(club_memberships),
+            "notified_members_count": len(recipients),
+        }
     )
 
 
