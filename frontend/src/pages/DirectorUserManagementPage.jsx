@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   directorResolveParentLink,
   directorSetUserAccountRole,
@@ -37,6 +37,7 @@ function formatVerificationStatus(status) {
 export default function DirectorUserManagementPage({
   embedded = false,
   onOpenPayments = null,
+  focusedTeamId = null,
 }) {
   const [allUsers, setAllUsers] = useState([]);
   const [directoryCount, setDirectoryCount] = useState(0);
@@ -51,6 +52,7 @@ export default function DirectorUserManagementPage({
   const [directoryDescription, setDirectoryDescription] = useState(
     "This list is limited to people connected to the clubs you direct, including linked parents.",
   );
+  const [directoryTeams, setDirectoryTeams] = useState([]);
   const [error, setError] = useState("");
   const [directoryError, setDirectoryError] = useState("");
   const [actionKey, setActionKey] = useState("");
@@ -60,6 +62,8 @@ export default function DirectorUserManagementPage({
   const [loadingParentLinks, setLoadingParentLinks] = useState(true);
   const [parentLinkError, setParentLinkError] = useState("");
   const [parentLinkSuccess, setParentLinkSuccess] = useState("");
+  const [teamFilter, setTeamFilter] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const parentLinkSuccessTimerRef = useRef(null);
 
   useEffect(() => {
@@ -77,17 +81,18 @@ export default function DirectorUserManagementPage({
       setViewerUserId(me.user?.id ?? null);
       setOwnedClubs(me.owned_clubs || []);
       const directorView = Boolean(me.viewer_is_staff || me.is_director_or_staff || (me.owned_clubs || []).length > 0);
-      const coachedTeams = me.coached_teams || [];
       setCanManageRoles(directorView);
       setShowParentLinks(directorView);
-      const payload = await fetchDirectorUserDirectory(800);
+      setDirectoryTeams(directorView ? (me.director_teams || []) : (me.coached_teams || []));
+      const payload = await fetchDirectorUserDirectory(800, { teamId: focusedTeamId });
       const rows = payload.users || [];
       const scopeKind = payload.scope?.kind || (directorView ? "club" : "team");
       setDirectoryScopeKind(scopeKind);
       if (scopeKind === "team") {
-        setDirectoryHeading(coachedTeams.length > 1 ? "All people on your teams" : "All people on your team");
+        const scopedTeamName = payload.scope?.names?.[0] || "";
+        setDirectoryHeading(scopedTeamName ? `People in ${scopedTeamName}` : "All people on your team");
         setDirectoryDescription(
-          "This list is limited to the coaches, players, and linked parents connected to the teams you coach.",
+          "This list is limited to the coaches, players, and linked parents connected to your team.",
         );
       } else if (scopeKind === "all") {
         setDirectoryHeading("All people in the app");
@@ -107,11 +112,55 @@ export default function DirectorUserManagementPage({
     } catch (err) {
       setAllUsers([]);
       setDirectoryCount(0);
+      setDirectoryTeams([]);
       setDirectoryError(err.message || "Could not load user directory.");
     } finally {
       setLoadingDirectory(false);
     }
-  }, []);
+  }, [focusedTeamId]);
+
+  const availableTeamFilters = useMemo(() => {
+    const names = new Set();
+    directoryTeams.forEach((team) => {
+      const label = team?.short_name || team?.name || "";
+      if (label) {
+        names.add(label);
+      }
+    });
+    allUsers.forEach((user) => {
+      (user.teams || []).forEach((team) => {
+        const label = team?.short_name || team?.name || "";
+        if (label) {
+          names.add(label);
+        }
+      });
+      (user.team_short_names || []).forEach((teamShortName) => {
+        if (teamShortName) {
+          names.add(teamShortName);
+        }
+      });
+    });
+    return Array.from(names).sort((left, right) => left.localeCompare(right));
+  }, [allUsers, directoryTeams]);
+
+  const filteredUsers = useMemo(() => {
+    const normalizedTeam = teamFilter.trim().toLowerCase();
+    const normalizedSearch = searchQuery.trim().toLowerCase();
+
+    return allUsers.filter((user) => {
+      const fullName = `${user.first_name || ""} ${user.last_name || ""}`.trim().toLowerCase();
+      const email = (user.email || "").toLowerCase();
+      const teamShortNames = (user.team_short_names || []).map((value) => String(value).toLowerCase());
+
+      if (normalizedTeam && !teamShortNames.includes(normalizedTeam)) {
+        return false;
+      }
+      if (normalizedSearch && !fullName.includes(normalizedSearch) && !email.includes(normalizedSearch)) {
+        return false;
+      }
+      return true;
+    });
+  }, [allUsers, searchQuery, teamFilter]);
 
   const loadParentLinks = useCallback(async () => {
     setLoadingParentLinks(true);
@@ -350,12 +399,39 @@ export default function DirectorUserManagementPage({
               <>This view is read-only for coaches.</>
             )}
           </p>
+          <div className="vc-director-directory-filters">
+            <label className="vc-director-directory-filters__field">
+              <span>Team</span>
+              <select
+                className="vc-director-modal__select"
+                value={teamFilter}
+                onChange={(event) => setTeamFilter(event.target.value)}
+              >
+                <option value="">All teams</option>
+                {availableTeamFilters.map((teamShortName) => (
+                  <option key={teamShortName} value={teamShortName}>
+                    {teamShortName}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="vc-director-directory-filters__field">
+              <span>Search</span>
+              <input
+                className="vc-director-modal__select"
+                type="text"
+                placeholder="Search by name or email"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+              />
+            </label>
+          </div>
           {loadingDirectory ? (
             <p className="vc-director-loading">Loading directory…</p>
           ) : (
             <div className="vc-director-table-wrap">
               <p className="vc-director-loading" style={{ color: "#6b7580", marginBottom: "0.75rem" }}>
-                Showing {allUsers.length} of {directoryCount} loaded
+                Showing {filteredUsers.length} of {directoryCount} loaded
                 {directoryScopeKind === "team" ? " from your team scope" : directoryScopeKind === "club" ? " from your club scope" : ""}.
               </p>
               <table className="vc-director-table">
@@ -364,20 +440,21 @@ export default function DirectorUserManagementPage({
                     <th>User ID</th>
                     <th>Name</th>
                     <th>Email</th>
+                    <th>Team</th>
                     <th>Status</th>
                     <th>Role</th>
                     {canManageRoles ? <th /> : null}
                   </tr>
                 </thead>
                 <tbody>
-                  {allUsers.length === 0 ? (
+                  {filteredUsers.length === 0 ? (
                     <tr>
-                      <td colSpan={canManageRoles ? 6 : 5} style={{ color: "#6b7580", fontWeight: 600 }}>
+                      <td colSpan={canManageRoles ? 7 : 6} style={{ color: "#6b7580", fontWeight: 600 }}>
                         No users found.
                       </td>
                     </tr>
                   ) : (
-                    allUsers.map((u) => {
+                    filteredUsers.map((u) => {
                       const fullName = `${u.first_name || ""} ${u.last_name || ""}`.trim() || u.email;
                       const busy = actionKey === `role-${u.id}`;
                       const staffLocked = u.is_staff && !viewerIsStaff;
@@ -394,6 +471,7 @@ export default function DirectorUserManagementPage({
                           </td>
                           <td>{fullName}</td>
                           <td>{u.email}</td>
+                          <td>{(u.team_short_names || []).join(", ") || "—"}</td>
                           <td>{formatVerificationStatus(u.verification_status)}</td>
                           <td>
                             {canManageRoles ? (

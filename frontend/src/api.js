@@ -364,8 +364,15 @@ export async function fetchDirectorPendingUsers() {
   return authenticatedGet("/api/directors/pending-users/");
 }
 
-export async function fetchDirectorUserDirectory(limit) {
-  const q = limit ? `?limit=${encodeURIComponent(String(limit))}` : "";
+export async function fetchDirectorUserDirectory(limit, options = {}) {
+  const params = new URLSearchParams();
+  if (limit) {
+    params.set("limit", String(limit));
+  }
+  if (options.teamId != null && options.teamId !== "" && options.teamId !== "__all__") {
+    params.set("team_id", String(options.teamId));
+  }
+  const q = params.toString() ? `?${params.toString()}` : "";
   return authenticatedGet(`/api/directors/users/directory/${q}`);
 }
 

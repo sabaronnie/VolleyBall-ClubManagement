@@ -298,6 +298,8 @@ class LoginRequiredDecoratorTests(TestCase):
             last_name="Role",
         )
         owned_club = Club.objects.create_club(name="NetUp Volleyball Club", director=user)
+        owned_club.short_name = "NUVC"
+        owned_club.save(update_fields=["short_name"])
         coach_club = Club.objects.create_club(
             name="Spike Academy",
             director=User.objects.create_user(
@@ -307,6 +309,8 @@ class LoginRequiredDecoratorTests(TestCase):
                 last_name="Director",
             ),
         )
+        coach_club.short_name = "SA"
+        coach_club.save(update_fields=["short_name"])
         player_club = Club.objects.create_club(
             name="Serve Stars",
             director=User.objects.create_user(
@@ -316,6 +320,8 @@ class LoginRequiredDecoratorTests(TestCase):
                 last_name="Director",
             ),
         )
+        player_club.short_name = "SS"
+        player_club.save(update_fields=["short_name"])
         coached_team = Team.objects.create_team(club=coach_club, name="U18 Boys", season="2026")
         player_team = Team.objects.create_team(club=player_club, name="U16 Girls", season="2026")
         TeamMembership.objects.add_member(user=user, team=coached_team, role=TeamRole.COACH)
@@ -336,9 +342,11 @@ class LoginRequiredDecoratorTests(TestCase):
         self.assertEqual(len(payload["coached_teams"]), 1)
         self.assertEqual(payload["coached_teams"][0]["id"], coached_team.id)
         self.assertEqual(payload["coached_teams"][0]["club_id"], coach_club.id)
+        self.assertEqual(payload["coached_teams"][0]["club_short_name"], coach_club.short_name)
         self.assertEqual(len(payload["player_teams"]), 1)
         self.assertEqual(payload["player_teams"][0]["id"], player_team.id)
         self.assertEqual(payload["player_teams"][0]["club_id"], player_club.id)
+        self.assertEqual(payload["player_teams"][0]["club_short_name"], player_club.short_name)
         self.assertEqual(payload["children"], [])
 
     def test_me_returns_child_player_teams_for_parent(self):
@@ -2765,6 +2773,8 @@ class DirectorUserDirectoryApiTests(TestCase):
         self.assertIn(target.id, ids)
         self.assertIn(parent.id, ids)
         self.assertNotIn(outsider.id, ids)
+        target_row = next(row for row in data["users"] if row["id"] == target.id)
+        self.assertEqual(target_row["team_short_names"], [team.name])
 
         response2 = self.client.post(
             reverse("core:directors-set-account-role", kwargs={"user_id": target.id}),
@@ -2827,6 +2837,42 @@ class DirectorUserDirectoryApiTests(TestCase):
         self.assertIn(player_a.id, ids)
         self.assertIn(parent_a.id, ids)
         self.assertNotIn(player_b.id, ids)
+
+    def test_directory_can_filter_director_scope_to_focused_team(self):
+        director = User.objects.create_user(
+            email="focused-dir@example.com",
+            password="StrongPassword123!",
+        )
+        club = Club.objects.create_club(name="Focused Club", director=director)
+        team_a = Team.objects.create_team(club=club, name="Focus A")
+        team_b = Team.objects.create_team(club=club, name="Focus B")
+        player_a = User.objects.create_user(
+            email="focus-a@example.com",
+            password="StrongPassword123!",
+            verification_status=VerificationStatus.VERIFIED,
+        )
+        player_b = User.objects.create_user(
+            email="focus-b@example.com",
+            password="StrongPassword123!",
+            verification_status=VerificationStatus.VERIFIED,
+        )
+        TeamMembership.objects.add_member(user=player_a, team=team_a, role=TeamRole.PLAYER)
+        TeamMembership.objects.add_member(user=player_b, team=team_b, role=TeamRole.PLAYER)
+
+        token = generate_auth_token(director)
+        response = self.client.get(
+            f'{reverse("core:directors-user-directory")}?team_id={team_a.id}',
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["scope"]["kind"], "team")
+        self.assertEqual(data["scope"]["team_id"], team_a.id)
+        ids = {row["id"] for row in data["users"]}
+        self.assertIn(player_a.id, ids)
+        self.assertNotIn(player_b.id, ids)
+        player_row = next(row for row in data["users"] if row["id"] == player_a.id)
+        self.assertEqual(player_row["team_short_names"], [team_a.name])
 
     def test_set_role_promotes_to_director(self):
         director = User.objects.create_user(

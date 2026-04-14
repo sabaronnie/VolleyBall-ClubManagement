@@ -237,6 +237,7 @@ function buildRelatedTeams(payload) {
       name: team.name,
       clubId: team.club_id || null,
       clubName: team.club_name || "",
+      clubShortName: team.club_short_name || "",
       source: "Director",
       scheduleTier: "elevated",
       coachNames: team.coach_names || [],
@@ -257,6 +258,7 @@ function buildRelatedTeams(payload) {
       name: team.name,
       clubId: team.club_id || null,
       clubName: team.club_name || "",
+      clubShortName: team.club_short_name || "",
       source: "Coach",
       scheduleTier: "elevated",
       coachNames: team.coach_names || [],
@@ -278,6 +280,7 @@ function buildRelatedTeams(payload) {
         name: team.name,
         clubId: team.club_id || null,
         clubName: team.club_name || "",
+        clubShortName: team.club_short_name || "",
         source: "Player",
         scheduleTier: "member",
         coachNames: team.coach_names || [],
@@ -301,6 +304,7 @@ function buildRelatedTeams(payload) {
           name: team.name,
           clubId: team.club_id || null,
           clubName: team.club_name || "",
+          clubShortName: team.club_short_name || "",
           source: `${child.user?.first_name || "Child"}'s team`,
           scheduleTier: "member",
           coachNames: team.coach_names || [],
@@ -947,7 +951,7 @@ function App() {
     if (String(activeTeamId) === "__all__" && teams.length > 0) {
       return {
         id: "__all__",
-        name: "View all",
+        name: "All",
         canManageSchedule: false,
         canManageTraining: false,
         linkedChildren: [],
@@ -1322,20 +1326,20 @@ function App() {
   };
 
   const scheduleTeamNavProps = {
-    teamOptions: scheduleTeams,
+    teamOptions: teams,
     activeTeamId,
     onChangeTeam: handleSelectTeam,
     includeAllTeamsOption: scheduleTeams.length > 1,
   };
 
   const playerTeamNavProps = {
-    teamOptions: playerTeamsOnly,
+    teamOptions: teams,
     activeTeamId,
     onChangeTeam: handleSelectTeam,
   };
 
   const coachAttendanceNavProps = {
-    teamOptions: coachAttendanceTeams,
+    teamOptions: teams,
     activeTeamId,
     onChangeTeam: handleSelectTeam,
   };
@@ -1479,7 +1483,12 @@ function App() {
       );
     }
     if (directorDashboardAllowed) {
-      return <DashboardPage />;
+      return (
+        <DashboardPage
+          {...defaultTeamNavProps}
+          includeAllTeamsOption={teams.length > 0}
+        />
+      );
     }
     return <MemberHubPage />;
   }

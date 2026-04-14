@@ -77,7 +77,6 @@ export default function ClubWorkspaceLayout({
   const [profileMe, setProfileMe] = useState(null);
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState("");
-  const [directorToolsVisible, setDirectorToolsVisible] = useState(false);
   const [showParentAttendanceFromProfile, setShowParentAttendanceFromProfile] = useState(false);
 
   useEffect(() => {
@@ -88,7 +87,6 @@ export default function ClubWorkspaceLayout({
     fetchCurrentUser()
       .then((me) => {
         if (!cancelled) {
-          setDirectorToolsVisible(Boolean(me.is_director_or_staff));
           const roles = me.account_profile?.roles || [];
           const hasChildren = Array.isArray(me.children) && me.children.length > 0;
           const pendingLinks = Array.isArray(me.pending_parent_links) && me.pending_parent_links.length > 0;
@@ -99,7 +97,6 @@ export default function ClubWorkspaceLayout({
       })
       .catch(() => {
         if (!cancelled) {
-          setDirectorToolsVisible(false);
           setShowParentAttendanceFromProfile(false);
         }
       });
@@ -204,50 +201,6 @@ export default function ClubWorkspaceLayout({
                   <button type="button" role="menuitem" onClick={openProfile}>
                     Profile
                   </button>
-                  {directorToolsVisible ? (
-                    <>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          setAccountMenuOpen(false);
-                          navigate("/director/payments");
-                        }}
-                      >
-                        Payments & fees
-                      </button>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          setAccountMenuOpen(false);
-                          navigate("/director/users");
-                        }}
-                      >
-                        Registration
-                      </button>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          setAccountMenuOpen(false);
-                          navigate("/director/teams");
-                        }}
-                      >
-                        Teams & roster
-                      </button>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          setAccountMenuOpen(false);
-                          navigate("/payments");
-                        }}
-                      >
-                        Payment schedule
-                      </button>
-                    </>
-                  ) : null}
                   <button
                     type="button"
                     role="menuitem"
@@ -438,20 +391,28 @@ export function ClubTeamSelect({
   const [open, setOpen] = useState(false);
 
   const options = useMemo(() => {
+    const formatTeamLabel = (team) => {
+      if (!team) {
+        return "None";
+      }
+      const clubLabel = team.clubShortName || team.clubName || "";
+      return clubLabel ? `${team.name} (${clubLabel})` : team.name;
+    };
+
     const list = [];
     list.push({ key: "", label: "None", value: "", team: null });
-    if (includeAllTeamsOption && teams.length > 1) {
+    if (includeAllTeamsOption && teams.length > 0) {
       list.push({
         key: "__all__",
-        label: "View all",
+        label: "All",
         value: "__all__",
-        team: { id: "__all__", name: "View all", canManageSchedule: false, canManageTraining: false },
+        team: { id: "__all__", name: "All", canManageSchedule: false, canManageTraining: false },
       });
     }
     teams.forEach((team) => {
       list.push({
         key: String(team.id),
-        label: team.name,
+        label: formatTeamLabel(team),
         value: String(team.id),
         team,
       });

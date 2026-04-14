@@ -15,7 +15,7 @@ from django.core.signing import BadSignature, SignatureExpired
 from django.core.validators import EmailValidator
 from django.core.mail import send_mail
 from django.db import IntegrityError, transaction
-from django.db.models import Exists, OuterRef, Q
+from django.db.models import Exists, OuterRef, Prefetch, Q
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -220,6 +220,7 @@ def _serialize_team(team):
         "id": team.id,
         "club_id": team.club_id,
         "club_name": team.club.name,
+        "club_short_name": team.club.short_name,
         "name": team.name,
         "short_name": team.short_name,
         "description": team.description,
@@ -1253,7 +1254,73 @@ def directors_reject_user(request, user_id):
     )
 
 
-def _serialize_user_directory_row(user):
+def _directory_team_summaries_for_user(user, scope=None):
+    club_ids = set(scope.get("club_ids") or []) if scope else set()
+    team_ids = set(scope.get("team_ids") or []) if scope else set()
+    team_map = {}
+
+    def is_in_scope(team):
+        if team is None:
+            return False
+        if team_ids:
+            return team.id in team_ids
+        if club_ids:
+            return team.club_id in club_ids
+        return True
+
+    def add_team(team):
+        if not is_in_scope(team):
+            return
+        if team.id in team_map:
+            return
+        team_map[team.id] = {
+            "id": team.id,
+            "name": team.name,
+            "short_name": team.short_name or team.name,
+            "club_id": team.club_id,
+            "club_name": team.club.name if team.club_id else "",
+        }
+
+    memberships = getattr(user, "prefetched_active_team_memberships", None)
+    if memberships is None:
+        memberships = (
+            TeamMembership.objects.active()
+            .filter(user=user)
+            .select_related("team__club")
+        )
+    for membership in memberships:
+        add_team(membership.team)
+
+    relations = getattr(user, "prefetched_approved_player_relationships", None)
+    if relations is None:
+        relations = (
+            ParentPlayerRelation.objects.approved()
+            .filter(parent=user)
+            .select_related("player")
+            .prefetch_related(
+                Prefetch(
+                    "player__team_memberships",
+                    queryset=TeamMembership.objects.active().select_related("team__club"),
+                    to_attr="prefetched_active_team_memberships",
+                )
+            )
+        )
+    for relation in relations:
+        child_memberships = getattr(relation.player, "prefetched_active_team_memberships", None)
+        if child_memberships is None:
+            child_memberships = (
+                TeamMembership.objects.active()
+                .filter(user=relation.player)
+                .select_related("team__club")
+            )
+        for membership in child_memberships:
+            add_team(membership.team)
+
+    return sorted(team_map.values(), key=lambda item: (item["club_name"], item["name"], item["id"]))
+
+
+def _serialize_user_directory_row(user, scope=None):
+    teams = _directory_team_summaries_for_user(user, scope=scope)
     return {
         "id": user.id,
         "email": user.email,
@@ -1262,6 +1329,8 @@ def _serialize_user_directory_row(user):
         "verification_status": user.verification_status,
         "role": _canonical_app_role(user) or None,
         "is_staff": user.is_staff,
+        "teams": teams,
+        "team_short_names": [team["short_name"] for team in teams],
     }
 
 
@@ -1301,6 +1370,7 @@ def _scoped_user_directory(request_user):
                 "kind": "club",
                 "label": "All people in your club",
                 "names": [club.name for club in director_clubs],
+                "club_ids": club_ids,
             },
         )
 
@@ -1330,6 +1400,7 @@ def _scoped_user_directory(request_user):
                 "kind": "team",
                 "label": "All people on your team",
                 "names": [team.name for team in coached_teams],
+                "team_ids": team_ids,
             },
         )
 
@@ -1351,8 +1422,86 @@ def directors_user_directory(request):
     except ValueError:
         limit = 500
 
+    raw_team_id = (request.GET.get("team_id") or "").strip()
+    if raw_team_id:
+        try:
+            team_id = int(raw_team_id)
+        except ValueError:
+            return JsonResponse({"errors": {"team_id": "Invalid team id."}}, status=400)
+
+        allowed_team = None
+        if scope["kind"] == "all":
+            allowed_team = Team.objects.filter(pk=team_id).select_related("club").first()
+        elif scope["kind"] == "club":
+            allowed_team = (
+                Team.objects.filter(
+                    pk=team_id,
+                    club__memberships__user=request.user,
+                    club__memberships__role=ClubRole.CLUB_DIRECTOR,
+                    club__memberships__is_active=True,
+                )
+                .select_related("club")
+                .distinct()
+                .first()
+            )
+        elif scope["kind"] == "team":
+            allowed_team = (
+                Team.objects.filter(
+                    pk=team_id,
+                    memberships__user=request.user,
+                    memberships__role=TeamRole.COACH,
+                    memberships__is_active=True,
+                )
+                .select_related("club")
+                .distinct()
+                .first()
+            )
+
+        if allowed_team is None:
+            return JsonResponse(
+                {"errors": {"authorization": "You do not have access to that team."}},
+                status=403,
+            )
+
+        users = users.filter(
+            Q(team_memberships__team_id=allowed_team.id, team_memberships__is_active=True)
+            | Q(
+                player_relationships__player__team_memberships__team_id=allowed_team.id,
+                player_relationships__is_active=True,
+                player_relationships__approval_status=ParentLinkApprovalStatus.APPROVED,
+            )
+        )
+        scope = {
+            "kind": "team",
+            "label": "All people on your team",
+            "names": [allowed_team.name],
+            "team_id": allowed_team.id,
+            "club_id": allowed_team.club_id,
+            "club_name": allowed_team.club.name if allowed_team.club_id else "",
+        }
+
     users = users.order_by("email", "id").distinct()[:limit]
-    rows = [_serialize_user_directory_row(u) for u in users]
+    users = users.prefetch_related(
+        Prefetch(
+            "team_memberships",
+            queryset=TeamMembership.objects.active().select_related("team__club"),
+            to_attr="prefetched_active_team_memberships",
+        ),
+        Prefetch(
+            "player_relationships",
+            queryset=ParentPlayerRelation.objects.approved()
+            .select_related("player")
+            .prefetch_related(
+                Prefetch(
+                    "player__team_memberships",
+                    queryset=TeamMembership.objects.active().select_related("team__club"),
+                    to_attr="prefetched_active_team_memberships",
+                )
+            ),
+            to_attr="prefetched_approved_player_relationships",
+        ),
+    )
+    rows = [_serialize_user_directory_row(u, scope=scope) for u in users]
     return JsonResponse({"users": rows, "count": len(rows), "scope": scope})
 
 

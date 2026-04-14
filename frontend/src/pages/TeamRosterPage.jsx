@@ -18,7 +18,7 @@ export default function TeamRosterPage({ team }) {
   const [role, setRole] = useState("player");
   const [busy, setBusy] = useState(false);
 
-  const teamId = team?.id;
+  const teamId = team?.id && team.id !== "__all__" ? team.id : null;
   const teamName = team?.name || "Team";
 
   const load = useCallback(async () => {

@@ -6,6 +6,7 @@ import DirectorClubSummaryCard from "../components/director/DirectorClubSummaryC
 import DirectorPaymentsOverviewCard from "../components/director/DirectorPaymentsOverviewCard";
 import DirectorRolesPermissionCard from "../components/director/DirectorRolesPermissionCard";
 import DirectorSummaryRow from "../components/director/DirectorSummaryRow";
+import { navigate } from "../navigation";
 import CoachPaymentsPage from "./CoachPaymentsPage";
 import DirectorPaymentLogsPage from "./DirectorPaymentLogsPage";
 import DirectorPaymentsPage from "./DirectorPaymentsPage";
@@ -129,7 +130,12 @@ export function userHasAnyClubAffiliation(me) {
   return owned + dirTeams + coachTeams + playTeams > 0 || childTeams;
 }
 
-export default function DashboardPage() {
+export default function DashboardPage({
+  teamOptions = [],
+  activeTeamId = "",
+  onChangeTeam = null,
+  includeAllTeamsOption = true,
+}) {
   const [ownedClubs, setOwnedClubs] = useState([]);
   const [clubId, setClubId] = useState(null);
   const [overview, setOverview] = useState(null);
@@ -343,6 +349,10 @@ export default function DashboardPage() {
     <ClubWorkspaceLayout
       activeTab="dashboard"
       viewerAccountRole={viewerAccountRole}
+      teamOptions={teamOptions}
+      activeTeamId={activeTeamId}
+      onChangeTeam={onChangeTeam}
+      includeAllTeamsOption={includeAllTeamsOption}
       showPlayerSessionsTab={hasPlayerTeams}
       showCoachAttendanceTab={showCoachAttendanceTab}
     >
@@ -465,7 +475,10 @@ export default function DashboardPage() {
               isOpen={openDirectorSection === "users"}
               onToggle={() => toggleDirectorSection("users")}
             >
-              <DirectorUserManagementPage embedded onOpenPayments={() => openDirectorSectionPanel("payments")} />
+              <DirectorUserManagementPage
+                embedded
+                onOpenPayments={() => openDirectorSectionPanel("payments")}
+              />
             </DirectorDashboardDropdown>
 
             <DirectorDashboardDropdown
