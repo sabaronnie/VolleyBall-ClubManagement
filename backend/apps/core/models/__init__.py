@@ -16,6 +16,7 @@ from .player_profile import PlayerProfile
 from .registration_otp import RegistrationOTP
 from .schedule import TeamScheduleEntry, TrainingSession, TrainingSessionConfirmation
 from .team import Team
+from .team_invitation import TeamInvitation, TeamInvitationStatus
 from .password_reset_otp import PasswordResetOTP
 from .player_fee import DirectorPaymentAuditLog, FeePaymentLedgerEntry, PaymentSchedule, PlayerFeeRecord
 from .user import AssignedAccountRole, User, VerificationStatus
