@@ -53,7 +53,14 @@ function TrendSvg({ points }) {
   );
 }
 
-export default function DirectorAttendanceTrendCard({ loading, clubId, trend }) {
+export default function DirectorAttendanceTrendCard({
+  loading,
+  clubId,
+  trend,
+  title = "Attendance Trend (Last 30 Days)",
+  emptySelectionMessage = "Select a club to load attendance history.",
+  emptyDataMessage = "No attendance data available yet for the last 30 days. Schedule and close sessions so this chart can show club-wide trends.",
+}) {
   const points = trend?.points || [];
   const hasData = points.some((p) => p.closed_slots > 0);
 
@@ -62,7 +69,7 @@ export default function DirectorAttendanceTrendCard({ loading, clubId, trend }) 
       <div className="vc-dashboard-panel-head">
         <div>
           <p className="vc-dashboard-panel-head__eyebrow">Analytics</p>
-          <h2 className="vc-panel-title">Attendance Trend (Last 30 Days)</h2>
+          <h2 className="vc-panel-title">{title}</h2>
         </div>
       </div>
       <div className="vc-director-trend-body">
@@ -72,12 +79,11 @@ export default function DirectorAttendanceTrendCard({ loading, clubId, trend }) 
           </p>
         ) : !clubId ? (
           <p className="vc-modal__muted" style={{ margin: 0 }}>
-            Select a club to load attendance history.
+            {emptySelectionMessage}
           </p>
         ) : !hasData ? (
           <p className="vc-modal__muted" style={{ margin: 0 }}>
-            No attendance data available yet for the last 30 days. Schedule and close sessions so this chart
-            can show club-wide trends.
+            {emptyDataMessage}
           </p>
         ) : (
           <>

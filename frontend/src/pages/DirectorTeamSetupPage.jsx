@@ -109,12 +109,14 @@ export default function DirectorTeamSetupPage({
   embedded = false,
   preferredClubId = null,
   onOpenUsers = null,
+  workspaceRole = "director",
 }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [ownedClubs, setOwnedClubs] = useState([]);
   const [directorTeams, setDirectorTeams] = useState([]);
+  const [coachTeams, setCoachTeams] = useState([]);
   const [teamId, setTeamId] = useState("");
   const [createTeamDialogClub, setCreateTeamDialogClub] = useState(null);
   const [createTeamError, setCreateTeamError] = useState("");
@@ -137,6 +139,10 @@ export default function DirectorTeamSetupPage({
   const [inviteUserIdRole, setInviteUserIdRole] = useState("player");
   const [inviteUserIdBusy, setInviteUserIdBusy] = useState(false);
 
+  const isCoachWorkspace = workspaceRole === "coach";
+  const accessibleTeams = isCoachWorkspace ? coachTeams : directorTeams;
+  const inviteRoleOptions = isCoachWorkspace ? [INVITE_ROLE_OPTIONS[0]] : INVITE_ROLE_OPTIONS;
+
   const bumpTeams = () => window.dispatchEvent(new Event("netup-teams-changed"));
 
   const loadMe = useCallback(async () => {
@@ -147,6 +153,7 @@ export default function DirectorTeamSetupPage({
       const clubs = me.owned_clubs || [];
       setOwnedClubs(clubs);
       setDirectorTeams(me.director_teams || []);
+      setCoachTeams(me.coached_teams || []);
     } catch (e) {
       setError(e.message || "Could not load your account.");
     } finally {
@@ -181,23 +188,23 @@ export default function DirectorTeamSetupPage({
   const invitationTeamOptions = useMemo(
     () => [
       { value: "", label: "Select a team…" },
-      ...directorTeams.map((team) => ({
+      ...accessibleTeams.map((team) => ({
         value: String(team.id),
         label: `${team.club_name ? `${team.club_name} — ` : ""}${team.name}${team.season ? ` (${team.season})` : ""}`,
       })),
     ],
-    [directorTeams],
+    [accessibleTeams],
   );
 
   useEffect(() => {
     if (!teamId) {
       return;
     }
-    const teamStillExists = directorTeams.some((team) => String(team.id) === String(teamId));
+    const teamStillExists = accessibleTeams.some((team) => String(team.id) === String(teamId));
     if (!teamStillExists) {
       setTeamId("");
     }
-  }, [directorTeams, teamId]);
+  }, [accessibleTeams, teamId]);
 
   const openCreateTeamModal = (club) => {
     setCreateTeamDialogClub(club);
@@ -400,7 +407,7 @@ export default function DirectorTeamSetupPage({
             ← Dashboard
           </button>
           <button type="button" className="vc-link-cyan" onClick={() => navigate("/dashboard")}>
-            Director dashboard
+            {isCoachWorkspace ? "Coaching dashboard" : "Director dashboard"}
           </button>
           <button
             type="button"
@@ -421,6 +428,7 @@ export default function DirectorTeamSetupPage({
         {successMessage ? <div className="vc-director-success">{successMessage}</div> : null}
         {error ? <div className="vc-director-error">{error}</div> : null}
 
+        {!isCoachWorkspace ? (
         <section className="vc-director-section">
           <h2 className="vc-panel-title">Teams</h2>
           <p className="vc-modal__muted" style={{ marginTop: 0 }}>
@@ -506,6 +514,7 @@ export default function DirectorTeamSetupPage({
             );
           })}
         </section>
+        ) : null}
 
         <section className="vc-director-section">
           <div className="vc-team-invitations__header">
@@ -514,7 +523,9 @@ export default function DirectorTeamSetupPage({
                 Team invitations
               </h2>
               <p className="vc-modal__muted" style={{ marginTop: "0.35rem", marginBottom: 0 }}>
-                Invite coaches or players by email or by ID.
+                {isCoachWorkspace
+                  ? "Invite players by email or by ID."
+                  : "Invite coaches or players by email or by ID."}
               </p>
             </div>
             <div className="vc-team-invitations__picker">
@@ -548,7 +559,7 @@ export default function DirectorTeamSetupPage({
                   onChange={(e) => setInviteEmail(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
-                      const selectedTeam = directorTeams.find((team) => String(team.id) === String(teamId));
+                      const selectedTeam = accessibleTeams.find((team) => String(team.id) === String(teamId));
                       if (selectedTeam) {
                         void onInviteByEmail(selectedTeam);
                       }
@@ -558,7 +569,7 @@ export default function DirectorTeamSetupPage({
                 <InlineDropdown
                   value={inviteEmailRole}
                   onChange={setInviteEmailRole}
-                  options={INVITE_ROLE_OPTIONS}
+                  options={inviteRoleOptions}
                   ariaLabel="Invitation role for email"
                 />
                 <button
@@ -566,7 +577,7 @@ export default function DirectorTeamSetupPage({
                   className="vc-director-modal__btn"
                   disabled={inviteEmailBusy || !teamId}
                   onClick={() => {
-                    const selectedTeam = directorTeams.find((team) => String(team.id) === String(teamId));
+                    const selectedTeam = accessibleTeams.find((team) => String(team.id) === String(teamId));
                     if (selectedTeam) {
                       void onInviteByEmail(selectedTeam);
                     }
@@ -587,7 +598,7 @@ export default function DirectorTeamSetupPage({
                   onChange={(e) => setInviteUserId(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
-                      const selectedTeam = directorTeams.find((team) => String(team.id) === String(teamId));
+                      const selectedTeam = accessibleTeams.find((team) => String(team.id) === String(teamId));
                       if (selectedTeam) {
                         void onInviteById(selectedTeam);
                       }
@@ -597,7 +608,7 @@ export default function DirectorTeamSetupPage({
                 <InlineDropdown
                   value={inviteUserIdRole}
                   onChange={setInviteUserIdRole}
-                  options={INVITE_ROLE_OPTIONS}
+                  options={inviteRoleOptions}
                   ariaLabel="Invitation role for user ID"
                 />
                 <button
@@ -605,7 +616,7 @@ export default function DirectorTeamSetupPage({
                   className="vc-director-modal__btn"
                   disabled={inviteUserIdBusy || !teamId}
                   onClick={() => {
-                    const selectedTeam = directorTeams.find((team) => String(team.id) === String(teamId));
+                    const selectedTeam = accessibleTeams.find((team) => String(team.id) === String(teamId));
                     if (selectedTeam) {
                       void onInviteById(selectedTeam);
                     }
@@ -640,7 +651,7 @@ export default function DirectorTeamSetupPage({
     );
   }
 
-  if (!ownedClubs.length) {
+  if (!ownedClubs.length && !isCoachWorkspace) {
     return embedded ? (
       <div className="vc-director-card vc-director-card--embedded">
         <p className="vc-director-loading">You need an owned club (club director) to create teams and roster.</p>
@@ -652,6 +663,28 @@ export default function DirectorTeamSetupPage({
             ← Dashboard
           </button>
           <p className="vc-director-loading">You need an owned club (club director) to create teams and roster.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!accessibleTeams.length && isCoachWorkspace) {
+    return embedded ? (
+      <div className="vc-director-card vc-director-card--embedded">
+        <p className="vc-director-loading">
+          {isCoachWorkspace
+            ? "You need at least one coached team to invite players from this workspace."
+            : "You need at least one team to manage invitations."}
+        </p>
+      </div>
+    ) : (
+      <div className="vc-director-page">
+        <div className="vc-director-card">
+          <p className="vc-director-loading">
+            {isCoachWorkspace
+              ? "You need at least one coached team to invite players from this workspace."
+              : "You need at least one team to manage invitations."}
+          </p>
         </div>
       </div>
     );

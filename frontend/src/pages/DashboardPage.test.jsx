@@ -85,6 +85,7 @@ describe("DashboardPage create-club flow", () => {
     localStorage.setItem("netup.auth.token", "test-token");
     vi.spyOn(api, "fetchCurrentUser");
     vi.spyOn(api, "fetchDirectorPaymentOverview");
+    vi.spyOn(api, "fetchCoachTeamDashboard");
     vi.spyOn(api, "createClub");
   });
 
@@ -204,5 +205,82 @@ describe("DashboardPage create-club flow", () => {
     });
     expect(screen.queryByRole("heading", { name: /no club yet/i })).not.toBeInTheDocument();
     expect(sessionStorage.getItem("netup.director.payment.club_id")).toBe("7");
+  });
+
+  it("renders team-scoped statistics cards for the coach workspace", async () => {
+    vi.mocked(api.fetchCurrentUser).mockResolvedValue(
+      baseMe({
+        user: { id: 9, first_name: "Coach", last_name: "User", role: "coach" },
+        coached_teams: [
+          {
+            id: 11,
+            name: "Falcons",
+            club_id: 7,
+            club_name: "My Club",
+            can_manage_training: true,
+          },
+        ],
+      }),
+    );
+    vi.mocked(api.fetchDirectorPaymentOverview).mockResolvedValue(overviewPayload);
+    vi.mocked(api.fetchCoachTeamDashboard).mockResolvedValue({
+      team: { id: 11, name: "Falcons" },
+      kpis: {
+        players_today: 0,
+        practice_time_display: null,
+        practice_session_id: null,
+        next_match: null,
+        feedback_due: 0,
+      },
+      attendance_vs_performance: { labels: [], attendance: [], average_performance: [], categories: [] },
+      player_stats: [],
+      recent_feedback: [],
+      workspace_overview: {
+        kpis: {
+          registration_player_count: 12,
+          monthly_revenue: "480.00",
+          monthly_revenue_currency: "USD",
+          attendance_rate: 91.5,
+          outstanding_payer_count: 3,
+        },
+        attendance_trend_30d: {
+          calculation_summary: "summary",
+          points: Array.from({ length: 30 }, (_, i) => ({
+            date: `2026-04-${String(i + 1).padStart(2, "0")}`,
+            rate_percent: i === 0 ? 90 : null,
+            closed_slots: i === 0 ? 8 : 0,
+            attended_slots: i === 0 ? 7 : 0,
+          })),
+        },
+        payments_overview: [
+          {
+            player_id: 22,
+            family_label: "Ava Player",
+            total_paid: "60.00",
+            total_remaining: "30.00",
+            currency: "USD",
+            status: "pending",
+          },
+        ],
+        team_summary: {
+          average_attendance_percent: 91.5,
+          best_participating_team: { team_id: 11, team_name: "Falcons", rate_percent: 91.5 },
+          low_participation: null,
+          monthly_profit: "480.00",
+          monthly_profit_currency: "USD",
+        },
+      },
+    });
+
+    render(<DashboardPage activeTeamId="11" />);
+
+    await waitFor(() => {
+      expect(api.fetchCoachTeamDashboard).toHaveBeenCalledWith(11);
+    });
+    expect(screen.getByRole("heading", { name: "Falcons" })).toBeInTheDocument();
+    expect(screen.getByText("Registration")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Team Summary" })).toBeInTheDocument();
+    expect(screen.getByText("Current Team")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Payments Overview" })).toBeInTheDocument();
   });
 });

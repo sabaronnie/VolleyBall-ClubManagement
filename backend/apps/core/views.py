@@ -1625,17 +1625,11 @@ def directors_set_user_account_role(request, user_id):
 @csrf_exempt
 @require_POST
 def directors_remove_player_from_team(request, user_id):
-    if not is_any_club_director(request.user):
-        return JsonResponse(
-            {"errors": {"authorization": "Only club directors can remove players from teams."}},
-            status=403,
-        )
-
     target = get_object_or_404(User, pk=user_id)
     payload = _parse_json_request(request) or {}
     raw_team_id = payload.get("team_id")
 
-    manageable_club_ids = list(
+    director_club_ids = list(
         Club.objects.filter(
             memberships__user=request.user,
             memberships__role=ClubRole.CLUB_DIRECTOR,
@@ -1644,16 +1638,35 @@ def directors_remove_player_from_team(request, user_id):
         .values_list("id", flat=True)
         .distinct()
     )
-
-    memberships = (
-        TeamMembership.objects.active()
-        .filter(
-            user=target,
-            role=TeamRole.PLAYER,
-            team__club_id__in=manageable_club_ids,
+    coached_team_ids = list(
+        Team.objects.filter(
+            memberships__user=request.user,
+            memberships__role=TeamRole.COACH,
+            memberships__is_active=True,
         )
-        .select_related("team", "team__club")
+        .values_list("id", flat=True)
+        .distinct()
     )
+    if not director_club_ids and not coached_team_ids:
+        return JsonResponse(
+            {"errors": {"authorization": "Only club directors or team coaches can remove players from teams."}},
+            status=403,
+        )
+
+    memberships = TeamMembership.objects.active().filter(
+        user=target,
+        role=TeamRole.PLAYER,
+    )
+    if director_club_ids and coached_team_ids:
+        memberships = memberships.filter(
+            Q(team__club_id__in=director_club_ids) | Q(team_id__in=coached_team_ids)
+        )
+    elif director_club_ids:
+        memberships = memberships.filter(team__club_id__in=director_club_ids)
+    else:
+        memberships = memberships.filter(team_id__in=coached_team_ids)
+
+    memberships = memberships.select_related("team", "team__club")
 
     if raw_team_id is not None and str(raw_team_id).strip() != "":
         try:

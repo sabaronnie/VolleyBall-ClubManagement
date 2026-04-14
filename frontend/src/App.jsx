@@ -929,6 +929,7 @@ function App() {
   const [draftEntries, setDraftEntries] = useState([]);
   const [isSavingSchedule, setIsSavingSchedule] = useState(false);
   const [selectedChildIdByTeam, setSelectedChildIdByTeam] = useState({});
+  const [dashboardWorkspaceAllowed, setDashboardWorkspaceAllowed] = useState(null);
   const [directorDashboardAllowed, setDirectorDashboardAllowed] = useState(null);
   const [viewerAccountRole, setViewerAccountRole] = useState(null);
   const [teamsRefreshKey, setTeamsRefreshKey] = useState(0);
@@ -1048,6 +1049,7 @@ function App() {
 
     async function loadTeams() {
       if (!isAuthenticated) {
+        setDashboardWorkspaceAllowed(null);
         setDirectorDashboardAllowed(null);
         setViewerAccountRole(null);
         setScheduleAccessElevated(false);
@@ -1072,6 +1074,9 @@ function App() {
           (payload.coached_teams || []).length > 0 ||
           (payload.player_teams || []).length > 0 ||
           (payload.children || []).some((c) => Array.isArray(c.teams) && c.teams.length > 0);
+        const hasCoachWorkspace = (payload.coached_teams || []).length > 0;
+
+        setDashboardWorkspaceAllowed(flaggedDirector || owned || hasCoachWorkspace || !hasRosterOrMemberContext);
         // Director dashboard: existing directors, or users with no team/member context yet (create-club onboarding).
         setDirectorDashboardAllowed(flaggedDirector || owned || !hasRosterOrMemberContext);
 
@@ -1085,6 +1090,7 @@ function App() {
         if (!isMounted) {
           return;
         }
+        setDashboardWorkspaceAllowed(false);
         setDirectorDashboardAllowed(false);
         setViewerAccountRole(null);
         setScheduleAccessElevated(false);
@@ -1475,14 +1481,14 @@ function App() {
     if (!isAuthenticated) {
       return <LoginPage />;
     }
-    if (directorDashboardAllowed === null) {
+    if (dashboardWorkspaceAllowed === null) {
       return (
         <div className="vc-app vc-dashboard" style={{ padding: "3rem", textAlign: "center" }}>
           <p className="vc-modal__muted">Loading…</p>
         </div>
       );
     }
-    if (directorDashboardAllowed) {
+    if (dashboardWorkspaceAllowed) {
       return (
         <DashboardPage
           {...defaultTeamNavProps}

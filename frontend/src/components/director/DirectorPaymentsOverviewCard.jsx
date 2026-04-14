@@ -10,7 +10,16 @@ function statusBadge(status) {
   return <span className="vc-status-pending">Pending</span>;
 }
 
-export default function DirectorPaymentsOverviewCard({ loading, clubId, rows, formatMoney, onViewAll = null }) {
+export default function DirectorPaymentsOverviewCard({
+  loading,
+  clubId,
+  rows,
+  formatMoney,
+  onViewAll = null,
+  title = "Payments Overview",
+  emptySelectionMessage = "Create a club as director to see fee tracking.",
+  emptyDataMessage = "No payments available yet for this club. Use Payments to add schedules and invoices.",
+}) {
   const list = Array.isArray(rows) ? rows : [];
   const handleViewAll = () => {
     if (onViewAll) {
@@ -25,7 +34,7 @@ export default function DirectorPaymentsOverviewCard({ loading, clubId, rows, fo
       <div className="vc-dashboard-panel-head">
         <div>
           <p className="vc-dashboard-panel-head__eyebrow">Finance</p>
-          <h2 className="vc-panel-title">Payments Overview</h2>
+          <h2 className="vc-panel-title">{title}</h2>
         </div>
         <button
           type="button"
@@ -39,7 +48,7 @@ export default function DirectorPaymentsOverviewCard({ loading, clubId, rows, fo
       {loading ? (
         <p className="vc-modal__muted">Loading payment data…</p>
       ) : !clubId ? (
-        <p className="vc-modal__muted">Create a club as director to see fee tracking.</p>
+        <p className="vc-modal__muted">{emptySelectionMessage}</p>
       ) : (
         <div className="vc-dashboard-table-wrap">
           <table className="vc-table vc-table--dashboard">
@@ -55,7 +64,7 @@ export default function DirectorPaymentsOverviewCard({ loading, clubId, rows, fo
               {list.length === 0 ? (
                 <tr>
                   <td colSpan={4} style={{ color: "#6b7580", fontWeight: 600 }}>
-                    No payments available yet for this club. Use Payments to add schedules and invoices.
+                    {emptyDataMessage}
                   </td>
                 </tr>
               ) : (

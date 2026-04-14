@@ -514,6 +514,50 @@ def club_attendance_daily_series(
     return out
 
 
+def team_attendance_daily_series(
+    team: Team,
+    *,
+    start_date: date,
+    end_date: date,
+) -> list[dict[str, Any]]:
+    """
+    One bucket per calendar day in [start_date, end_date] for a single team.
+
+    The calculation rules intentionally mirror club_attendance_daily_series so the
+    coach workspace can reuse the same trend card UI with team-scoped data.
+    """
+    today = timezone.localdate()
+    out: list[dict[str, Any]] = []
+    d = start_date
+    one = timedelta(days=1)
+    while d <= end_date:
+        attended = 0
+        closed = 0
+        if d < today:
+            scope = prepare_team_attendance_scope(team, start_date=d, end_date=d, last_n_sessions=None)
+            for session in scope.closed_sessions:
+                if session.scheduled_date != d:
+                    continue
+                for membership in scope.player_memberships:
+                    code = classify_scope(scope, session, membership.user_id)
+                    if code == "present":
+                        attended += 1
+                        closed += 1
+                    elif code == "absent":
+                        closed += 1
+        rate = (round(100.0 * attended / closed, 2) if closed else None)
+        out.append(
+            {
+                "date": d.isoformat(),
+                "rate_percent": rate,
+                "closed_slots": closed,
+                "attended_slots": attended,
+            }
+        )
+        d += one
+    return out
+
+
 def club_team_attendance_snapshot(
     club: Club,
     *,

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { createClub, fetchCurrentUser, fetchDirectorPaymentOverview } from "../api";
+import { createClub, fetchCoachTeamDashboard, fetchCurrentUser, fetchDirectorPaymentOverview } from "../api";
 import ClubWorkspaceLayout from "../components/ClubWorkspaceLayout";
 import DirectorAttendanceTrendCard from "../components/director/DirectorAttendanceTrendCard";
 import DirectorClubSummaryCard from "../components/director/DirectorClubSummaryCard";
@@ -137,10 +137,14 @@ export default function DashboardPage({
   includeAllTeamsOption = true,
 }) {
   const [ownedClubs, setOwnedClubs] = useState([]);
+  const [coachedTeams, setCoachedTeams] = useState([]);
   const [clubId, setClubId] = useState(null);
   const [overview, setOverview] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [coachOverview, setCoachOverview] = useState(null);
+  const [coachOverviewLoading, setCoachOverviewLoading] = useState(false);
+  const [coachOverviewError, setCoachOverviewError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [viewerAccountRole, setViewerAccountRole] = useState(null);
   const [hasPlayerTeams, setHasPlayerTeams] = useState(false);
@@ -177,6 +181,7 @@ export default function DashboardPage({
       setIsDirectorOrStaff(Boolean(me.is_director_or_staff));
       setViewerAccountRole(me.user?.role || null);
       setHasPlayerTeams(Array.isArray(me.player_teams) && me.player_teams.length > 0);
+      setCoachedTeams(me.coached_teams || []);
       setShowCoachAttendanceTab(
         (me.coached_teams || []).some((t) => t.can_manage_training) ||
           (me.director_teams || []).some((t) => t.can_manage_training),
@@ -196,6 +201,7 @@ export default function DashboardPage({
     } catch (err) {
       setProfileError(err.message || "Could not load your profile.");
       setOwnedClubs([]);
+      setCoachedTeams([]);
       setClubId(null);
       setHasAnyClubAffiliation(false);
     } finally {
@@ -246,6 +252,43 @@ export default function DashboardPage({
     ownedClubs.find((club) => club.id === clubId) ||
     ownedClubs[0] ||
     null;
+  const activeCoachTeam =
+    coachedTeams.find((team) => String(team.id) === String(activeTeamId)) ||
+    coachedTeams[0] ||
+    null;
+  const isCoachWorkspace = !isDirectorOrStaff && coachedTeams.length > 0;
+
+  useEffect(() => {
+    if (!isCoachWorkspace || !activeCoachTeam?.id) {
+      setCoachOverview(null);
+      setCoachOverviewError("");
+      setCoachOverviewLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setCoachOverviewLoading(true);
+    setCoachOverviewError("");
+    void fetchCoachTeamDashboard(activeCoachTeam.id)
+      .then((data) => {
+        if (!cancelled) {
+          setCoachOverview(data?.workspace_overview || null);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setCoachOverview(null);
+          setCoachOverviewError(err.message || "Could not load team overview.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setCoachOverviewLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeCoachTeam?.id, isCoachWorkspace]);
 
   const paymentRows = Array.isArray(overview?.payments_overview)
     ? overview.payments_overview
@@ -257,15 +300,29 @@ export default function DashboardPage({
         currency: b.currency,
         status: b.overall_status,
       }));
+  const coachPaymentRows = Array.isArray(coachOverview?.payments_overview)
+    ? coachOverview.payments_overview
+    : (coachOverview?.family_summaries || []).map((b) => ({
+        player_id: b.player_id,
+        family_label: b.family_label,
+        total_paid: b.total_paid,
+        total_remaining: b.total_remaining,
+        currency: b.currency,
+        status: b.overall_status,
+      }));
 
   const showNoClubOnboarding = !profileLoading && !hasAnyClubAffiliation;
-  const showDirectorWorkspace = !profileLoading && hasAnyClubAffiliation;
-  const dashboardTitle = activeClub?.name || "Club dashboard";
-  const dashboardSummary = loading
-    ? "Pulling together your latest club numbers."
-    : !clubId
-      ? "Create or select a club to unlock payments, attendance, and team insights."
-      : "Registrations, fee collection, and attendance in one director workspace.";
+  const showWorkspace = !profileLoading && hasAnyClubAffiliation;
+  const dashboardTitle = isCoachWorkspace
+    ? activeCoachTeam?.name || "Coaching workspace"
+    : activeClub?.name || "Club dashboard";
+  const dashboardSummary = isCoachWorkspace
+    ? "Roster updates, player invitations, balances, and attendance tools in one coaching workspace."
+    : loading
+      ? "Pulling together your latest club numbers."
+      : !clubId
+        ? "Create or select a club to unlock payments, attendance, and team insights."
+        : "Registrations, fee collection, and attendance in one director workspace.";
 
   const openCreateClubModal = () => {
     setCreateClubError("");
@@ -371,17 +428,22 @@ export default function DashboardPage({
         />
       ) : null}
 
-      {showDirectorWorkspace ? (
+      {showWorkspace ? (
         <section className="vc-dashboard-hero">
           <div className="vc-dashboard-hero__content">
             <div className="vc-dashboard-hero__copy">
-              <span className="vc-dashboard-hero__eyebrow">Director workspace</span>
+              <span className="vc-dashboard-hero__eyebrow">
+                {isCoachWorkspace ? "Coaching workspace" : "Director workspace"}
+              </span>
               <h1 className="vc-dashboard-hero__title">{dashboardTitle}</h1>
               <p className="vc-dashboard-hero__summary">{dashboardSummary}</p>
               <div className="vc-dashboard-hero__meta">
                 <span className="vc-dashboard-chip">{loading ? "Syncing" : "Live overview"}</span>
-                {activeClub?.name ? (
+                {!isCoachWorkspace && activeClub?.name ? (
                   <span className="vc-dashboard-chip vc-dashboard-chip--soft">{activeClub.name}</span>
+                ) : null}
+                {isCoachWorkspace && activeCoachTeam?.club_name ? (
+                  <span className="vc-dashboard-chip vc-dashboard-chip--soft">{activeCoachTeam.club_name}</span>
                 ) : null}
                 {ownedClubs.length > 1 ? (
                   <span className="vc-dashboard-chip vc-dashboard-chip--soft">
@@ -391,7 +453,7 @@ export default function DashboardPage({
               </div>
             </div>
 
-            {ownedClubs.length > 1 ? (
+            {!isCoachWorkspace && ownedClubs.length > 1 ? (
               <div className="vc-dashboard-hero__select-card">
                 <label className="vc-dashboard-hero__select-label" htmlFor="dash-club-select">
                   Active club
@@ -419,7 +481,7 @@ export default function DashboardPage({
       {successMessage ? <div className="vc-director-success vc-dashboard-alert">{successMessage}</div> : null}
       {error ? <div className="vc-director-error vc-dashboard-alert">{error}</div> : null}
 
-      {showDirectorWorkspace ? (
+      {showWorkspace && !isCoachWorkspace ? (
         <>
           <DirectorSummaryRow
             loading={loading}
@@ -548,6 +610,115 @@ export default function DashboardPage({
             buttonLabel="Create a Club"
             onOpen={openCreateClubModal}
           />
+        </>
+      ) : null}
+
+      {showWorkspace && isCoachWorkspace ? (
+        <>
+          <DirectorSummaryRow
+            loading={coachOverviewLoading}
+            kpis={coachOverview?.kpis}
+            formatMoney={formatMoney}
+            formatPercent={formatPercent}
+          />
+
+          <div className="vc-dash-row vc-dash-row--dashboard">
+            <DirectorAttendanceTrendCard
+              loading={coachOverviewLoading}
+              clubId={activeCoachTeam?.id || null}
+              trend={coachOverview?.attendance_trend_30d}
+              emptySelectionMessage="Select a team to load attendance history."
+              emptyDataMessage="No attendance data is available yet for this team in the last 30 days. Close training sessions so the team trend can appear here."
+            />
+            <DirectorPaymentsOverviewCard
+              loading={coachOverviewLoading}
+              clubId={activeCoachTeam?.id || null}
+              rows={coachPaymentRows}
+              formatMoney={formatMoney}
+              onViewAll={() => openDirectorSectionPanel("payments")}
+              emptySelectionMessage="Select a team to review player balances."
+              emptyDataMessage="No payment records are available yet for this team."
+            />
+          </div>
+
+          <div className="vc-dash-bottom vc-dash-bottom--dashboard">
+            <DirectorClubSummaryCard
+              loading={coachOverviewLoading}
+              clubId={activeCoachTeam?.id || null}
+              clubSummary={coachOverview?.team_summary}
+              formatMoney={formatMoney}
+              onManageTeams={() => openDirectorSectionPanel("teams")}
+              title="Team Summary"
+              manageLabel="Open Team Tools"
+              emptySelectionMessage="Select a team to see summary metrics."
+              bestLabel="Current Team"
+              lowLabel="Participation Alert"
+              lowFallbackMessage="No participation warning for this team in the last 30 days."
+              profitLabel="Monthly Revenue"
+            />
+          </div>
+
+          {coachOverviewError ? <div className="vc-director-error vc-dashboard-alert">{coachOverviewError}</div> : null}
+
+          <section className="vc-dashboard-toolbox" aria-labelledby="vc-dashboard-toolbox-title">
+            <div className="vc-dashboard-toolbox__header">
+              <div>
+                <p className="vc-dashboard-panel-head__eyebrow">Workspace Tools</p>
+                <h2 id="vc-dashboard-toolbox-title" className="vc-panel-title">
+                  Coach Tools
+                </h2>
+              </div>
+              <p className="vc-modal__muted">
+                Expand a section below to manage your roster, invite players, review team fees, and make player-only changes from one workspace.
+              </p>
+            </div>
+
+            <DirectorDashboardDropdown
+              id="dashboard-users"
+              title="Users"
+              description="Review your team directory and remove players from your roster."
+              isOpen={openDirectorSection === "users"}
+              onToggle={() => toggleDirectorSection("users")}
+            >
+              <DirectorUserManagementPage embedded focusedTeamId={activeCoachTeam?.id || null} />
+            </DirectorDashboardDropdown>
+
+            <DirectorDashboardDropdown
+              id="dashboard-payments"
+              title="Payments"
+              description="Review balances for the players on your selected team."
+              isOpen={openDirectorSection === "payments"}
+              onToggle={() => toggleDirectorSection("payments")}
+            >
+              <CoachPaymentsPage
+                embedded
+                team={
+                  activeCoachTeam
+                    ? {
+                        id: activeCoachTeam.id,
+                        name: activeCoachTeam.name,
+                        clubId: activeCoachTeam.club_id,
+                        clubName: activeCoachTeam.club_name,
+                      }
+                    : null
+                }
+              />
+            </DirectorDashboardDropdown>
+
+            <DirectorDashboardDropdown
+              id="dashboard-teams"
+              title="Teams"
+              description="Invite players to your team and manage player-only team actions."
+              isOpen={openDirectorSection === "teams"}
+              onToggle={() => toggleDirectorSection("teams")}
+            >
+              <DirectorTeamSetupPage
+                embedded
+                workspaceRole="coach"
+                onOpenUsers={() => openDirectorSectionPanel("users")}
+              />
+            </DirectorDashboardDropdown>
+          </section>
         </>
       ) : null}
 

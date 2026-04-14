@@ -4,12 +4,19 @@ Coach team dashboard payload: KPIs, chart metrics, roster stats, and feedback (D
 
 from __future__ import annotations
 
-from datetime import time
+from datetime import time, timedelta
+from decimal import Decimal
 from typing import Any, Optional
 
+from django.db.models import F, Sum
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
+from .attendance_summary import build_team_compact_summary, format_person_name, team_attendance_daily_series
+from .director_dashboard import LOW_PARTICIPATION_THRESHOLD_PERCENT, MIN_CLOSED_SLOTS_FOR_TEAM_ALERT
 from .models import (
+    FeePaymentLedgerEntry,
+    PlayerFeeRecord,
     Team,
     TeamCoachFeedback,
     TeamRosterPlayerStat,
@@ -19,7 +26,6 @@ from .models import (
     TrainingSessionConfirmation,
 )
 from .models.coach_dashboard import CoachFeedbackStatus
-from .attendance_summary import format_person_name
 
 # Stable chart category order for the dashboard UI
 _SKILL_ORDER: tuple[str, ...] = (
@@ -223,6 +229,118 @@ def _recent_feedback(team: Team, *, limit: int = 10) -> list[dict[str, Any]]:
     ]
 
 
+def _team_workspace_overview(team: Team) -> dict[str, Any]:
+    from .payment_views import _family_bundles_from_records
+
+    now = timezone.now()
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    today_local = timezone.localdate()
+    att_start = today_local - timedelta(days=29)
+    att_end = today_local
+
+    compact_summary = build_team_compact_summary(
+        team,
+        start_date=att_start,
+        end_date=att_end,
+    )
+    monthly_revenue = (
+        FeePaymentLedgerEntry.objects.filter(
+            fee_record__team=team,
+            recorded_at__gte=month_start,
+        ).aggregate(total=Coalesce(Sum("amount"), Decimal("0.00")))["total"]
+    )
+
+    outstanding_families = (
+        PlayerFeeRecord.objects.filter(team=team)
+        .annotate(rem=F("amount_due") - F("amount_paid"))
+        .filter(rem__gt=0)
+        .values("player_id")
+        .distinct()
+        .count()
+    )
+
+    all_records = list(
+        PlayerFeeRecord.objects.filter(team=team).select_related("player", "team").order_by("-due_date", "-id")
+    )
+    currency = all_records[0].currency if all_records else "USD"
+    family_summaries = _family_bundles_from_records(all_records)
+    outstanding_summaries = [b for b in family_summaries if Decimal(b["total_remaining"]) > 0]
+    outstanding_summaries.sort(key=lambda b: (-Decimal(b["total_remaining"]), b["family_label"].lower()))
+    paid_summaries = [b for b in family_summaries if Decimal(b["total_remaining"]) <= 0]
+    paid_summaries.sort(key=lambda b: (b["family_label"].lower(), b["player_id"]))
+    preview_families = list(outstanding_summaries[:8])
+    if len(preview_families) < 8:
+        preview_families.extend(paid_summaries[: 8 - len(preview_families)])
+
+    team_attendance_rate = compact_summary["team_average_attendance_rate_percent"]
+    closed_slots = int(compact_summary["closed_roster_slots_total"] or 0)
+    best_team = None
+    low_participation = None
+    if team_attendance_rate is not None and closed_slots > 0:
+        best_team = {
+            "team_id": team.id,
+            "team_name": team.name,
+            "rate_percent": team_attendance_rate,
+        }
+        if (
+            float(team_attendance_rate) < LOW_PARTICIPATION_THRESHOLD_PERCENT
+            and closed_slots >= MIN_CLOSED_SLOTS_FOR_TEAM_ALERT
+        ):
+            low_participation = {
+                "team_id": team.id,
+                "team_name": team.name,
+                "rate_percent": team_attendance_rate,
+                "message": (
+                    f"{team.name} is below {LOW_PARTICIPATION_THRESHOLD_PERCENT:.0f}% attendance "
+                    f"in the last 30 days ({float(team_attendance_rate):.1f}%)."
+                ),
+            }
+
+    payments_overview = [
+        {
+            "player_id": bundle["player_id"],
+            "family_label": bundle["family_label"],
+            "total_paid": bundle["total_paid"],
+            "total_remaining": bundle["total_remaining"],
+            "currency": bundle["currency"],
+            "status": bundle["overall_status"],
+        }
+        for bundle in preview_families
+    ]
+
+    return {
+        "kpis": {
+            "registration_player_count": compact_summary["roster_player_count"],
+            "monthly_revenue": str(monthly_revenue),
+            "monthly_revenue_currency": currency,
+            "attendance_rate": team_attendance_rate,
+            "outstanding_payer_count": outstanding_families,
+        },
+        "attendance_trend_30d": {
+            "calculation_summary": compact_summary["calculation_summary"],
+            "filters": {
+                "start_date": att_start.isoformat(),
+                "end_date": att_end.isoformat(),
+            },
+            "points": team_attendance_daily_series(
+                team,
+                start_date=att_start,
+                end_date=att_end,
+            ),
+        },
+        "payments_overview": payments_overview,
+        "team_summary": {
+            "average_attendance_percent": team_attendance_rate,
+            "best_participating_team": best_team,
+            "low_participation": low_participation,
+            "monthly_profit": str(monthly_revenue),
+            "monthly_profit_currency": currency,
+            "monthly_profit_basis": "collected_ledger_entries_no_expenses_modeled",
+        },
+        "family_summaries": preview_families,
+    }
+
+
 def build_coach_team_dashboard(*, team: Team) -> dict[str, Any]:
     """Full JSON payload for GET /teams/<id>/coach-dashboard/."""
     from . import views as core_views
@@ -242,4 +360,5 @@ def build_coach_team_dashboard(*, team: Team) -> dict[str, Any]:
         "attendance_vs_performance": _chart_series(team),
         "player_stats": _player_stats(team),
         "recent_feedback": _recent_feedback(team),
+        "workspace_overview": _team_workspace_overview(team),
     }

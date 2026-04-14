@@ -47,6 +47,7 @@ export default function DirectorUserManagementPage({
   const [viewerUserId, setViewerUserId] = useState(null);
   const [ownedClubs, setOwnedClubs] = useState([]);
   const [canManageRoles, setCanManageRoles] = useState(false);
+  const [canRemovePlayers, setCanRemovePlayers] = useState(false);
   const [showParentLinks, setShowParentLinks] = useState(false);
   const [directoryScopeKind, setDirectoryScopeKind] = useState("club");
   const [directoryHeading, setDirectoryHeading] = useState("All people in your club");
@@ -84,7 +85,9 @@ export default function DirectorUserManagementPage({
       setViewerUserId(me.user?.id ?? null);
       setOwnedClubs(me.owned_clubs || []);
       const directorView = Boolean(me.viewer_is_staff || me.is_director_or_staff || (me.owned_clubs || []).length > 0);
+      const coachView = !directorView && (me.coached_teams || []).length > 0;
       setCanManageRoles(directorView);
+      setCanRemovePlayers(directorView || coachView);
       setShowParentLinks(directorView);
       setDirectoryTeams(directorView ? (me.director_teams || []) : (me.coached_teams || []));
       const payload = await fetchDirectorUserDirectory(800, { teamId: focusedTeamId });
@@ -429,7 +432,7 @@ export default function DirectorUserManagementPage({
                 club you manage, or change another Director to a different role.
               </>
             ) : (
-              <>This view is read-only for coaches.</>
+              <>As a coach, this view is limited to your team scope. You can remove players from your team, but you cannot change account roles.</>
             )}
           </p>
           <div className="vc-director-directory-filters">
@@ -467,6 +470,9 @@ export default function DirectorUserManagementPage({
                 Showing {filteredUsers.length} of {directoryCount} loaded
                 {directoryScopeKind === "team" ? " from your team scope" : directoryScopeKind === "club" ? " from your club scope" : ""}.
               </p>
+              {(() => {
+                const showActionColumn = canManageRoles || canRemovePlayers;
+                return (
               <table className="vc-director-table">
                 <thead>
                   <tr>
@@ -476,13 +482,13 @@ export default function DirectorUserManagementPage({
                     <th>Team</th>
                     <th>Status</th>
                     <th>Role</th>
-                    {canManageRoles ? <th /> : null}
+                    {showActionColumn ? <th /> : null}
                   </tr>
                 </thead>
                 <tbody>
                   {filteredUsers.length === 0 ? (
                     <tr>
-                      <td colSpan={canManageRoles ? 7 : 6} style={{ color: "#6b7580", fontWeight: 600 }}>
+                      <td colSpan={showActionColumn ? 7 : 6} style={{ color: "#6b7580", fontWeight: 600 }}>
                         No users found.
                       </td>
                     </tr>
@@ -587,21 +593,23 @@ export default function DirectorUserManagementPage({
                               <span>{currentRole ? currentRole.charAt(0).toUpperCase() + currentRole.slice(1) : "—"}</span>
                             )}
                           </td>
-                          {canManageRoles ? (
+                          {showActionColumn ? (
                             <td>
                               <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                                {canManageRoles ? (
+                                  <button
+                                    type="button"
+                                    className="vc-du-action"
+                                    disabled={saveDisabled}
+                                    onClick={() => void onSaveAccountRole(u.id)}
+                                  >
+                                    {saveBusy ? "…" : "Save"}
+                                  </button>
+                                ) : null}
                                 <button
                                   type="button"
                                   className="vc-du-action"
-                                  disabled={saveDisabled}
-                                  onClick={() => void onSaveAccountRole(u.id)}
-                                >
-                                  {saveBusy ? "…" : "Save"}
-                                </button>
-                                <button
-                                  type="button"
-                                  className="vc-du-action"
-                                  disabled={removePlayerDisabled}
+                                  disabled={!canRemovePlayers || removePlayerDisabled}
                                   title={removePlayerTitle}
                                   onClick={() => void onRemovePlayer(u)}
                                 >
@@ -616,6 +624,8 @@ export default function DirectorUserManagementPage({
                   )}
                 </tbody>
               </table>
+                );
+              })()}
             </div>
           )}
       </section>

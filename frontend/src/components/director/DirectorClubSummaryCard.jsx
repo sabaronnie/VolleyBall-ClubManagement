@@ -19,6 +19,14 @@ export default function DirectorClubSummaryCard({
   clubSummary,
   formatMoney,
   onManageTeams = null,
+  title = "Club Summary",
+  manageLabel = "Manage Teams",
+  emptySelectionMessage = "Select a club to see summary metrics.",
+  averageLabel = "Average Attendance",
+  bestLabel = "Best Participating Team",
+  lowLabel = "Low Participation Alert",
+  lowFallbackMessage = "No team flagged in the last 30 days.",
+  profitLabel = "Monthly Profit",
 }) {
   const best = clubSummary?.best_participating_team;
   const low = clubSummary?.low_participation;
@@ -36,7 +44,7 @@ export default function DirectorClubSummaryCard({
         <div>
           <p className="vc-dashboard-panel-head__eyebrow">Insights</p>
           <h2 className="vc-panel-title" style={{ margin: 0 }}>
-            Club Summary
+            {title}
           </h2>
         </div>
         <button
@@ -45,33 +53,33 @@ export default function DirectorClubSummaryCard({
           style={{ margin: 0 }}
           onClick={handleManageTeams}
         >
-          Manage Teams
+          {manageLabel}
         </button>
       </div>
       {loading ? (
         <p className="vc-modal__muted">Loading…</p>
       ) : !clubId ? (
-        <p className="vc-modal__muted">Select a club to see summary metrics.</p>
+        <p className="vc-modal__muted">{emptySelectionMessage}</p>
       ) : (
         <ul className="vc-summary-list vc-summary-list--dashboard">
           <li>
-            <span>Average Attendance</span>
+            <span>{averageLabel}</span>
             <strong>{fmtPct(clubSummary?.average_attendance_percent)}</strong>
           </li>
           <li>
-            <span>Best Participating Team</span>
+            <span>{bestLabel}</span>
             <strong>
               {best?.team_name ? `${best.team_name} (${fmtPct(best.rate_percent)})` : NO_DATA}
             </strong>
           </li>
           <li>
-            <span>Low Participation Alert</span>
+            <span>{lowLabel}</span>
             <strong style={{ textAlign: "right", maxWidth: "62%" }}>
-              {low?.message || "No team flagged in the last 30 days."}
+              {low?.message || lowFallbackMessage}
             </strong>
           </li>
           <li>
-            <span>Monthly Profit</span>
+            <span>{profitLabel}</span>
             <strong>
               {clubSummary
                 ? formatMoney(clubSummary.monthly_profit_currency, clubSummary.monthly_profit)

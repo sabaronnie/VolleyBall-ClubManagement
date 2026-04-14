@@ -2644,6 +2644,68 @@ class CoachTeamDashboardApiTests(TestCase):
         self.assertEqual(data["player_stats"], [])
         self.assertEqual(data["recent_feedback"], [])
 
+    def test_coach_dashboard_includes_team_scoped_workspace_overview(self):
+        director = User.objects.create_user(
+            email="dir-coach-team-overview@example.com",
+            password="StrongPassword123!",
+        )
+        coach = User.objects.create_user(
+            email="coach-team-overview@example.com",
+            password="StrongPassword123!",
+        )
+        player = User.objects.create_user(
+            email="player-team-overview@example.com",
+            password="StrongPassword123!",
+            first_name="Ava",
+            last_name="Player",
+        )
+        club = Club.objects.create_club(name="Coach Team Club", director=director)
+        team = Team.objects.create_team(club=club, name="Falcons", season="2026")
+        TeamMembership.objects.add_member(user=coach, team=team, role=TeamRole.COACH)
+        TeamMembership.objects.add_member(user=player, team=team, role=TeamRole.PLAYER)
+
+        yesterday = timezone.localdate() - timedelta(days=1)
+        session = TrainingSession.objects.create(
+            team=team,
+            title="Team Practice",
+            session_type=TrainingSession.SessionType.TRAINING,
+            scheduled_date=yesterday,
+            start_time=time(18, 0),
+            end_time=time(19, 30),
+            status=TrainingSession.Status.SCHEDULED,
+            created_by=coach,
+        )
+        TrainingSessionConfirmation.objects.create(training_session=session, player=player)
+
+        record = PlayerFeeRecord.objects.create(
+            club=club,
+            player=player,
+            team=team,
+            description="April Team Fee",
+            amount_due=Decimal("120.00"),
+            amount_paid=Decimal("60.00"),
+            currency="USD",
+            due_date=timezone.localdate(),
+            billing_period_start=timezone.localdate().replace(day=1),
+        )
+        FeePaymentLedgerEntry.objects.create(fee_record=record, amount=Decimal("60.00"), note="partial")
+
+        token = generate_auth_token(coach)
+        response = self.client.get(
+            reverse("core:coach-team-dashboard", kwargs={"team_id": team.id}),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn("workspace_overview", data)
+        overview = data["workspace_overview"]
+        self.assertEqual(overview["kpis"]["registration_player_count"], 1)
+        self.assertEqual(Decimal(overview["kpis"]["monthly_revenue"]), Decimal("60.00"))
+        self.assertEqual(overview["kpis"]["outstanding_payer_count"], 1)
+        self.assertEqual(len(overview["attendance_trend_30d"]["points"]), 30)
+        self.assertEqual(overview["payments_overview"][0]["family_label"], "Ava Player")
+        self.assertEqual(overview["team_summary"]["best_participating_team"]["team_name"], "Falcons")
+
 
 class DirectorDashboardOverviewTests(TestCase):
     def test_overview_includes_trend_roles_club_summary_and_payments_overview(self):
@@ -3085,7 +3147,7 @@ class DirectorUserDirectoryApiTests(TestCase):
             .exists()
         )
 
-    def test_coach_cannot_remove_player_from_directory_action(self):
+    def test_coach_can_remove_player_from_directory_action_for_own_team(self):
         director = User.objects.create_user(
             email="dir-no-remove@example.com",
             password="StrongPassword123!",
@@ -3112,8 +3174,8 @@ class DirectorUserDirectoryApiTests(TestCase):
             HTTP_AUTHORIZATION=f"Bearer {token}",
         )
 
-        self.assertEqual(response.status_code, 403)
-        self.assertTrue(
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(
             TeamMembership.objects.active()
             .filter(user=player, team=team, role=TeamRole.PLAYER)
             .exists()
