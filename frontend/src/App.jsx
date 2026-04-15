@@ -1139,21 +1139,31 @@ function App() {
     if (pathname !== "/schedule" || !isAuthenticated) {
       return undefined;
     }
-    if (String(activeTeamId) === "__all__" && scheduleTeams.length <= 1) {
-      setActiveTeamId("");
-      localStorage.removeItem(ACTIVE_TEAM_KEY);
+
+    if (!scheduleTeams.length) {
+      if (activeTeamId) {
+        setActiveTeamId("");
+        localStorage.removeItem(ACTIVE_TEAM_KEY);
+      }
       return undefined;
     }
-    if (!activeTeamId) {
-      return undefined;
-    }
+
     if (String(activeTeamId) === "__all__") {
+      if (scheduleTeams.length > 1) {
+        return undefined;
+      }
+
+      const nextId = String(scheduleTeams[0].id);
+      setActiveTeamId(nextId);
+      localStorage.setItem(ACTIVE_TEAM_KEY, nextId);
       return undefined;
     }
+
     const ok = scheduleTeams.some((t) => String(t.id) === String(activeTeamId));
-    if (!ok) {
-      setActiveTeamId("");
-      localStorage.removeItem(ACTIVE_TEAM_KEY);
+    if (!ok && scheduleTeams[0]) {
+      const nextId = String(scheduleTeams[0].id);
+      setActiveTeamId(nextId);
+      localStorage.setItem(ACTIVE_TEAM_KEY, nextId);
     }
     return undefined;
   }, [pathname, activeTeamId, scheduleTeams, isAuthenticated]);
