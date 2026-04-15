@@ -1686,6 +1686,38 @@ class PlayerParentManagementEndpointTests(TestCase):
         self.assertFalse(policy.can_self_make_payments)
         self.assertFalse(policy.can_self_update_emergency_contact)
 
+    def test_parent_management_rejects_deprecated_attendance_related_fields(self):
+        parent = User.objects.create_user(
+            email="parent@example.com",
+            password="StrongPassword123!",
+            first_name="Parent",
+            last_name="User",
+        )
+        player = User.objects.create_user(
+            email="player@example.com",
+            password="StrongPassword123!",
+            first_name="Player",
+            last_name="User",
+            date_of_birth=date(2010, 4, 1),
+        )
+        ParentPlayerRelation.objects.link(parent=parent, player=player, is_legal_guardian=True)
+        token = generate_auth_token(parent)
+
+        response = self.client.patch(
+            reverse("core:manage-player-parent-access", kwargs={"player_id": player.id}),
+            data=json.dumps(
+                {
+                    "can_self_submit_absence_reasons": False,
+                    "can_self_approve_schedule_confirmations": False,
+                }
+            ),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("No supported", response.json()["errors"]["payload"])
+
     def test_parent_cannot_manage_access_for_adult_player(self):
         parent = User.objects.create_user(
             email="parent@example.com",
@@ -1768,6 +1800,76 @@ class PlayerParentManagedPermissionTests(TestCase):
 
 
 class UpdateTeamMemberDataEndpointTests(TestCase):
+    def test_user_emergency_contact_endpoint_updates_own_contact(self):
+        coach = User.objects.create_user(
+            email="coach@example.com",
+            password="StrongPassword123!",
+            first_name="Coach",
+            last_name="User",
+        )
+        token = generate_auth_token(coach)
+
+        response = self.client.patch(
+            reverse("core:update-user-emergency-contact", kwargs={"user_id": coach.id}),
+            data=json.dumps({"emergency_contact": "+96170000000"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        coach.refresh_from_db()
+        self.assertEqual(coach.emergency_contact, "+96170000000")
+        self.assertEqual(response.json()["user"]["emergency_contact"], "+96170000000")
+
+    def test_user_emergency_contact_endpoint_respects_player_parent_permissions(self):
+        director = User.objects.create_user(email="director@example.com", password="StrongPassword123!")
+        parent = User.objects.create_user(email="parent@example.com", password="StrongPassword123!")
+        player = User.objects.create_user(
+            email="player@example.com",
+            password="StrongPassword123!",
+            date_of_birth=date(2010, 4, 1),
+        )
+        club = Club.objects.create_club(name="NetUp Volleyball Club", director=director)
+        team = Team.objects.create_team(club=club, name="U16 Girls", season="2026")
+        TeamMembership.objects.add_member(user=player, team=team, role=TeamRole.PLAYER)
+        ParentPlayerRelation.objects.link(parent=parent, player=player)
+        PlayerAccessPolicy.objects.create(
+            player=player,
+            is_parent_managed=True,
+            can_self_update_emergency_contact=False,
+        )
+        token = generate_auth_token(player)
+
+        response = self.client.patch(
+            reverse("core:update-user-emergency-contact", kwargs={"user_id": player.id}),
+            data=json.dumps({"emergency_contact": "+96170000000"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_user_emergency_contact_endpoint_allows_parent_for_linked_child(self):
+        parent = User.objects.create_user(email="parent@example.com", password="StrongPassword123!")
+        player = User.objects.create_user(
+            email="player@example.com",
+            password="StrongPassword123!",
+            date_of_birth=date(2010, 4, 1),
+        )
+        ParentPlayerRelation.objects.link(parent=parent, player=player)
+        token = generate_auth_token(parent)
+
+        response = self.client.patch(
+            reverse("core:update-user-emergency-contact", kwargs={"user_id": player.id}),
+            data=json.dumps({"emergency_contact": "+96171111111"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        player.refresh_from_db()
+        self.assertEqual(player.emergency_contact, "+96171111111")
+
     def test_player_can_update_their_own_emergency_contact(self):
         director = User.objects.create_user(
             email="director@example.com",
@@ -2153,6 +2255,88 @@ class DirectorPaymentApiTests(TestCase):
             HTTP_AUTHORIZATION=f"Bearer {token}",
         )
         self.assertEqual(response.status_code, 403)
+
+    def test_parent_managed_player_can_view_but_not_pay_own_fees(self):
+        parent = User.objects.create_user(email="parent-paylock@example.com", password="StrongPassword123!")
+        player = User.objects.create_user(
+            email="player-paylock@example.com",
+            password="StrongPassword123!",
+            date_of_birth=date(2010, 4, 1),
+        )
+        club = Club.objects.create_club(name="Pay Lock Club", director=parent)
+        team = Team.objects.create_team(club=club, name="Pay Lock Team", season="2026")
+        TeamMembership.objects.add_member(user=player, team=team, role=TeamRole.PLAYER)
+        ParentPlayerRelation.objects.link(parent=parent, player=player)
+        PlayerAccessPolicy.objects.create(
+            player=player,
+            is_parent_managed=True,
+            can_self_make_payments=False,
+        )
+        fee = PlayerFeeRecord.objects.create(
+            club=club,
+            player=player,
+            team=team,
+            description="Monthly dues",
+            amount_due=Decimal("25.00"),
+            amount_paid=Decimal("0.00"),
+            due_date=timezone.localdate(),
+        )
+        token = generate_auth_token(player)
+
+        fees_response = self.client.get(
+            reverse("core:my-fees"),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(fees_response.status_code, 200)
+        self.assertFalse(fees_response.json()["can_make_own_payments"])
+        self.assertEqual(len(fees_response.json()["own_fees"]), 1)
+
+        pay_response = self.client.post(
+            reverse("core:record-self-payment", kwargs={"record_id": fee.id}),
+            data=json.dumps({"amount": "5.00", "method": "online"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(pay_response.status_code, 403)
+        fee.refresh_from_db()
+        self.assertEqual(fee.amount_paid, Decimal("0.00"))
+
+    def test_parent_can_pay_child_fee_even_when_child_self_payments_disabled(self):
+        parent = User.objects.create_user(email="parent-childpay@example.com", password="StrongPassword123!")
+        player = User.objects.create_user(
+            email="player-childpay@example.com",
+            password="StrongPassword123!",
+            date_of_birth=date(2010, 4, 1),
+        )
+        club = Club.objects.create_club(name="Child Pay Club", director=parent)
+        team = Team.objects.create_team(club=club, name="Child Pay Team", season="2026")
+        TeamMembership.objects.add_member(user=player, team=team, role=TeamRole.PLAYER)
+        ParentPlayerRelation.objects.link(parent=parent, player=player)
+        PlayerAccessPolicy.objects.create(
+            player=player,
+            is_parent_managed=True,
+            can_self_make_payments=False,
+        )
+        fee = PlayerFeeRecord.objects.create(
+            club=club,
+            player=player,
+            team=team,
+            description="Monthly dues",
+            amount_due=Decimal("25.00"),
+            amount_paid=Decimal("0.00"),
+            due_date=timezone.localdate(),
+        )
+        token = generate_auth_token(parent)
+
+        response = self.client.post(
+            reverse("core:record-self-payment", kwargs={"record_id": fee.id}),
+            data=json.dumps({"amount": "5.00", "method": "online"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        fee.refresh_from_db()
+        self.assertEqual(fee.amount_paid, Decimal("5.00"))
 
     def test_director_payment_rows_groups_by_family(self):
         director = User.objects.create_user(
@@ -3556,7 +3740,7 @@ class ParentChildAttendanceHistoryTests(TestCase):
 
 
 class PlayerAttendanceConfirmationTests(TestCase):
-    """EP-24: player self-confirm for training sessions (assigned Player role, 14+)."""
+    """EP-24: player self-confirm for training sessions unless parent-managed permissions block it."""
 
     def _fixture_team_and_session(self, *, player_dob, player_assigned_role=AssignedAccountRole.PLAYER):
         director = User.objects.create_user(email="ep24-dir@example.com", password="StrongPassword123!")
@@ -3612,6 +3796,59 @@ class PlayerAttendanceConfirmationTests(TestCase):
         )
         self.assertTrue(mine["is_confirmed"])
 
+    def test_under_14_player_can_confirm_valid_session(self):
+        _team, session, player, _other, _coach = self._fixture_team_and_session(player_dob=date(2015, 5, 1))
+        token = generate_auth_token(player)
+        response = self.client.post(
+            reverse("core:confirm-training-session", kwargs={"session_id": session.id}),
+            data=json.dumps({}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            TrainingSessionConfirmation.objects.filter(training_session=session, player=player).exists()
+        )
+
+    def test_parent_managed_policy_can_block_player_self_confirmation(self):
+        _team, session, player, _other, _coach = self._fixture_team_and_session(player_dob=date(2015, 5, 1))
+        parent = User.objects.create_user(email="ep24-parent@example.com", password="StrongPassword123!")
+        ParentPlayerRelation.objects.link(parent=parent, player=player)
+        PlayerAccessPolicy.objects.create(
+            player=player,
+            is_parent_managed=True,
+            can_self_confirm_attendance=False,
+        )
+        token = generate_auth_token(player)
+        response = self.client.post(
+            reverse("core:confirm-training-session", kwargs={"session_id": session.id}),
+            data=json.dumps({}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(
+            TrainingSessionConfirmation.objects.filter(training_session=session, player=player).exists()
+        )
+
+    def test_parent_can_confirm_linked_child_without_age_gate(self):
+        _team, session, player, _other, _coach = self._fixture_team_and_session(player_dob=date(2008, 5, 1))
+        parent = User.objects.create_user(email="ep24-parent@example.com", password="StrongPassword123!")
+        ParentPlayerRelation.objects.link(parent=parent, player=player)
+        token = generate_auth_token(parent)
+        response = self.client.post(
+            reverse("core:confirm-training-session", kwargs={"session_id": session.id}),
+            data=json.dumps({"player_id": player.id}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        confirmation = TrainingSessionConfirmation.objects.get(training_session=session, player=player)
+        self.assertEqual(confirmation.confirmed_by_id, parent.id)
+
     def test_player_can_update_existing_confirmation(self):
         _team, session, player, _other, _coach = self._fixture_team_and_session(player_dob=date(2007, 1, 1))
         TrainingSessionConfirmation.objects.create(
@@ -3649,8 +3886,8 @@ class PlayerAttendanceConfirmationTests(TestCase):
         )
         self.assertEqual(response.status_code, 401)
 
-    def test_non_player_assigned_role_cannot_self_confirm_even_on_roster(self):
-        """Coach-assigned account cannot self-confirm as a player (EP-24)."""
+    def test_roster_player_can_self_confirm_regardless_of_assigned_account_role(self):
+        """Roster player membership is enough unless parent-managed permissions block confirmation."""
         _team, session, player, _other, _coach = self._fixture_team_and_session(
             player_dob=date(2006, 1, 1),
             player_assigned_role=AssignedAccountRole.COACH,
@@ -3662,7 +3899,7 @@ class PlayerAttendanceConfirmationTests(TestCase):
             content_type="application/json",
             HTTP_AUTHORIZATION=f"Bearer {token}",
         )
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 200)
 
     def test_invalid_session_returns_404(self):
         director = User.objects.create_user(email="ep24-idir@example.com", password="StrongPassword123!")

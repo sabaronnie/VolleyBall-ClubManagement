@@ -291,11 +291,11 @@ export default function ParentAttendancePage() {
               Confirm for your child
             </p>
             <h2 style={{ fontSize: "1.15rem", margin: 0 }}>
-              Upcoming sessions (under 14)
+              Upcoming sessions
             </h2>
             <p className="vc-modal__muted" style={{ marginTop: "0.5rem", maxWidth: 640, lineHeight: 1.5 }}>
-              If your child is under 14, you can confirm their attendance here. Teenagers with the Player account
-              role usually confirm on <strong>My sessions</strong>.
+              You can confirm attendance for linked players here. Players can also confirm from{" "}
+              <strong>My sessions</strong> when parent-managed permissions allow it.
             </p>
           </div>
         </div>
@@ -375,7 +375,7 @@ export default function ParentAttendancePage() {
                           : confirmed
                             ? "Confirmed ✓"
                             : childRow && childRow.can_confirm === false
-                              ? "Player confirms self"
+                              ? "Cannot confirm"
                               : "Confirm attendance"}
                     </button>
                   </div>
@@ -400,8 +400,8 @@ export default function ParentAttendancePage() {
                   ) : null}
                   {!childRow?.can_confirm && !isCancelled && activeConfirmContext ? (
                     <p className="vc-modal__muted" style={{ marginTop: "0.65rem", fontSize: "0.88rem" }}>
-                      {activeConfirmContext.childName} has to confirm this session themselves on{" "}
-                      <strong>My sessions</strong>. Parent confirmation here is only for linked players under 14.
+                      You cannot confirm this session for {activeConfirmContext.childName}. Confirm that your parent
+                      link is active for this team.
                     </p>
                   ) : null}
                 </article>

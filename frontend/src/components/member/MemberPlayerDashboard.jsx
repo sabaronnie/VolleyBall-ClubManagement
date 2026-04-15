@@ -13,23 +13,13 @@ import MyFeesPage from "../../pages/MyFeesPage";
 const PARENT_PERMISSION_OPTIONS = [
   {
     field: "can_self_confirm_attendance",
-    title: "Attendance confirmations",
+    title: "Attendance confirmation",
     description: "Allow the player to confirm their own attendance for upcoming sessions.",
   },
   {
     field: "can_self_make_payments",
     title: "Payments",
     description: "Allow the player to pay their own fee lines from the app.",
-  },
-  {
-    field: "can_self_submit_absence_reasons",
-    title: "Absence reasons",
-    description: "Allow the player to submit absence reasons for missed sessions.",
-  },
-  {
-    field: "can_self_approve_schedule_confirmations",
-    title: "Schedule confirmations",
-    description: "Allow the player to approve schedule confirmation requests themselves.",
   },
   {
     field: "can_self_update_emergency_contact",

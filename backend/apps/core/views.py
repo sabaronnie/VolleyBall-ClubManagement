@@ -284,35 +284,13 @@ def _serialize_schedule_entry(entry, week_start):
     }
 
 
-def _get_user_age(user):
-    if not user.date_of_birth:
-        return None
-
-    today = timezone.localdate()
-    years = today.year - user.date_of_birth.year
-    if (today.month, today.day) < (user.date_of_birth.month, user.date_of_birth.day):
-        years -= 1
-    return years
-
-
 def _can_player_self_confirm_training(player_user):
-    """Adult-capable players (14+) with the Player account role may self-confirm (EP-24)."""
-    if _canonical_app_role(player_user) != AssignedAccountRole.PLAYER:
-        return False
-
-    age = _get_user_age(player_user)
-    if age is None:
-        return False
-
-    return age >= 14 and can_player_confirm_attendance(player_user)
+    """Roster players may self-confirm unless parent-managed policy blocks it."""
+    return can_player_confirm_attendance(player_user)
 
 
 def _can_parent_confirm_training(parent_user, player_user, team):
-    age = _get_user_age(player_user)
-    if age is None:
-        return False
-
-    return age < 14 and is_parent_of_player_on_team(parent_user, player_user, team)
+    return is_parent_of_player_on_team(parent_user, player_user, team)
 
 
 def _format_person_name(user):
@@ -971,10 +949,6 @@ def _serialize_player_access_policy(policy):
         "is_parent_managed": policy.is_parent_managed,
         "can_self_confirm_attendance": policy.can_self_confirm_attendance,
         "can_self_make_payments": policy.can_self_make_payments,
-        "can_self_submit_absence_reasons": policy.can_self_submit_absence_reasons,
-        "can_self_approve_schedule_confirmations": (
-            policy.can_self_approve_schedule_confirmations
-        ),
         "can_self_update_emergency_contact": policy.can_self_update_emergency_contact,
     }
 
@@ -4141,10 +4115,6 @@ def manage_player_parent_access(request, player_id):
         "is_parent_managed": "is_parent_managed",
         "can_self_confirm_attendance": "can_self_confirm_attendance",
         "can_self_make_payments": "can_self_make_payments",
-        "can_self_submit_absence_reasons": "can_self_submit_absence_reasons",
-        "can_self_approve_schedule_confirmations": (
-            "can_self_approve_schedule_confirmations"
-        ),
         "can_self_update_emergency_contact": "can_self_update_emergency_contact",
     }
 

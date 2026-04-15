@@ -271,8 +271,6 @@ def _serialize_player_access_policy(policy: Optional[PlayerAccessPolicy]) -> dic
             "is_parent_managed": False,
             "can_self_confirm_attendance": True,
             "can_self_make_payments": True,
-            "can_self_submit_absence_reasons": True,
-            "can_self_approve_schedule_confirmations": True,
             "can_self_update_emergency_contact": True,
         }
 
@@ -280,8 +278,6 @@ def _serialize_player_access_policy(policy: Optional[PlayerAccessPolicy]) -> dic
         "is_parent_managed": policy.is_parent_managed,
         "can_self_confirm_attendance": policy.can_self_confirm_attendance,
         "can_self_make_payments": policy.can_self_make_payments,
-        "can_self_submit_absence_reasons": policy.can_self_submit_absence_reasons,
-        "can_self_approve_schedule_confirmations": policy.can_self_approve_schedule_confirmations,
         "can_self_update_emergency_contact": policy.can_self_update_emergency_contact,
     }
 

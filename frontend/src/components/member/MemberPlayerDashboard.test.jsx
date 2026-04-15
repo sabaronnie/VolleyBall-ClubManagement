@@ -83,8 +83,6 @@ const baseDashboardPayload = {
       is_parent_managed: true,
       can_self_confirm_attendance: true,
       can_self_make_payments: false,
-      can_self_submit_absence_reasons: true,
-      can_self_approve_schedule_confirmations: true,
       can_self_update_emergency_contact: false,
     },
   },
@@ -106,8 +104,6 @@ describe("MemberPlayerDashboard parent view", () => {
         is_parent_managed: true,
         can_self_confirm_attendance: false,
         can_self_make_payments: false,
-        can_self_submit_absence_reasons: true,
-        can_self_approve_schedule_confirmations: true,
         can_self_update_emergency_contact: false,
       },
     });
@@ -122,7 +118,9 @@ describe("MemberPlayerDashboard parent view", () => {
 
     await user.click(screen.getByRole("button", { name: /permissions/i }));
 
-    expect(screen.getByText("Attendance confirmations")).toBeInTheDocument();
+    expect(screen.getByText("Attendance confirmation")).toBeInTheDocument();
+    expect(screen.queryByText("Absence reasons")).not.toBeInTheDocument();
+    expect(screen.queryByText("Schedule confirmations")).not.toBeInTheDocument();
     await user.click(screen.getAllByRole("button", { name: "Deny" })[0]);
 
     await waitFor(() => {
@@ -174,7 +172,7 @@ describe("MemberPlayerDashboard parent view", () => {
 
     expect(screen.getByText("Permissions are no longer editable.")).toBeInTheDocument();
     expect(screen.getByText(/adult now/i)).toBeInTheDocument();
-    expect(screen.queryByText("Attendance confirmations")).not.toBeInTheDocument();
+    expect(screen.queryByText("Attendance confirmation")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Deny" })).not.toBeInTheDocument();
     expect(api.updatePlayerParentAccess).not.toHaveBeenCalled();
   });

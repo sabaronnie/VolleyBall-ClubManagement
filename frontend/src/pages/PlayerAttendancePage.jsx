@@ -186,7 +186,7 @@ export default function PlayerAttendancePage({ activeTeam }) {
           <h1>My sessions</h1>
           <p className="teams-page-subtitle">
             Upcoming training and matches for <strong>{sessionsPayload?.team?.name || activeTeam?.name}</strong>. Confirm
-            so your coach knows you are coming (14+ players with the Player account role).
+            so your coach knows you are coming.
           </p>
         </div>
       </header>
@@ -318,8 +318,8 @@ export default function PlayerAttendancePage({ activeTeam }) {
                   ) : null}
                   {!mine?.can_confirm && !isCancelled && myUserId ? (
                     <p className="vc-modal__muted" style={{ marginTop: "0.65rem", fontSize: "0.88rem" }}>
-                      Self-confirmation is available to roster players aged 14+ with the Player account role (younger
-                      athletes: a linked parent confirms for you).
+                      Self-confirmation is currently unavailable for your account. If a parent manages your permissions,
+                      they may need to allow attendance confirmations first.
                     </p>
                   ) : null}
                 </article>

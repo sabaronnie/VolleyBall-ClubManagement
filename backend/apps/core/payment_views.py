@@ -38,7 +38,7 @@ from .models import (
     TeamMembership,
     TeamRole,
 )
-from .permissions import can_manage_team, can_view_team, is_club_director
+from .permissions import can_manage_team, can_player_make_payments, can_view_team, is_club_director
 
 logger = logging.getLogger(__name__)
 
@@ -1436,6 +1436,7 @@ def my_fees(request):
         {
             "own_fees": [_serialize_fee_record(r) for r in own_records],
             "children_fees": [_serialize_fee_record(r) for r in children_records],
+            "can_make_own_payments": can_player_make_payments(user),
         }
     )
 
@@ -1462,6 +1463,17 @@ def record_self_payment(request, record_id):
     if not is_own and not is_parent:
         return JsonResponse(
             {"errors": {"authorization": "You can only pay your own fees or your child's fees."}},
+            status=403,
+        )
+    if is_own and not can_player_make_payments(request.user):
+        return JsonResponse(
+            {
+                "errors": {
+                    "authorization": (
+                        "Your parent-managed settings do not allow you to make payments."
+                    )
+                }
+            },
             status=403,
         )
 

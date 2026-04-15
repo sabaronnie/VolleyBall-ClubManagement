@@ -140,7 +140,7 @@ function PaymentMethodDropdown({ value, onChange }) {
   );
 }
 
-function FeeRow({ fee, onPaySuccess }) {
+function FeeRow({ fee, onPaySuccess, canPay = true }) {
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState("in_person");
@@ -151,6 +151,10 @@ function FeeRow({ fee, onPaySuccess }) {
   const remaining = Number(fee.remaining || 0);
 
   const handlePay = async () => {
+    if (!canPay) {
+      setError("Parent-managed permissions do not allow payments from this account.");
+      return;
+    }
     const val = Number(amount);
     if (!amount || Number.isNaN(val) || val <= 0 || val > remaining) {
       setError(`Enter an amount between 0.01 and ${remaining.toFixed(2)}.`);
@@ -177,7 +181,18 @@ function FeeRow({ fee, onPaySuccess }) {
         <td>{statusBadge(fee.status)}</td>
         <td>
           {fee.status !== "paid" ? (
-            <button type="button" className="vc-director-modal__btn" style={{ padding: "0.3rem 0.7rem", fontSize: "0.85rem" }} onClick={() => setOpen((o) => !o)}>
+            <button
+              type="button"
+              className="vc-director-modal__btn"
+              disabled={!canPay}
+              title={!canPay ? "Parent-managed permissions do not allow payments from this account." : undefined}
+              style={{ padding: "0.3rem 0.7rem", fontSize: "0.85rem" }}
+              onClick={() => {
+                if (canPay) {
+                  setOpen((o) => !o);
+                }
+              }}
+            >
               {open ? "Cancel" : "Pay"}
             </button>
           ) : null}
@@ -199,7 +214,7 @@ function FeeRow({ fee, onPaySuccess }) {
                 Note (optional)
                 <input className="vc-director-modal__select" value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. cash, Venmo" />
               </label>
-              <button type="button" className="vc-director-modal__btn" disabled={busy} onClick={handlePay} style={{ alignSelf: "flex-end" }}>
+              <button type="button" className="vc-director-modal__btn" disabled={busy || !canPay} onClick={handlePay} style={{ alignSelf: "flex-end" }}>
                 {busy ? "Processing\u2026" : "Confirm payment"}
               </button>
             </div>
@@ -214,6 +229,7 @@ function FeeRow({ fee, onPaySuccess }) {
 export default function MyFeesPage({ embedded = false }) {
   const [ownFees, setOwnFees] = useState([]);
   const [childrenFees, setChildrenFees] = useState([]);
+  const [canMakeOwnPayments, setCanMakeOwnPayments] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -224,6 +240,7 @@ export default function MyFeesPage({ embedded = false }) {
       const data = await fetchMyFees();
       setOwnFees(data.own_fees || []);
       setChildrenFees(data.children_fees || []);
+      setCanMakeOwnPayments(data.can_make_own_payments !== false);
     } catch (err) { setError(err.message || "Could not load fees."); }
     finally { setLoading(false); }
   }, []);
@@ -238,7 +255,7 @@ export default function MyFeesPage({ embedded = false }) {
   const totalOwn = ownUnpaid.reduce((s, r) => s + Number(r.remaining || 0), 0);
   const totalChild = childUnpaid.reduce((s, r) => s + Number(r.remaining || 0), 0);
 
-  const renderTable = (title, rows) => {
+  const renderTable = (title, rows, canPay = true) => {
     if (!rows.length) return null;
     return (
       <section style={{ marginBottom: "1.5rem" }}>
@@ -246,7 +263,7 @@ export default function MyFeesPage({ embedded = false }) {
         <div style={{ overflowX: "auto" }}>
           <table className="vc-table">
             <thead><tr><th>Description</th><th>Team</th><th>Due</th><th>Paid</th><th>Remaining</th><th>Due date</th><th>Status</th><th></th></tr></thead>
-            <tbody>{rows.map((fee) => <FeeRow key={fee.id} fee={fee} onPaySuccess={handlePaySuccess} />)}</tbody>
+            <tbody>{rows.map((fee) => <FeeRow key={fee.id} fee={fee} onPaySuccess={handlePaySuccess} canPay={canPay} />)}</tbody>
           </table>
         </div>
       </section>
@@ -277,8 +294,8 @@ export default function MyFeesPage({ embedded = false }) {
             ) : null}
           </div>
 
-          {renderTable("Your fees", ownFees)}
-          {renderTable("Children's fees", childrenFees)}
+          {renderTable("Your fees", ownFees, canMakeOwnPayments)}
+          {renderTable("Children's fees", childrenFees, true)}
 
           {!ownFees.length && !childrenFees.length ? (
             <p className="vc-modal__muted">No fee records found on your account.</p>
