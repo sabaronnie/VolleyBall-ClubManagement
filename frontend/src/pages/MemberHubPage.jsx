@@ -302,12 +302,12 @@ export default function MemberHubPage() {
     }
   };
 
-  const saveOwnEmergencyContact = async (nextValue) => {
+  const saveOwnEmergencyContact = async (nextValue, countryCode) => {
     const userId = me?.user?.id;
     if (!userId) {
       throw new Error("Could not identify your account.");
     }
-    const result = await updateUserEmergencyContact(userId, nextValue);
+    const result = await updateUserEmergencyContact(userId, nextValue, countryCode);
     setMe((current) => {
       if (!current) {
         return current;

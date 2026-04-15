@@ -699,12 +699,12 @@ export default function DashboardPage({
     }
   };
 
-  const saveOwnEmergencyContact = async (nextValue) => {
+  const saveOwnEmergencyContact = async (nextValue, countryCode) => {
     const userId = profileMe?.user?.id;
     if (!userId) {
       throw new Error("Could not identify your account.");
     }
-    const result = await updateUserEmergencyContact(userId, nextValue);
+    const result = await updateUserEmergencyContact(userId, nextValue, countryCode);
     setProfileMe((current) => {
       if (!current) {
         return current;

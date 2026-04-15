@@ -1821,6 +1821,58 @@ class UpdateTeamMemberDataEndpointTests(TestCase):
         self.assertEqual(coach.emergency_contact, "+96170000000")
         self.assertEqual(response.json()["user"]["emergency_contact"], "+96170000000")
 
+    def test_user_emergency_contact_endpoint_normalizes_selected_country_number(self):
+        coach = User.objects.create_user(
+            email="coach-country@example.com",
+            password="StrongPassword123!",
+            first_name="Coach",
+            last_name="Country",
+        )
+        token = generate_auth_token(coach)
+
+        response = self.client.patch(
+            reverse("core:update-user-emergency-contact", kwargs={"user_id": coach.id}),
+            data=json.dumps(
+                {
+                    "emergency_contact": "70 000 000",
+                    "emergency_contact_country": "LB",
+                }
+            ),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        coach.refresh_from_db()
+        self.assertEqual(coach.emergency_contact, "+96170000000")
+        self.assertEqual(response.json()["user"]["emergency_contact"], "+96170000000")
+
+    def test_user_emergency_contact_endpoint_rejects_invalid_phone_for_country(self):
+        coach = User.objects.create_user(
+            email="coach-invalid-phone@example.com",
+            password="StrongPassword123!",
+            first_name="Coach",
+            last_name="Invalid",
+        )
+        token = generate_auth_token(coach)
+
+        response = self.client.patch(
+            reverse("core:update-user-emergency-contact", kwargs={"user_id": coach.id}),
+            data=json.dumps(
+                {
+                    "emergency_contact": "123",
+                    "emergency_contact_country": "US",
+                }
+            ),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("emergency_contact", response.json()["errors"])
+        coach.refresh_from_db()
+        self.assertEqual(coach.emergency_contact, "")
+
     def test_user_emergency_contact_endpoint_respects_player_parent_permissions(self):
         director = User.objects.create_user(email="director@example.com", password="StrongPassword123!")
         parent = User.objects.create_user(email="parent@example.com", password="StrongPassword123!")
@@ -2065,7 +2117,7 @@ class UpdateTeamMemberDataEndpointTests(TestCase):
                 "core:update-team-member-data",
                 kwargs={"team_id": team.id, "target_user_id": player.id},
             ),
-            data=json.dumps({"emergency_contact": "+96172222222"}),
+            data=json.dumps({"emergency_contact": "+96171111111"}),
             content_type="application/json",
             HTTP_AUTHORIZATION=f"Bearer {token}",
         )
@@ -2095,14 +2147,14 @@ class UpdateTeamMemberDataEndpointTests(TestCase):
                 "core:update-team-member-data",
                 kwargs={"team_id": team.id, "target_user_id": coach.id},
             ),
-            data=json.dumps({"emergency_contact": "+96173333333"}),
+            data=json.dumps({"emergency_contact": "+96170000000"}),
             content_type="application/json",
             HTTP_AUTHORIZATION=f"Bearer {token}",
         )
 
         self.assertEqual(response.status_code, 200)
         coach.refresh_from_db()
-        self.assertEqual(coach.emergency_contact, "+96173333333")
+        self.assertEqual(coach.emergency_contact, "+96170000000")
 
 
 class UpdateTeamDetailsEndpointTests(TestCase):

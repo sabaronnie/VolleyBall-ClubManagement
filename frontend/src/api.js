@@ -183,9 +183,10 @@ export async function fetchCurrentUser() {
   return authenticatedGet("/api/auth/me/");
 }
 
-export async function updateUserEmergencyContact(userId, emergencyContact) {
+export async function updateUserEmergencyContact(userId, emergencyContact, countryCode) {
   return authenticatedJson(`/api/users/${userId}/emergency-contact/`, "PATCH", {
     emergency_contact: emergencyContact,
+    emergency_contact_country: countryCode,
   });
 }
 

@@ -83,6 +83,7 @@ from .permissions import (
     is_team_player,
     is_user_adult,
 )
+from .phone_numbers import normalize_emergency_contact
 from .tokens import generate_auth_token, verify_auth_token
 
 
@@ -2087,7 +2088,14 @@ def update_user_emergency_contact(request, user_id):
             status=403,
         )
 
-    target_user.emergency_contact = (payload["emergency_contact"] or "").strip()
+    emergency_contact, validation_error = normalize_emergency_contact(
+        payload["emergency_contact"],
+        payload.get("emergency_contact_country"),
+    )
+    if validation_error:
+        return JsonResponse({"errors": {"emergency_contact": validation_error}}, status=400)
+
+    target_user.emergency_contact = emergency_contact
     target_user.save(update_fields=["emergency_contact"])
 
     return JsonResponse(
@@ -4568,7 +4576,14 @@ def update_team_member_data(request, team_id, target_user_id):
                         status=403,
                     )
 
-            target_user.emergency_contact = (payload["emergency_contact"] or "").strip()
+            emergency_contact, validation_error = normalize_emergency_contact(
+                payload["emergency_contact"],
+                payload.get("emergency_contact_country"),
+            )
+            if validation_error:
+                return JsonResponse({"errors": {"emergency_contact": validation_error}}, status=400)
+
+            target_user.emergency_contact = emergency_contact
             target_user.save(update_fields=["emergency_contact"])
             updated["user"] = {
                 "emergency_contact": target_user.emergency_contact,
@@ -4576,7 +4591,14 @@ def update_team_member_data(request, team_id, target_user_id):
 
     elif is_parent_edit:
         if "emergency_contact" in payload:
-            target_user.emergency_contact = (payload["emergency_contact"] or "").strip()
+            emergency_contact, validation_error = normalize_emergency_contact(
+                payload["emergency_contact"],
+                payload.get("emergency_contact_country"),
+            )
+            if validation_error:
+                return JsonResponse({"errors": {"emergency_contact": validation_error}}, status=400)
+
+            target_user.emergency_contact = emergency_contact
             target_user.save(update_fields=["emergency_contact"])
             updated["user"] = {
                 "emergency_contact": target_user.emergency_contact,

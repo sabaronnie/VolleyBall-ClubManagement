@@ -882,11 +882,11 @@ export default function MemberPlayerDashboard() {
     }
   };
 
-  const onSaveEmergencyContact = async (nextValue) => {
+  const onSaveEmergencyContact = async (nextValue, countryCode) => {
     if (!focus?.id) {
       throw new Error("Could not identify this player.");
     }
-    const result = await updateUserEmergencyContact(focus.id, nextValue);
+    const result = await updateUserEmergencyContact(focus.id, nextValue, countryCode);
     setData((current) => {
       if (!current) {
         return current;
