@@ -82,12 +82,12 @@ const platformStats = [
 ];
 
 const trustBrands = [
-  { name: "Mikasa", logo: "/assets/logos/mikasa.svg" },
-  { name: "Molten", logo: "/assets/logos/molten.svg" },
-  { name: "Wilson", logo: "/assets/logos/wilson.svg" },
-  { name: "Mizuno", logo: "/assets/logos/mizuno.svg" },
-  { name: "ASICS", logo: "/assets/logos/asics.svg" },
-  { name: "adidas", logo: "/assets/logos/adidas.svg" },
+  { name: "Sir Safety Perugia", logo: "/assets/logos/sir-safety-perugia.svg" },
+  { name: "Trentino Volley", logo: "/assets/logos/trentino-volley.svg" },
+  { name: "Zenit Kazan", logo: "/assets/logos/zenit-kazan.svg" },
+  { name: "Lube Civitanova", logo: "/assets/logos/lube-civitanova.svg" },
+  { name: "ZAKSA Kedzierzyn-Kozle", logo: "/assets/logos/zaksa-kedzierzyn-kozle.svg" },
+  { name: "VakifBank Istanbul", logo: "/assets/logos/vakifbank-istanbul.svg" },
 ];
 
 const valueHighlights = [

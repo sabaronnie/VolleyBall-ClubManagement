@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="72" viewBox="0 0 240 72" role="img" aria-labelledby="title">
+  <title>Trentino Volley</title>
+  <rect width="240" height="72" rx="12" fill="#f7f8fb"/>
+  <circle cx="34" cy="36" r="18" fill="#ffb000"/>
+  <path d="M22 36c3-6 9-10 16-10s13 4 16 10c-3 6-9 10-16 10s-13-4-16-10z" fill="none" stroke="#1f3b7a" stroke-width="2.5"/>
+  <text x="62" y="31" font-family="Inter, Arial, sans-serif" font-size="11" font-weight="700" fill="#2a2f3a">TRENTINO</text>
+  <text x="62" y="47" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="800" fill="#1f3b7a">VOLLEY</text>
+</svg>
