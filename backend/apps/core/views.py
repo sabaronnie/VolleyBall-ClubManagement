@@ -3057,22 +3057,7 @@ def clear_training_session(request, session_id):
     return JsonResponse({"message": "Session cleared successfully.", "session_id": session_id})
 
 
-@login_required
-@require_POST
-@csrf_exempt
-def confirm_training_session(request, session_id):
-    session = get_object_or_404(
-        TrainingSession.objects.select_related("team__club"),
-        pk=session_id,
-    )
-    team = session.team
-
-    if not can_view_team(request.user, team):
-        return JsonResponse({"errors": {"team": "You do not have access to this team."}}, status=403)
-
-    if session.status == TrainingSession.Status.CANCELLED:
-        return JsonResponse({"errors": {"session": "Cancelled sessions cannot be confirmed."}}, status=400)
-
+def _resolve_training_confirmation_target(request, session, team):
     payload = _parse_json_request(request)
     if payload is None:
         payload = {}
@@ -3093,13 +3078,16 @@ def confirm_training_session(request, session_id):
         try:
             target_player = team_players[int(requested_player_id)]
         except (KeyError, TypeError, ValueError):
-            return JsonResponse({"errors": {"player_id": "Player is not on this team."}}, status=400)
+            return None, player_memberships, JsonResponse(
+                {"errors": {"player_id": "Player is not on this team."}},
+                status=400,
+            )
 
     if target_player is None and request.user.id in team_players:
         target_player = request.user
 
     if target_player is None:
-        return JsonResponse(
+        return None, player_memberships, JsonResponse(
             {"errors": {"player_id": "A valid player must be provided for confirmation."}},
             status=400,
         )
@@ -3109,16 +3097,44 @@ def confirm_training_session(request, session_id):
     ) or _can_parent_confirm_training(request.user, target_player, team)
 
     if not can_confirm:
-        return JsonResponse(
-            {"errors": {"confirmation": "You cannot confirm attendance for this player."}},
+        return None, player_memberships, JsonResponse(
+            {"errors": {"confirmation": "You cannot update attendance for this player."}},
             status=403,
         )
 
-    TrainingSessionConfirmation.objects.update_or_create(
-        training_session=session,
-        player=target_player,
-        defaults={"confirmed_by": request.user},
+    return target_player, player_memberships, None
+
+
+@login_required
+@require_http_methods(["POST", "DELETE"])
+@csrf_exempt
+def confirm_training_session(request, session_id):
+    session = get_object_or_404(
+        TrainingSession.objects.select_related("team__club"),
+        pk=session_id,
     )
+    team = session.team
+
+    if not can_view_team(request.user, team):
+        return JsonResponse({"errors": {"team": "You do not have access to this team."}}, status=403)
+
+    if session.status == TrainingSession.Status.CANCELLED:
+        return JsonResponse({"errors": {"session": "Cancelled sessions cannot be updated."}}, status=400)
+
+    target_player, player_memberships, error_response = _resolve_training_confirmation_target(request, session, team)
+    if error_response is not None:
+        return error_response
+
+    if request.method == "DELETE":
+        TrainingSessionConfirmation.objects.filter(training_session=session, player=target_player).delete()
+        message = "Attendance confirmation removed."
+    else:
+        TrainingSessionConfirmation.objects.update_or_create(
+            training_session=session,
+            player=target_player,
+            defaults={"confirmed_by": request.user},
+        )
+        message = "Attendance confirmed successfully."
 
     session = (
         TrainingSession.objects.filter(pk=session.pk)
@@ -3130,7 +3146,7 @@ def confirm_training_session(request, session_id):
 
     return JsonResponse(
         {
-            "message": "Attendance confirmed successfully.",
+            "message": message,
             "session": _serialize_training_session(session, request.user, team, player_memberships),
         }
     )

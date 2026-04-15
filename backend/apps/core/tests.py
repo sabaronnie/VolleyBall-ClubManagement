@@ -3866,6 +3866,81 @@ class PlayerAttendanceConfirmationTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(TrainingSessionConfirmation.objects.filter(training_session=session, player=player).count(), 1)
 
+    def test_player_can_unconfirm_existing_confirmation(self):
+        _team, session, player, _other, _coach = self._fixture_team_and_session(player_dob=date(2007, 1, 1))
+        TrainingSessionConfirmation.objects.create(
+            training_session=session,
+            player=player,
+            confirmed_by=player,
+        )
+        token = generate_auth_token(player)
+        response = self.client.delete(
+            reverse("core:confirm-training-session", kwargs={"session_id": session.id}),
+            data=json.dumps({}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(
+            TrainingSessionConfirmation.objects.filter(training_session=session, player=player).exists()
+        )
+        mine = next(
+            row
+            for row in response.json()["session"]["player_confirmations"]
+            if row["player_id"] == player.id
+        )
+        self.assertFalse(mine["is_confirmed"])
+
+    def test_parent_can_unconfirm_linked_child(self):
+        _team, session, player, _other, _coach = self._fixture_team_and_session(player_dob=date(2008, 5, 1))
+        parent = User.objects.create_user(email="ep24-parent-unconfirm@example.com", password="StrongPassword123!")
+        ParentPlayerRelation.objects.link(parent=parent, player=player)
+        TrainingSessionConfirmation.objects.create(
+            training_session=session,
+            player=player,
+            confirmed_by=parent,
+        )
+        token = generate_auth_token(parent)
+        response = self.client.delete(
+            reverse("core:confirm-training-session", kwargs={"session_id": session.id}),
+            data=json.dumps({"player_id": player.id}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(
+            TrainingSessionConfirmation.objects.filter(training_session=session, player=player).exists()
+        )
+
+    def test_parent_managed_policy_can_block_player_self_unconfirmation(self):
+        _team, session, player, _other, _coach = self._fixture_team_and_session(player_dob=date(2015, 5, 1))
+        parent = User.objects.create_user(email="ep24-parent-block-unconfirm@example.com", password="StrongPassword123!")
+        ParentPlayerRelation.objects.link(parent=parent, player=player)
+        PlayerAccessPolicy.objects.create(
+            player=player,
+            is_parent_managed=True,
+            can_self_confirm_attendance=False,
+        )
+        TrainingSessionConfirmation.objects.create(
+            training_session=session,
+            player=player,
+            confirmed_by=parent,
+        )
+        token = generate_auth_token(player)
+        response = self.client.delete(
+            reverse("core:confirm-training-session", kwargs={"session_id": session.id}),
+            data=json.dumps({}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(
+            TrainingSessionConfirmation.objects.filter(training_session=session, player=player).exists()
+        )
+
     def test_player_cannot_confirm_for_teammate(self):
         _team, session, player, other, _coach = self._fixture_team_and_session(player_dob=date(2007, 1, 1))
         token = generate_auth_token(player)

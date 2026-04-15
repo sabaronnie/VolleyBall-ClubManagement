@@ -4,6 +4,7 @@ import {
   fetchCurrentUser,
   fetchPlayerTeamAttendanceSummary,
   fetchTeamTrainingSessions,
+  unconfirmTrainingSession,
 } from "../api";
 
 function parseLocalDate(iso) {
@@ -124,16 +125,21 @@ export default function PlayerAttendancePage({ activeTeam }) {
     return { upcomingSessions: upcoming, pastSessions: past };
   }, [sessionsPayload, today]);
 
-  const onConfirm = async (sessionId) => {
+  const onToggleConfirmation = async (sessionId, confirmed) => {
     setActionError("");
     setSuccessMessage("");
     setConfirmingId(sessionId);
     try {
-      await confirmTrainingSession(sessionId, null);
-      setSuccessMessage("Attendance saved.");
+      if (confirmed) {
+        await unconfirmTrainingSession(sessionId, null);
+        setSuccessMessage("Attendance confirmation removed.");
+      } else {
+        await confirmTrainingSession(sessionId, null);
+        setSuccessMessage("Attendance saved.");
+      }
       await loadSessions();
     } catch (err) {
-      setActionError(err.message || "Could not confirm attendance.");
+      setActionError(err.message || "Could not update attendance.");
     } finally {
       setConfirmingId(null);
     }
@@ -286,7 +292,8 @@ export default function PlayerAttendancePage({ activeTeam }) {
                       type="button"
                       className="vc-action-btn"
                       disabled={!canPress || confirmingId === session.id}
-                      onClick={() => void onConfirm(session.id)}
+                      onClick={() => void onToggleConfirmation(session.id, confirmed)}
+                      title={confirmed ? "Click to unconfirm attendance" : "Confirm attendance"}
                     >
                       {confirmingId === session.id
                         ? "Saving…"

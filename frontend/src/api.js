@@ -289,6 +289,11 @@ export async function confirmTrainingSession(sessionId, playerId) {
   return authenticatedJson(`/api/training-sessions/${sessionId}/confirm/`, "POST", body);
 }
 
+export async function unconfirmTrainingSession(sessionId, playerId) {
+  const body = playerId != null ? { player_id: playerId } : {};
+  return authenticatedJson(`/api/training-sessions/${sessionId}/confirm/`, "DELETE", body);
+}
+
 export async function fetchCoachTrainingSessionAttendance(sessionId) {
   return authenticatedGet(`/api/training-sessions/${sessionId}/attendance/`);
 }

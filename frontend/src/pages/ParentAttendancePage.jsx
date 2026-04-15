@@ -4,6 +4,7 @@ import {
   fetchCurrentUser,
   fetchParentChildAttendanceHistory,
   fetchTeamTrainingSessions,
+  unconfirmTrainingSession,
 } from "../api";
 
 function statusClass(status) {
@@ -209,19 +210,24 @@ export default function ParentAttendancePage() {
     return list;
   }, [sessionsPayload, activeConfirmContext, today]);
 
-  const onConfirmForChild = async (sessionId, childId) => {
+  const onToggleConfirmationForChild = async (sessionId, childId, confirmed) => {
     setConfirmBanner("");
     setConfirmBannerError("");
     setConfirmingKey(`${sessionId}-${childId}`);
     try {
-      await confirmTrainingSession(sessionId, childId);
-      setConfirmBanner("Attendance saved for your child.");
+      if (confirmed) {
+        await unconfirmTrainingSession(sessionId, childId);
+        setConfirmBanner("Attendance confirmation removed for your child.");
+      } else {
+        await confirmTrainingSession(sessionId, childId);
+        setConfirmBanner("Attendance saved for your child.");
+      }
       if (activeConfirmContext?.teamId) {
         await loadSessionsForContext(activeConfirmContext.teamId);
       }
       await refreshHistoryAfterConfirm();
     } catch (err) {
-      setConfirmBannerError(err.message || "Could not confirm.");
+      setConfirmBannerError(err.message || "Could not update attendance.");
     } finally {
       setConfirmingKey("");
     }
@@ -366,7 +372,10 @@ export default function ParentAttendancePage() {
                       type="button"
                       className="vc-action-btn"
                       disabled={!canPress || confirmingKey === busyKey}
-                      onClick={() => void onConfirmForChild(session.id, activeConfirmContext.childId)}
+                      onClick={() =>
+                        void onToggleConfirmationForChild(session.id, activeConfirmContext.childId, confirmed)
+                      }
+                      title={confirmed ? "Click to unconfirm attendance" : "Confirm attendance"}
                     >
                       {confirmingKey === busyKey
                         ? "Saving…"
