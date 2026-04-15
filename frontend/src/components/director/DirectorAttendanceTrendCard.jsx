@@ -1,4 +1,7 @@
+import { useState } from "react";
+
 function TrendSvg({ points }) {
+  const [hoveredPoint, setHoveredPoint] = useState(null);
   if (!points?.length) {
     return null;
   }
@@ -31,25 +34,48 @@ function TrendSvg({ points }) {
       : "";
 
   return (
-    <svg
-      className="vc-director-trend-svg"
-      viewBox={`0 0 ${w} ${h}`}
-      preserveAspectRatio="none"
-      role="img"
-      aria-label="Attendance rate by day"
-    >
-      <line x1={padL} y1={padT + innerH} x2={padL + innerW} y2={padT + innerH} stroke="#e2e8f0" strokeWidth="1" />
-      <text x={padL} y={h - 6} fill="#94a3b8" fontSize="11">
-        Last 30 days
-      </text>
-      {coords.map((c) =>
-        c.rate != null ? (
-          <circle key={c.date} cx={c.x} cy={c.y} r={3} fill="#2563eb" opacity={0.9} />
-        ) : null,
-      )}
-      {areaD ? <path d={areaD} fill="rgba(37, 99, 235, 0.12)" stroke="none" /> : null}
-      {lineD ? <path d={lineD} fill="none" stroke="#2563eb" strokeWidth={2} strokeLinejoin="round" /> : null}
-    </svg>
+    <div className="vc-director-trend-svg-wrap">
+      <svg
+        className="vc-director-trend-svg"
+        viewBox={`0 0 ${w} ${h}`}
+        preserveAspectRatio="none"
+        role="img"
+        aria-label="Attendance rate by day"
+      >
+        <line x1={padL} y1={padT + innerH} x2={padL + innerW} y2={padT + innerH} stroke="#e2e8f0" strokeWidth="1" />
+        <text x={padL} y={h - 6} fill="#94a3b8" fontSize="11">
+          Last 30 days
+        </text>
+        {areaD ? <path d={areaD} fill="rgba(37, 99, 235, 0.12)" stroke="none" /> : null}
+        {lineD ? <path d={lineD} fill="none" stroke="#2563eb" strokeWidth={2} strokeLinejoin="round" /> : null}
+        {coords.map((c) =>
+          c.rate != null ? (
+            <g key={c.date}>
+              <circle
+                cx={c.x}
+                cy={c.y}
+                r={10}
+                fill="transparent"
+                onMouseEnter={() => setHoveredPoint(c)}
+                onMouseLeave={() => setHoveredPoint((current) => (current?.date === c.date ? null : current))}
+              />
+              <circle cx={c.x} cy={c.y} r={3.5} fill="#2563eb" opacity={0.95} />
+            </g>
+          ) : null,
+        )}
+      </svg>
+      {hoveredPoint ? (
+        <div
+          className="vc-director-trend-tooltip"
+          style={{
+            left: `calc(${((hoveredPoint.x / w) * 100).toFixed(2)}% - 28px)`,
+            top: `calc(${((hoveredPoint.y / h) * 100).toFixed(2)}% - 42px)`,
+          }}
+        >
+          {`${Number(hoveredPoint.rate).toFixed(1)}%`}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

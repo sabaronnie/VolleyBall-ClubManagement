@@ -374,7 +374,9 @@ export default function ParentAttendancePage() {
                           ? "Cancelled"
                           : confirmed
                             ? "Confirmed ✓"
-                            : "Confirm attendance"}
+                            : childRow && childRow.can_confirm === false
+                              ? "Player confirms self"
+                              : "Confirm attendance"}
                     </button>
                   </div>
                   {childRow ? (
@@ -398,8 +400,8 @@ export default function ParentAttendancePage() {
                   ) : null}
                   {!childRow?.can_confirm && !isCancelled && activeConfirmContext ? (
                     <p className="vc-modal__muted" style={{ marginTop: "0.65rem", fontSize: "0.88rem" }}>
-                      You can only confirm here when your child is under 14 and linked to your account. Older players
-                      confirm for themselves on <strong>My sessions</strong>.
+                      {activeConfirmContext.childName} has to confirm this session themselves on{" "}
+                      <strong>My sessions</strong>. Parent confirmation here is only for linked players under 14.
                     </p>
                   ) : null}
                 </article>

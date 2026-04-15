@@ -3,6 +3,7 @@ import {
   directorRemovePlayerFromTeam,
   directorResolveParentLink,
   directorSetUserAccountRole,
+  fetchTeamMembers,
   fetchCurrentUser,
   fetchDirectorPendingParentLinks,
   fetchDirectorUserDirectory,
@@ -33,6 +34,71 @@ function formatVerificationStatus(status) {
     return "Verified";
   }
   return status || "—";
+}
+
+function userTeamLabels(user) {
+  const labels = [];
+  const seen = new Set();
+
+  (Array.isArray(user?.teams) ? user.teams : []).forEach((team) => {
+    const label = team?.short_name || team?.name || "";
+    if (label && !seen.has(label)) {
+      seen.add(label);
+      labels.push(label);
+    }
+  });
+
+  (Array.isArray(user?.team_short_names) ? user.team_short_names : []).forEach((label) => {
+    const normalized = String(label || "").trim();
+    if (normalized && !seen.has(normalized)) {
+      seen.add(normalized);
+      labels.push(normalized);
+    }
+  });
+
+  return labels;
+}
+
+function mergeDirectoryUsersWithRosterTeams(users, teams, rosterPayloadsByTeamId) {
+  const labelsByUserId = new Map();
+
+  (Array.isArray(users) ? users : []).forEach((user) => {
+    const existing = userTeamLabels(user);
+    if (existing.length) {
+      labelsByUserId.set(user.id, existing);
+    }
+  });
+
+  (Array.isArray(teams) ? teams : []).forEach((team) => {
+    const roster = rosterPayloadsByTeamId.get(Number(team.id));
+    const members = Array.isArray(roster?.members) ? roster.members : [];
+    const label = team?.short_name || team?.name || "";
+    if (!label) return;
+
+    members.forEach((member) => {
+      const userId = Number(member?.user?.id ?? member?.user_id ?? member?.id);
+      if (!Number.isFinite(userId)) return;
+      const current = labelsByUserId.get(userId) || [];
+      if (!current.includes(label)) {
+        labelsByUserId.set(userId, [...current, label]);
+      }
+    });
+  });
+
+  return (Array.isArray(users) ? users : []).map((user) => {
+    const labels = labelsByUserId.get(user.id) || [];
+    if (!labels.length) {
+      return user;
+    }
+    return {
+      ...user,
+      team_short_names: labels,
+      teams:
+        Array.isArray(user?.teams) && user.teams.length
+          ? user.teams
+          : labels.map((label) => ({ short_name: label, name: label })),
+    };
+  });
 }
 
 export default function DirectorUserManagementPage({
@@ -111,7 +177,23 @@ export default function DirectorUserManagementPage({
           "This list is limited to the directors, coaches, players, and linked parents connected to your club.",
         );
       }
-      setAllUsers(rows);
+      const accessibleTeams = directorView ? (me.director_teams || []) : (me.coached_teams || []);
+      const needsRosterFallback = rows.some((row) => !userTeamLabels(row).length);
+      let finalRows = rows;
+      if (needsRosterFallback && accessibleTeams.length) {
+        const rosterEntries = await Promise.all(
+          accessibleTeams.map(async (team) => {
+            try {
+              const roster = await fetchTeamMembers(team.id);
+              return [Number(team.id), roster];
+            } catch {
+              return [Number(team.id), null];
+            }
+          }),
+        );
+        finalRows = mergeDirectoryUsersWithRosterTeams(rows, accessibleTeams, new Map(rosterEntries));
+      }
+      setAllUsers(finalRows);
       setDirectoryCount(payload.count ?? rows.length);
       setRoleEdits({});
       setDirectorClubEdits({});
@@ -156,9 +238,9 @@ export default function DirectorUserManagementPage({
     return allUsers.filter((user) => {
       const fullName = `${user.first_name || ""} ${user.last_name || ""}`.trim().toLowerCase();
       const email = (user.email || "").toLowerCase();
-      const teamShortNames = (user.team_short_names || []).map((value) => String(value).toLowerCase());
+      const teamLabels = userTeamLabels(user).map((value) => String(value).toLowerCase());
 
-      if (normalizedTeam && !teamShortNames.includes(normalizedTeam)) {
+      if (normalizedTeam && !teamLabels.includes(normalizedTeam)) {
         return false;
       }
       if (normalizedSearch && !fullName.includes(normalizedSearch) && !email.includes(normalizedSearch)) {
@@ -495,6 +577,7 @@ export default function DirectorUserManagementPage({
                   ) : (
                     filteredUsers.map((u) => {
                       const fullName = `${u.first_name || ""} ${u.last_name || ""}`.trim() || u.email;
+                      const teamLabels = userTeamLabels(u);
                       const saveBusy = actionKey === `role-${u.id}`;
                       const removeBusy = actionKey === `remove-player-${u.id}`;
                       const busy = saveBusy || removeBusy;
@@ -522,7 +605,7 @@ export default function DirectorUserManagementPage({
                           </td>
                           <td>{fullName}</td>
                           <td>{u.email}</td>
-                          <td>{(u.team_short_names || []).join(", ") || "—"}</td>
+                          <td>{teamLabels.join(", ") || "—"}</td>
                           <td>{formatVerificationStatus(u.verification_status)}</td>
                           <td>
                             {canManageRoles ? (

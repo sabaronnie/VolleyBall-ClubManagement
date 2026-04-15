@@ -298,6 +298,14 @@ button {
   font-size: 1.6rem;
 }
 
+.notification-panel__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.9rem;
+  margin-bottom: 0.85rem;
+}
+
 .notification-compose-card {
   margin: 0.9rem 0 1rem;
   padding: 0.95rem;
@@ -490,7 +498,7 @@ button {
 }
 
 .teams-workspace__content {
-  width: min(calc(100% - 2.6rem), 1320px);
+  width: min(calc(100% - 1rem), 1860px);
   margin: 1.25rem auto 0;
 }
 
@@ -873,9 +881,133 @@ button {
   height: 18px;
 }
 
+/* Toggle switch used for session notification options */
+.session-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  cursor: pointer;
+  user-select: none;
+}
+.session-toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.vc-switch__track {
+  width: 44px;
+  height: 24px;
+  background: #e6eef3;
+  border-radius: 999px;
+  position: relative;
+  display: inline-block;
+  vertical-align: middle;
+  transition: background 160ms ease;
+}
+.vc-switch__thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.12);
+  transition: left 160ms ease, transform 160ms ease;
+}
+.session-toggle input:checked + .vc-switch__track {
+  background: linear-gradient(135deg, #4e6fb8, #3f5da1);
+}
+.session-toggle input:checked + .vc-switch__track .vc-switch__thumb {
+  left: calc(100% - 22px);
+}
+
 .training-session-list {
   display: grid;
   gap: 0.95rem;
+  /* show ~3 sessions and scroll within this panel without shifting the page */
+  max-height: 24.5rem; /* a bit taller */
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-right: 0.6rem; /* room for scrollbar */
+  margin-left: -0.4rem; /* shift slightly left so active outline isn't clipped */
+  padding-left: 0.4rem; /* inner spacing so content isn't flush to edge */
+  padding-top: 0.5rem; /* give space at top so active outline isn't cut off */
+}
+
+/* Custom select styling for analytics dropdowns */
+.vc-custom-select {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 20 20'><path fill='%234b5563' d='M5.5 7.5l4.5 4.5 4.5-4.5z'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 0.65rem center;
+  background-size: 14px 14px;
+  padding-right: 2rem !important;
+  border-radius: 8px !important;
+  border: 1px solid #d0d5dd !important;
+  background-color: #fff;
+}
+.vc-custom-select:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(37,99,235,0.12);
+}
+
+/* smaller action button */
+.vc-action-btn--sm {
+  padding: 0.45rem 0.9rem;
+  font-size: 0.95rem;
+  border-radius: 8px;
+  box-shadow: 0 8px 18px rgba(37,99,235,0.06);
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Fake select (custom dropdown) */
+.vc-fake-select {
+  position: relative;
+  display: inline-block;
+}
+.vc-fake-select__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.35rem 0.7rem;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid #d0d5dd;
+  background: #fff;
+  cursor: pointer;
+}
+.vc-fake-select__caret {
+  margin-left: 0.25rem;
+  color: #94a3b8;
+}
+.vc-fake-select__menu {
+  position: absolute;
+  top: calc(100% + 2px); /* raised slightly */
+  left: 0;
+  min-width: 10rem;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 8px 20px rgba(16,24,40,0.08);
+  border: 1px solid rgba(34,51,84,0.06);
+  z-index: 30;
+  padding: 0.35rem 0;
+  list-style: none; /* remove default bullets */
+  margin: 0;
+}
+.vc-fake-select__item {
+  padding: 0.5rem 0.9rem;
+  cursor: pointer;
+  color: #24315b;
+}
+.vc-fake-select__item:hover {
+  background: #f1f5f9;
 }
 
 .training-session-card {
@@ -1079,10 +1211,12 @@ button {
 .weekly-schedule-card,
 .schedule-editor-card,
 .schedule-training-card {
-  margin: 0 1.35rem 1.35rem;
-  padding: 1.4rem;
+  margin: 0 0 1.35rem;
+  width: 100%;
+  max-width: none;
+  padding: 1.35rem 0.85rem 1.45rem;
   border-radius: 1.15rem;
-  background: rgba(255, 255, 255, 0.94);
+  background: linear-gradient(180deg, rgba(238, 244, 250, 0.96), rgba(230, 238, 247, 0.96));
   box-shadow: 0 18px 42px rgba(30, 41, 69, 0.12);
   border: 1px solid rgba(34, 51, 84, 0.08);
 }
@@ -1092,7 +1226,7 @@ button {
   justify-content: space-between;
   align-items: center;
   gap: 1rem;
-  margin-bottom: 1rem;
+  margin-bottom: 1.15rem;
 }
 
 .weekly-schedule-card__header h2,
@@ -1101,7 +1235,7 @@ button {
   margin: 0;
   color: #111;
   font-family: Georgia, "Times New Roman", serif;
-  font-size: 1.75rem;
+  font-size: 1.95rem;
 }
 
 .schedule-training-card__top {
@@ -1141,36 +1275,42 @@ button {
 
 .weekly-schedule-layout {
   display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
-  gap: 0.85rem;
+  grid-template-columns: 74px minmax(0, 1fr);
+  gap: 0.45rem;
+  align-items: start;
 }
 
 .weekly-schedule-times {
-  padding-top: 60px;
+  min-width: 74px;
+  padding-top: 58px;
 }
 
 .weekly-schedule-times__slot {
   display: flex;
   align-items: flex-start;
   justify-content: flex-end;
-  height: 64px;
-  padding: 0.2rem 0.55rem 0 0;
-  color: #7d8594;
-  font-size: 0.76rem;
-  font-weight: 700;
+  height: 80px;
+  padding: 0 0.45rem 0 0;
+  color: #66748a;
+  font-size: 0.88rem;
+  line-height: 1;
+  font-weight: 800;
 }
 
 .weekly-schedule-grid {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 0.85rem;
+  gap: 0.42rem;
 }
 
 .weekly-schedule-day {
   border-radius: 1rem;
-  background: #fbfdff;
-  box-shadow: inset 0 0 0 1px rgba(34, 51, 84, 0.08);
+  background: linear-gradient(180deg, rgba(227, 236, 246, 0.98), rgba(219, 230, 242, 0.98));
+  box-shadow:
+    inset 0 0 0 1px rgba(34, 51, 84, 0.08),
+    0 10px 24px rgba(30, 41, 69, 0.08);
   overflow: hidden;
+  min-width: 0;
 }
 
 .weekly-schedule-day__header {
@@ -1178,39 +1318,42 @@ button {
   justify-content: space-between;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.9rem 0.85rem 0.75rem;
-  border-bottom: 1px solid rgba(34, 51, 84, 0.08);
+  padding: 0.78rem 0.65rem 0.62rem;
+  border-bottom: 1px solid rgba(34, 51, 84, 0.1);
+  background: rgba(244, 248, 252, 0.5);
 }
 
 .weekly-schedule-day__header span {
-  color: #7d8594;
-  font-size: 0.76rem;
+  color: #5f6b7a;
+  font-size: 0.82rem;
   font-weight: 800;
   letter-spacing: 0.08em;
 }
 
 .weekly-schedule-day__header strong {
   color: #1f4dbd;
-  font-size: 1.6rem;
+  font-size: 1.65rem;
   font-weight: 800;
 }
 
 .weekly-schedule-day__body {
   display: grid;
   gap: 0.7rem;
-  padding: 0.85rem;
+  padding: 0.45rem;
 }
 
 .weekly-schedule-day__track {
   position: relative;
-  height: calc(15 * 64px);
+  height: calc(15 * 80px);
   background:
-    linear-gradient(to bottom, rgba(34, 51, 84, 0.08) 1px, transparent 1px);
-  background-size: 100% 64px;
+    linear-gradient(to bottom, rgba(34, 51, 84, 0.1) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(241, 246, 251, 0.85), rgba(232, 240, 248, 0.8));
+  background-size: 100% 80px;
+  border-radius: 0.9rem;
 }
 
 .weekly-schedule-day__hour-line {
-  height: 64px;
+  height: 80px;
 }
 
 .weekly-schedule-day__empty {
@@ -1218,22 +1361,25 @@ button {
   top: 0.8rem;
   left: 0.8rem;
   margin: 0;
-  color: #99a0ac;
-  font-size: 0.88rem;
+  color: #6f7a88;
+  font-size: 0.96rem;
+  font-weight: 700;
 }
 
 .schedule-event {
   position: absolute;
-  left: 0.55rem;
-  right: 0.55rem;
-  min-width: 0;
-  padding: 0.85rem 0.9rem;
-  border-radius: 0.95rem;
-  background: linear-gradient(135deg, #54dbe6, #3fa5d7);
-  color: #fff;
-  box-shadow: 0 14px 24px rgba(63, 165, 215, 0.2);
+  left: 0.3rem;
+  padding: 0.72rem 0.72rem 0.78rem;
+  border-radius: 14px;
+  color: #ffffff;
+  font-weight: 700;
   overflow: hidden;
-  box-sizing: border-box;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
+  transition: transform 140ms ease, box-shadow 140ms ease;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-height: 0;
 }
 
 .schedule-event--interactive {
@@ -1241,53 +1387,87 @@ button {
 }
 
 .schedule-event--interactive:hover {
-  box-shadow: 0 16px 28px rgba(63, 165, 215, 0.26);
+  transform: translateY(-4px);
+  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.18);
 }
 
 .schedule-event:nth-child(2n) {
-  background: linear-gradient(135deg, #4e6fb8, #3f5da1);
+  background: linear-gradient(135deg, #3f5da1, #456fb8);
 }
 
 .schedule-event:nth-child(3n) {
-  background: linear-gradient(135deg, #6a88bf, #5870aa);
+  background: linear-gradient(135deg, #4f6fb8, #5a78bf);
 }
 
 .schedule-event.schedule-event--team-colored {
   background: var(--event-team-bg, #3fa5d7);
-  box-shadow: 0 14px 24px color-mix(in srgb, var(--event-team-bg, #3fa5d7) 32%, transparent);
-  border-left: none;
-}
-
-.schedule-event.schedule-event--team-colored:nth-child(2n),
-.schedule-event.schedule-event--team-colored:nth-child(3n) {
-  background: var(--event-team-bg, #3fa5d7);
-}
-
-.schedule-event.schedule-event--team-colored.schedule-event--interactive:hover {
-  box-shadow: 0 16px 28px color-mix(in srgb, var(--event-team-bg, #3fa5d7) 38%, transparent);
+  color: #ffffff;
+  box-shadow: 0 12px 28px color-mix(in srgb, var(--event-team-bg, #3fa5d7) 22%, rgba(15,23,42,0.08));
 }
 
 .schedule-event__time {
-  display: block;
-  margin-bottom: 0.4rem;
-  opacity: 0.9;
-  font-size: 0.78rem;
-  font-weight: 700;
+  display: inline-block;
+  align-self: flex-start;
+  margin-bottom: 0.15rem;
+  opacity: 0.95;
+  font-size: 0.8rem;
+  font-weight: 800;
+  background: rgba(0,0,0,0.12);
+  padding: 0.18rem 0.42rem;
+  border-radius: 6px;
+  color: #ffffff;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 
 .schedule-event strong {
   display: block;
-  font-size: 1rem;
-  line-height: 1.35;
+  font-size: 1.02rem;
+  line-height: 1.24;
+  margin-top: 0;
+  color: inherit;
+  font-weight: 800;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: normal;
+  hyphens: auto;
 }
 
 .schedule-event em {
   display: block;
-  margin-top: 0.35rem;
+  margin-top: 0.1rem;
   font-style: normal;
-  font-size: 0.78rem;
-  opacity: 0.92;
+  color: rgba(255,255,255,0.92);
+  font-size: 0.84rem;
+  line-height: 1.2;
+  font-weight: 600;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: normal;
+  hyphens: auto;
 }
+
+.notification-panel .vc-dash-icon-btn,
+.notification-panel .vc-action-btn {
+  background: #ffffff;
+  color: #0b2540;
+  box-shadow: 0 6px 18px rgba(7, 13, 29, 0.06);
+  border: 1px solid rgba(7, 13, 29, 0.06);
+}
+.notification-panel .vc-dash-icon-btn:hover,
+.notification-panel .vc-action-btn:hover {
+  background: #f0fdff;
+}
+.notification-panel .vc-dash-icon-btn[disabled],
+.notification-panel .vc-action-btn[disabled] {
+  opacity: 0.6;
+  cursor: default;
+}
+
 
 .schedule-hover-popover {
   pointer-events: none;

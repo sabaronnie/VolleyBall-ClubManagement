@@ -1,10 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
-import { createClub, fetchCoachTeamDashboard, fetchCurrentUser, fetchDirectorPaymentOverview } from "../api";
+import {
+  createClub,
+  fetchCoachTeamDashboard,
+  fetchCurrentUser,
+  fetchDirectorPaymentOverview,
+  fetchTeamAttendanceAnalytics,
+  fetchTeamAttendanceSummary,
+  fetchTeamMembers,
+  fetchTeamPlayerPayments,
+} from "../api";
 import ClubWorkspaceLayout from "../components/ClubWorkspaceLayout";
 import DirectorAttendanceTrendCard from "../components/director/DirectorAttendanceTrendCard";
 import DirectorClubSummaryCard from "../components/director/DirectorClubSummaryCard";
 import DirectorPaymentsOverviewCard from "../components/director/DirectorPaymentsOverviewCard";
-import DirectorRolesPermissionCard from "../components/director/DirectorRolesPermissionCard";
 import DirectorSummaryRow from "../components/director/DirectorSummaryRow";
 import { navigate } from "../navigation";
 import CoachPaymentsPage from "./CoachPaymentsPage";
@@ -15,6 +23,8 @@ import DirectorUserManagementPage from "./DirectorUserManagementPage";
 
 const AUTH_TOKEN_KEY = "netup.auth.token";
 const CLUB_STORAGE_KEY = "netup.director.payment.club_id";
+const LOW_PARTICIPATION_THRESHOLD_PERCENT = 70;
+const MIN_CLOSED_SLOTS_FOR_TEAM_ALERT = 4;
 
 export function formatMoney(cur, amount) {
   const n = Number(amount);
@@ -33,6 +43,208 @@ export function formatPercent(rate) {
     return "—";
   }
   return `${Math.round(n * 100) / 100}%`;
+}
+
+function formatDateInputValue(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function normalizePaymentStatus(status, totalRemaining) {
+  const normalized = String(status || "").trim().toLowerCase();
+  if (normalized === "overdue") {
+    return "overdue";
+  }
+  if (Number(totalRemaining || 0) > 0) {
+    return "pending";
+  }
+  return "paid";
+}
+
+function aggregateCoachPaymentRows(rows = []) {
+  const grouped = new Map();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const key = row.player_id ?? row.family_label ?? row.id;
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        player_id: row.player_id ?? key,
+        family_label: row.family_label || "Player",
+        total_paid: 0,
+        total_remaining: 0,
+        currency: row.currency || "USD",
+        hasOverdue: false,
+      });
+    }
+    const current = grouped.get(key);
+    current.total_paid += Number(row.total_paid ?? row.amount_paid ?? 0);
+    current.total_remaining += Number(row.total_remaining ?? row.remaining ?? 0);
+    current.hasOverdue = current.hasOverdue || String(row.status || "").trim().toLowerCase() === "overdue";
+    if (!current.currency && row.currency) {
+      current.currency = row.currency;
+    }
+  }
+
+  const bundled = [...grouped.values()].map((row) => ({
+    player_id: row.player_id,
+    family_label: row.family_label,
+    total_paid: Number(row.total_paid.toFixed(2)),
+    total_remaining: Number(row.total_remaining.toFixed(2)),
+    currency: row.currency || "USD",
+    status: row.hasOverdue
+      ? "overdue"
+      : normalizePaymentStatus(null, row.total_remaining),
+  }));
+
+  bundled.sort((a, b) => {
+    const remainingDiff = Number(b.total_remaining || 0) - Number(a.total_remaining || 0);
+    if (remainingDiff !== 0) {
+      return remainingDiff;
+    }
+    return String(a.family_label || "").localeCompare(String(b.family_label || ""));
+  });
+  return bundled;
+}
+
+function buildCoachWorkspaceFallback({
+  team,
+  membersPayload,
+  paymentRowsPayload,
+  attendanceSummaryPayload,
+  attendanceAnalyticsPayload,
+}) {
+  if (!team) {
+    return null;
+  }
+
+  const rosterPlayers = Array.isArray(membersPayload?.members)
+    ? membersPayload.members.filter((member) => member.membership?.role === "player")
+    : [];
+  const familySummaries = aggregateCoachPaymentRows(paymentRowsPayload?.fee_rows || []);
+  const monthlyRevenue = familySummaries.reduce((sum, row) => sum + Number(row.total_paid || 0), 0);
+  const currency =
+    familySummaries.find((row) => row.currency)?.currency ||
+    paymentRowsPayload?.fee_rows?.find((row) => row.currency)?.currency ||
+    "USD";
+  const attendanceRate = attendanceSummaryPayload?.team_average_attendance_rate_percent ?? null;
+  const closedSlots = Number(attendanceSummaryPayload?.closed_roster_slots_total || 0);
+  const lowParticipation =
+    attendanceRate != null &&
+    closedSlots >= MIN_CLOSED_SLOTS_FOR_TEAM_ALERT &&
+    Number(attendanceRate) < LOW_PARTICIPATION_THRESHOLD_PERCENT
+      ? {
+          team_id: team.id,
+          team_name: team.name,
+          rate_percent: Number(attendanceRate),
+          message: `${team.name} is below ${LOW_PARTICIPATION_THRESHOLD_PERCENT}% attendance in the last 30 days (${Number(attendanceRate).toFixed(1)}%).`,
+        }
+      : null;
+  const analyticsTrend = Array.isArray(attendanceAnalyticsPayload?.trend)
+    ? attendanceAnalyticsPayload.trend
+    : [];
+
+  return {
+    kpis: {
+      registration_player_count: rosterPlayers.length,
+      monthly_revenue: Number(monthlyRevenue.toFixed(2)),
+      monthly_revenue_currency: currency,
+      attendance_rate: attendanceRate,
+      outstanding_payer_count: familySummaries.filter((row) => Number(row.total_remaining || 0) > 0).length,
+    },
+    attendance_trend_30d: {
+      calculation_summary: attendanceSummaryPayload?.calculation_summary || "",
+      points: analyticsTrend.map((point) => ({
+        date: point.period_start,
+        rate_percent: point.attendance_rate_percent,
+        closed_slots: Number(point.present_slots || 0) + Number(point.absent_slots || 0),
+        attended_slots: Number(point.present_slots || 0),
+      })),
+    },
+    payments_overview: familySummaries.slice(0, 8),
+    family_summaries: familySummaries,
+    team_summary: {
+      average_attendance_percent: attendanceRate,
+      best_participating_team:
+        attendanceRate != null && closedSlots > 0
+          ? {
+              team_id: team.id,
+              team_name: team.name,
+              rate_percent: Number(attendanceRate),
+            }
+          : null,
+      low_participation: lowParticipation,
+      monthly_profit: Number(monthlyRevenue.toFixed(2)),
+      monthly_profit_currency: currency,
+    },
+  };
+}
+
+function hasCoachTrendData(trend) {
+  return Array.isArray(trend?.points) && trend.points.some((point) => Number(point.closed_slots || 0) > 0);
+}
+
+function mergeCoachKpis(primaryKpis, fallbackKpis) {
+  if (!primaryKpis && !fallbackKpis) {
+    return null;
+  }
+  if (!primaryKpis) {
+    return fallbackKpis;
+  }
+  if (!fallbackKpis) {
+    return primaryKpis;
+  }
+  return {
+    ...fallbackKpis,
+    ...primaryKpis,
+    registration_player_count:
+      primaryKpis.registration_player_count != null && primaryKpis.registration_player_count !== ""
+        ? primaryKpis.registration_player_count
+        : fallbackKpis.registration_player_count,
+    monthly_revenue:
+      primaryKpis.monthly_revenue != null && primaryKpis.monthly_revenue !== ""
+        ? primaryKpis.monthly_revenue
+        : fallbackKpis.monthly_revenue,
+    monthly_revenue_currency:
+      primaryKpis.monthly_revenue_currency || fallbackKpis.monthly_revenue_currency,
+    attendance_rate:
+      primaryKpis.attendance_rate != null && primaryKpis.attendance_rate !== ""
+        ? primaryKpis.attendance_rate
+        : fallbackKpis.attendance_rate,
+    outstanding_payer_count:
+      primaryKpis.outstanding_payer_count != null && primaryKpis.outstanding_payer_count !== ""
+        ? primaryKpis.outstanding_payer_count
+        : fallbackKpis.outstanding_payer_count,
+  };
+}
+
+function mergeCoachWorkspaceOverview(primaryOverview, fallbackOverview) {
+  if (!primaryOverview && !fallbackOverview) {
+    return null;
+  }
+  if (!primaryOverview) {
+    return fallbackOverview;
+  }
+  if (!fallbackOverview) {
+    return primaryOverview;
+  }
+  return {
+    ...fallbackOverview,
+    ...primaryOverview,
+    kpis: mergeCoachKpis(primaryOverview.kpis, fallbackOverview.kpis),
+    attendance_trend_30d: hasCoachTrendData(primaryOverview.attendance_trend_30d)
+      ? primaryOverview.attendance_trend_30d
+      : fallbackOverview.attendance_trend_30d,
+    payments_overview:
+      Array.isArray(primaryOverview.payments_overview) && primaryOverview.payments_overview.length
+        ? primaryOverview.payments_overview
+        : fallbackOverview.payments_overview,
+    family_summaries:
+      Array.isArray(primaryOverview.family_summaries) && primaryOverview.family_summaries.length
+        ? primaryOverview.family_summaries
+        : fallbackOverview.family_summaries,
+    team_summary: primaryOverview.team_summary || fallbackOverview.team_summary,
+  };
 }
 
 function CreateClubFieldLabel({ htmlFor, children, optional = false }) {
@@ -268,16 +480,70 @@ export default function DashboardPage({
     let cancelled = false;
     setCoachOverviewLoading(true);
     setCoachOverviewError("");
-    void fetchCoachTeamDashboard(activeCoachTeam.id)
-      .then((data) => {
-        if (!cancelled) {
-          setCoachOverview(data?.workspace_overview || null);
+    const today = new Date();
+    const startDate = new Date(today);
+    startDate.setDate(today.getDate() - 29);
+    const attendanceParams = {
+      startDate: formatDateInputValue(startDate),
+      endDate: formatDateInputValue(today),
+    };
+    void Promise.allSettled([
+      fetchCoachTeamDashboard(activeCoachTeam.id),
+      fetchTeamMembers(activeCoachTeam.id),
+      fetchTeamPlayerPayments(activeCoachTeam.id),
+      fetchTeamAttendanceSummary(activeCoachTeam.id, attendanceParams),
+      fetchTeamAttendanceAnalytics(activeCoachTeam.id, {
+        ...attendanceParams,
+        grouping: "session",
+      }),
+    ])
+      .then(([dashboardResult, membersResult, paymentsResult, summaryResult, analyticsResult]) => {
+        if (cancelled) {
+          return;
         }
-      })
-      .catch((err) => {
-        if (!cancelled) {
+        const coachDashboardPayload =
+          dashboardResult.status === "fulfilled" ? dashboardResult.value || null : null;
+        const primaryWorkspaceOverview =
+          coachDashboardPayload?.workspace_overview ||
+          coachDashboardPayload?.workspaceOverview ||
+          coachDashboardPayload?.dashboard?.workspace_overview ||
+          coachDashboardPayload?.data?.workspace_overview ||
+          (coachDashboardPayload?.kpis || coachDashboardPayload?.attendance_trend_30d || coachDashboardPayload?.team_summary
+            ? coachDashboardPayload
+            : null);
+        const fallbackWorkspaceOverview = buildCoachWorkspaceFallback({
+          team: activeCoachTeam,
+          membersPayload: membersResult.status === "fulfilled" ? membersResult.value : null,
+          paymentRowsPayload: paymentsResult.status === "fulfilled" ? paymentsResult.value : null,
+          attendanceSummaryPayload: summaryResult.status === "fulfilled" ? summaryResult.value : null,
+          attendanceAnalyticsPayload: analyticsResult.status === "fulfilled" ? analyticsResult.value : null,
+        });
+        const mergedWorkspaceOverview = mergeCoachWorkspaceOverview(
+          primaryWorkspaceOverview,
+          fallbackWorkspaceOverview,
+        );
+
+        if (coachDashboardPayload) {
+          setCoachOverview({
+            ...coachDashboardPayload,
+            workspace_overview: mergedWorkspaceOverview,
+          });
+        } else if (mergedWorkspaceOverview) {
+          setCoachOverview({
+            team: {
+              id: activeCoachTeam.id,
+              name: activeCoachTeam.name,
+            },
+            workspace_overview: mergedWorkspaceOverview,
+          });
+        } else {
           setCoachOverview(null);
-          setCoachOverviewError(err.message || "Could not load team overview.");
+        }
+
+        if (dashboardResult.status === "rejected" && !mergedWorkspaceOverview) {
+          setCoachOverviewError(dashboardResult.reason?.message || "Could not load team overview.");
+        } else {
+          setCoachOverviewError("");
         }
       })
       .finally(() => {
@@ -300,16 +566,50 @@ export default function DashboardPage({
         currency: b.currency,
         status: b.overall_status,
       }));
-  const coachPaymentRows = Array.isArray(coachOverview?.payments_overview)
-    ? coachOverview.payments_overview
-    : (coachOverview?.family_summaries || []).map((b) => ({
+  const coachWorkspaceOverview =
+    coachOverview?.workspace_overview ||
+    (coachOverview?.kpis || coachOverview?.attendance_trend_30d || coachOverview?.team_summary ? coachOverview : null);
+  const coachPaymentRows = Array.isArray(coachWorkspaceOverview?.family_summaries)
+    ? coachWorkspaceOverview.family_summaries.map((b) => ({
         player_id: b.player_id,
         family_label: b.family_label,
         total_paid: b.total_paid,
         total_remaining: b.total_remaining,
         currency: b.currency,
-        status: b.overall_status,
+        status: normalizePaymentStatus(b.status || b.overall_status, b.total_remaining),
+      }))
+    : Array.isArray(coachWorkspaceOverview?.payments_overview)
+    ? coachWorkspaceOverview.payments_overview.map((b) => ({
+        player_id: b.player_id,
+        family_label: b.family_label,
+        total_paid: b.total_paid,
+        total_remaining: b.total_remaining,
+        currency: b.currency,
+        status: normalizePaymentStatus(b.status || b.overall_status, b.total_remaining),
+      }))
+    : (coachWorkspaceOverview?.family_summaries || []).map((b) => ({
+        player_id: b.player_id,
+        family_label: b.family_label,
+        total_paid: b.total_paid,
+        total_remaining: b.total_remaining,
+        currency: b.currency,
+        status: normalizePaymentStatus(b.status || b.overall_status, b.total_remaining),
       }));
+  const paymentSnapshot = {
+    outstandingTotal: paymentRows.reduce((sum, row) => sum + Number(row.total_remaining || 0), 0),
+    unpaidCount: paymentRows.filter((row) => row.status !== "paid").length,
+    paidCount: paymentRows.filter((row) => row.status === "paid").length,
+    currency: paymentRows.find((row) => row.currency)?.currency || overview?.club_summary?.monthly_profit_currency || "USD",
+    label: "Outstanding / Unpaid / Paid",
+  };
+  const coachPaymentSnapshot = {
+    outstandingTotal: coachPaymentRows.reduce((sum, row) => sum + Number(row.total_remaining || 0), 0),
+    unpaidCount: coachPaymentRows.filter((row) => normalizePaymentStatus(row.status, row.total_remaining) !== "paid").length,
+    paidCount: coachPaymentRows.filter((row) => normalizePaymentStatus(row.status, row.total_remaining) === "paid").length,
+    currency:
+      coachPaymentRows.find((row) => row.currency)?.currency || coachWorkspaceOverview?.team_summary?.monthly_profit_currency || "USD",
+    label: "Outstanding / Unpaid / Paid",
+  };
 
   const showNoClubOnboarding = !profileLoading && !hasAnyClubAffiliation;
   const showWorkspace = !profileLoading && hasAnyClubAffiliation;
@@ -400,6 +700,12 @@ export default function DashboardPage({
 
   const openDirectorSectionPanel = (sectionId) => {
     setOpenDirectorSection(sectionId);
+    window.setTimeout(() => {
+      const trigger = document.getElementById(`dashboard-${sectionId}-trigger`);
+      if (trigger && typeof trigger.scrollIntoView === "function") {
+        trigger.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }, 0);
   };
 
   return (
@@ -486,6 +792,7 @@ export default function DashboardPage({
           <DirectorSummaryRow
             loading={loading}
             kpis={kpis}
+            paymentSnapshot={paymentSnapshot}
             formatMoney={formatMoney}
             formatPercent={formatPercent}
           />
@@ -506,11 +813,11 @@ export default function DashboardPage({
           </div>
 
           <div className="vc-dash-bottom vc-dash-bottom--dashboard">
-            <DirectorRolesPermissionCard loading={loading} matrix={overview?.roles_permission_matrix} />
             <DirectorClubSummaryCard
               loading={loading}
               clubId={clubId}
               clubSummary={overview?.club_summary}
+              paymentSnapshot={paymentSnapshot}
               formatMoney={formatMoney}
               onManageTeams={() => openDirectorSectionPanel("teams")}
             />
@@ -617,7 +924,8 @@ export default function DashboardPage({
         <>
           <DirectorSummaryRow
             loading={coachOverviewLoading}
-            kpis={coachOverview?.kpis}
+            kpis={coachWorkspaceOverview?.kpis}
+            paymentSnapshot={coachPaymentSnapshot}
             formatMoney={formatMoney}
             formatPercent={formatPercent}
           />
@@ -626,7 +934,7 @@ export default function DashboardPage({
             <DirectorAttendanceTrendCard
               loading={coachOverviewLoading}
               clubId={activeCoachTeam?.id || null}
-              trend={coachOverview?.attendance_trend_30d}
+              trend={coachWorkspaceOverview?.attendance_trend_30d}
               emptySelectionMessage="Select a team to load attendance history."
               emptyDataMessage="No attendance data is available yet for this team in the last 30 days. Close training sessions so the team trend can appear here."
             />
@@ -645,7 +953,8 @@ export default function DashboardPage({
             <DirectorClubSummaryCard
               loading={coachOverviewLoading}
               clubId={activeCoachTeam?.id || null}
-              clubSummary={coachOverview?.team_summary}
+              clubSummary={coachWorkspaceOverview?.team_summary}
+              paymentSnapshot={coachPaymentSnapshot}
               formatMoney={formatMoney}
               onManageTeams={() => openDirectorSectionPanel("teams")}
               title="Team Summary"

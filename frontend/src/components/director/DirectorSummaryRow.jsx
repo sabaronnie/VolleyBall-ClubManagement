@@ -8,15 +8,7 @@ function registrationLabel(count) {
   return `${n} Player${n === 1 ? "" : "s"}`;
 }
 
-function outstandingLabel(count) {
-  if (!Number.isFinite(count)) {
-    return NO_DATA;
-  }
-  const n = Math.trunc(count);
-  return `${n} famil${n === 1 ? "y" : "ies"}`;
-}
-
-export default function DirectorSummaryRow({ loading, kpis, formatMoney, formatPercent }) {
+export default function DirectorSummaryRow({ loading, kpis, paymentSnapshot = null, formatMoney, formatPercent }) {
   const items = [
     {
       label: "Registration",
@@ -44,7 +36,11 @@ export default function DirectorSummaryRow({ loading, kpis, formatMoney, formatP
     },
     {
       label: "Outstanding Payments",
-      value: loading ? "—" : !kpis ? NO_DATA : outstandingLabel(Number(kpis.outstanding_payer_count)),
+      value: loading
+        ? "—"
+        : paymentSnapshot && paymentSnapshot.outstandingTotal != null
+          ? formatMoney(paymentSnapshot.currency, paymentSnapshot.outstandingTotal)
+          : NO_DATA,
     },
   ];
 

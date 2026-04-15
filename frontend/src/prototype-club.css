@@ -975,10 +975,30 @@
   margin-top: 0.25rem;
 }
 
+.vc-director-trend-svg-wrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
 .vc-director-trend-svg {
   width: 100%;
   height: 100%;
   display: block;
+}
+
+.vc-director-trend-tooltip {
+  position: absolute;
+  pointer-events: none;
+  padding: 0.35rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.92);
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.2);
 }
 
 .vc-director-actions-bar {
@@ -1218,7 +1238,14 @@
 }
 
 .vc-dash-bottom--dashboard {
+  grid-template-columns: 1fr;
   align-items: stretch;
+}
+
+.vc-dash-bottom--dashboard > .vc-panel--dashboard {
+  grid-column: 1 / -1;
+  width: 100%;
+  max-width: none;
 }
 
 .vc-summary-head--dashboard {

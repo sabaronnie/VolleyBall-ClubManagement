@@ -94,6 +94,29 @@ export default function NotificationBell({ teamId = null }) {
     }
   };
 
+  // Styles for the "Mark all read" button: enabled is red rectangle with white text;
+  // disabled is muted/greyed.
+  const markBtnEnabledStyle = {
+    fontSize: "0.85rem",
+    background: "#d93838",
+    color: "#ffffff",
+    borderRadius: "8px",
+    padding: "0.45rem 0.9rem",
+    border: "0",
+    boxShadow: "0 6px 18px rgba(217, 56, 56, 0.12)",
+    cursor: "pointer",
+  };
+  const markBtnDisabledStyle = {
+    fontSize: "0.85rem",
+    background: "#f3f4f6",
+    color: "#9aa3ad",
+    borderRadius: "8px",
+    padding: "0.45rem 0.9rem",
+    border: "0",
+    cursor: "default",
+    opacity: 0.75,
+  };
+
   if (!localStorage.getItem(AUTH_TOKEN_KEY)) {
     return null;
   }
@@ -120,6 +143,25 @@ export default function NotificationBell({ teamId = null }) {
         <div className="notification-panel" role="dialog" aria-label="Notifications">
           <div className="notification-panel__header">
             <h2>Notifications</h2>
+            <button
+              type="button"
+              className="notification-panel__mark-read"
+              style={Object.assign(
+                {
+                  minWidth: "120px",
+                  height: "40px",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexShrink: 0,
+                },
+                markBusy || unreadCount === 0 ? markBtnDisabledStyle : markBtnEnabledStyle,
+              )}
+              disabled={markBusy || unreadCount === 0}
+              onClick={() => void onMarkAllRead()}
+            >
+              Mark all read
+            </button>
           </div>
           {error ? <p className="schedule-feedback schedule-feedback--error">{error}</p> : null}
           {loading ? <p className="notification-empty-state">Loading…</p> : null}
@@ -157,17 +199,6 @@ export default function NotificationBell({ teamId = null }) {
               ))}
             </ul>
           ) : null}
-          <div style={{ marginTop: "1rem", display: "flex", justifyContent: "flex-end", gap: "0.5rem" }}>
-            <button
-              type="button"
-              className="vc-dash-icon-btn"
-              style={{ fontSize: "0.85rem" }}
-              disabled={markBusy || unreadCount === 0}
-              onClick={() => void onMarkAllRead()}
-            >
-              Mark all read
-            </button>
-          </div>
         </div>
       ) : null}
     </div>

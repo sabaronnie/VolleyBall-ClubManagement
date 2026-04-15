@@ -17,6 +17,7 @@ export default function DirectorClubSummaryCard({
   loading,
   clubId,
   clubSummary,
+  paymentSnapshot = null,
   formatMoney,
   onManageTeams = null,
   title = "Club Summary",
@@ -30,6 +31,7 @@ export default function DirectorClubSummaryCard({
 }) {
   const best = clubSummary?.best_participating_team;
   const low = clubSummary?.low_participation;
+  const paymentSummaryLabel = paymentSnapshot?.label || "Outstanding / Unpaid / Paid";
   const handleManageTeams = () => {
     if (onManageTeams) {
       onManageTeams();
@@ -86,6 +88,14 @@ export default function DirectorClubSummaryCard({
                 : NO_DATA}
             </strong>
           </li>
+          {paymentSnapshot ? (
+            <li>
+              <span>{paymentSummaryLabel}</span>
+              <strong style={{ textAlign: "right" }}>
+                {`${formatMoney(paymentSnapshot.currency, paymentSnapshot.outstandingTotal)} / ${paymentSnapshot.unpaidCount} / ${paymentSnapshot.paidCount}`}
+              </strong>
+            </li>
+          ) : null}
         </ul>
       )}
     </section>

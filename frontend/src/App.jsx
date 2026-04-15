@@ -3,6 +3,7 @@ import {
   fetchCurrentUser,
   fetchPlayerTeamPayments,
   fetchTeamSchedule,
+  fetchTeamTrainingSessions,
   saveTeamSchedule,
 } from "./api";
 import ClubWorkspaceLayout from "./components/ClubWorkspaceLayout";
@@ -376,7 +377,7 @@ function emptyScheduleEntry() {
 
 const SCHEDULE_START_HOUR = 6;
 const SCHEDULE_END_HOUR = 21;
-const SCHEDULE_HOUR_HEIGHT = 64;
+const SCHEDULE_HOUR_HEIGHT = 80;
 
 function parseTimeToMinutes(timeValue) {
   if (!timeValue || !timeValue.includes(":")) {
@@ -524,14 +525,14 @@ function scheduleEventHorizontalStyle(layout, entryId) {
   const maxCols = slot?.maxCols ?? 1;
   const col = slot?.col ?? 0;
   if (maxCols <= 1) {
-    return { left: "0.55rem", right: "0.55rem" };
+    return { left: "0.3rem", right: "0.3rem" };
   }
-  const gapPx = 4;
-  const slice = `(100% - 1.1rem - ${(maxCols - 1) * gapPx}px) / ${maxCols}`;
+
+  // Overlapping sessions should still stay wide enough to read.
+  const staggerPx = 8;
   return {
-    left: `calc(0.55rem + ${col} * (${slice} + ${gapPx}px))`,
-    width: `calc(${slice})`,
-    right: "auto",
+    left: `calc(0.3rem + ${col * staggerPx}px)`,
+    right: "0.3rem",
   };
 }
 
@@ -926,6 +927,7 @@ function App() {
   const [schedulePayload, setSchedulePayload] = useState(null);
   const [scheduleLoading, setScheduleLoading] = useState(false);
   const [scheduleError, setScheduleError] = useState("");
+  const [scheduleRefreshKey, setScheduleRefreshKey] = useState(0);
   const [draftEntries, setDraftEntries] = useState([]);
   const [isSavingSchedule, setIsSavingSchedule] = useState(false);
   const [selectedChildIdByTeam, setSelectedChildIdByTeam] = useState({});
@@ -1264,12 +1266,76 @@ function App() {
               });
             }
           });
+          // also merge any training sessions that fall within the displayed week
+          try {
+            const trainingPayloads = await Promise.all(
+              scheduleTeams.map((t) => fetchTeamTrainingSessions(t.id).catch(() => null)),
+            );
+            trainingPayloads.forEach((tp, i) => {
+              for (const s of tp?.sessions || []) {
+                if (s?.status === "cancelled") continue;
+                const sDate = s.scheduled_date;
+                if (!sDate) continue;
+                const wk = new Date(`${weekStart}T00:00:00`);
+                const sd = new Date(`${sDate}T00:00:00`);
+                const diff = Math.round((sd - wk) / (24 * 60 * 60 * 1000));
+                if (diff >= 0 && diff < 7) {
+                  const team = scheduleTeams[i];
+                  mergedEntries.push({
+                    id: `${team.id}-ts-${s.id}`,
+                    weekday: diff,
+                    activity_name: s.title || s.activity_name || "Session",
+                    start_time: s.start_time || "",
+                    end_time: s.end_time || "",
+                    location: s.location || "",
+                    isTrainingSession: true,
+                    teamColor: legend[i].color,
+                    teamName: team.name,
+                  });
+                }
+              }
+            });
+          } catch (e) {
+            // ignore training fetch errors — schedule still shows static entries
+          }
           setSchedulePayload({ week_start: weekStart, entries: mergedEntries, legend });
           setDraftEntries([emptyScheduleEntry()]);
         } else {
           const payload = await fetchTeamSchedule(activeTeamId);
           if (!isMounted) {
             return;
+          }
+
+          // merge any training sessions that fall within the payload week
+          try {
+            const training = await fetchTeamTrainingSessions(activeTeamId).catch(() => null);
+            const weekStart = payload?.week_start || null;
+            if (training?.sessions?.length && weekStart) {
+              const wk = new Date(`${weekStart}T00:00:00`);
+              const extra = training.sessions
+                .map((s) => {
+                  if (s?.status === "cancelled") return null;
+                  const sd = s.scheduled_date ? new Date(`${s.scheduled_date}T00:00:00`) : null;
+                  if (!sd) return null;
+                  const diff = Math.round((sd - wk) / (24 * 60 * 60 * 1000));
+                  if (diff < 0 || diff >= 7) return null;
+                  return {
+                    id: `ts-${s.id}`,
+                    weekday: diff,
+                    activity_name: s.title || s.activity_name || "Session",
+                    start_time: s.start_time || "",
+                    end_time: s.end_time || "",
+                    location: s.location || "",
+                    isTrainingSession: true,
+                  };
+                })
+                .filter(Boolean);
+              if (extra.length) {
+                payload.entries = [...(payload.entries || []), ...extra];
+              }
+            }
+          } catch (e) {
+            // ignore training fetch errors
           }
 
           setSchedulePayload(payload);
@@ -1303,7 +1369,13 @@ function App() {
     return () => {
       isMounted = false;
     };
-  }, [activeTeamId, pathname, scheduleTeams]);
+  }, [activeTeamId, pathname, scheduleTeams, scheduleRefreshKey]);
+
+  useEffect(() => {
+    const onScheduleChanged = () => setScheduleRefreshKey((k) => k + 1);
+    window.addEventListener("netup-schedule-changed", onScheduleChanged);
+    return () => window.removeEventListener("netup-schedule-changed", onScheduleChanged);
+  }, []);
 
   const selectedChildId = activeTeam?.linkedChildren?.length
     ? Number(selectedChildIdByTeam[String(activeTeamId)] || activeTeam.linkedChildren[0].id)
@@ -1864,16 +1936,7 @@ function App() {
 
             <SchedulePaymentEntries activeTeamId={activeTeamId} teams={scheduleTeams} />
 
-            {canManageSchedule ? (
-              <ScheduleEditor
-                draftEntries={draftEntries}
-                onChangeEntry={updateDraftEntry}
-                onAddEntry={addDraftEntry}
-                onRemoveEntry={removeDraftEntry}
-                onSave={handleSaveSchedule}
-                isSaving={isSavingSchedule}
-              />
-            ) : null}
+            {/* ScheduleEditor removed per request: only show the schedule board */}
         </section>
       </ClubWorkspaceLayout>
     );

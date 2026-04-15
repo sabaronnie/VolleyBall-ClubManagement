@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  cancelTrainingSession,
   createTeamTrainingSession,
   fetchCoachTrainingSessionAttendance,
   fetchTeamAttendanceAnalytics,
@@ -43,6 +44,13 @@ function isoDateLocal(d) {
   return `${y}-${m}-${day}`;
 }
 
+function sessionHasStarted(session) {
+  if (!session?.scheduled_date) return false;
+  const startTime = typeof session.start_time === "string" && session.start_time ? session.start_time.slice(0, 5) : "00:00";
+  const dt = new Date(`${session.scheduled_date}T${startTime}:00`);
+  return Number.isFinite(dt.getTime()) ? dt.getTime() <= Date.now() : false;
+}
+
 export default function CoachSessionAttendancePage({ activeTeam }) {
   const teamId = activeTeam?.id && activeTeam.id !== "__all__" ? activeTeam.id : null;
   const defaultRange = useMemo(() => {
@@ -75,10 +83,14 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
   const [newSessionNotifyParents, setNewSessionNotifyParents] = useState(true);
   const [createSessionBusy, setCreateSessionBusy] = useState(false);
   const [createSessionError, setCreateSessionError] = useState("");
+  const titleInputRef = useRef(null);
   const [createSessionSuccess, setCreateSessionSuccess] = useState("");
   const [remindBusy, setRemindBusy] = useState(false);
   const [remindMessage, setRemindMessage] = useState("");
   const [remindError, setRemindError] = useState("");
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const [cancelMessage, setCancelMessage] = useState("");
+  const [cancelError, setCancelError] = useState("");
 
   const loadList = useCallback(async () => {
     if (!teamId) {
@@ -117,6 +129,8 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
     setCreateSessionSuccess("");
     setRemindMessage("");
     setRemindError("");
+    setCancelMessage("");
+    setCancelError("");
   }, [teamId, defaultRange.start, defaultRange.end]);
 
   useEffect(() => {
@@ -184,13 +198,18 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
     if (!teamId || !analyticsExpanded) {
       return;
     }
+    // Load the default analytics when the panel is first expanded for this team.
+    // We intentionally avoid depending on `loadAnalytics` here so updates to the
+    // filter inputs (which change `loadAnalytics` identity) do not re-run this
+    // effect and reset the view to defaults while the user is editing filters.
     void loadAnalytics({
       startDate: defaultRange.start,
       endDate: defaultRange.end,
       grouping: "week",
       lastNSessions: "",
     });
-  }, [teamId, analyticsExpanded, defaultRange.start, defaultRange.end, loadAnalytics]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teamId, analyticsExpanded, defaultRange.start, defaultRange.end]);
 
   const loadDetail = useCallback(async (sessionId) => {
     setDetailLoading(true);
@@ -213,6 +232,8 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
     }
     setRemindMessage("");
     setRemindError("");
+    setCancelMessage("");
+    setCancelError("");
     void loadDetail(selectedSessionId);
   }, [selectedSessionId, loadDetail]);
 
@@ -221,6 +242,9 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
   const onCreateTrainingSession = useCallback(async () => {
     if (!teamId || !newSessionTitle.trim()) {
       setCreateSessionError("Enter a session title.");
+      if (titleInputRef.current && typeof titleInputRef.current.focus === "function") {
+        titleInputRef.current.focus();
+      }
       return;
     }
     setCreateSessionBusy(true);
@@ -241,6 +265,12 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
       });
       setCreateSessionSuccess("Session added. Check notify options above if families should get an in-app alert.");
       setNewSessionTitle("");
+      // signal other parts of the app (schedule page) to refresh
+      try {
+        window.dispatchEvent(new Event("netup-schedule-changed"));
+      } catch (e) {
+        // ignore if dispatch fails in some environments
+      }
       await loadList();
     } catch (err) {
       setCreateSessionError(err.message || "Could not create session.");
@@ -290,9 +320,52 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
     [teamId, detailPayload],
   );
 
+  const onCancelSession = useCallback(async () => {
+    const sess = detailPayload?.session;
+    if (!teamId || !sess || sess.status === "cancelled" || sessionHasStarted(sess)) {
+      return;
+    }
+    setCancelBusy(true);
+    setCancelMessage("");
+    setCancelError("");
+    try {
+      await cancelTrainingSession(sess.id);
+      setCancelMessage("Session cancelled. It will no longer appear on the weekly schedule.");
+      try {
+        window.dispatchEvent(new Event("netup-schedule-changed"));
+      } catch (e) {
+        // ignore if dispatch fails in some environments
+      }
+      await loadList();
+      await loadDetail(sess.id);
+      if (analyticsExpanded) {
+        await loadAnalytics();
+      }
+    } catch (err) {
+      setCancelError(err.message || "Could not cancel session.");
+    } finally {
+      setCancelBusy(false);
+    }
+  }, [teamId, detailPayload, loadList, loadDetail, analyticsExpanded, loadAnalytics]);
+
   const today = useMemo(() => {
     const t = new Date();
     return new Date(t.getFullYear(), t.getMonth(), t.getDate());
+  }, []);
+
+  // custom grouping dropdown state
+  const [groupOpen, setGroupOpen] = useState(false);
+  const groupSelectRef = useRef(null);
+
+  useEffect(() => {
+    function onDocClick(e) {
+      if (!groupSelectRef.current) return;
+      if (!groupSelectRef.current.contains(e.target)) {
+        setGroupOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
   }, []);
 
   const sortedSessions = useMemo(() => {
@@ -343,6 +416,8 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
   }
 
   const detailSession = detailPayload?.session;
+  const canCancelDetailSession =
+    Boolean(canManageTraining && detailSession && detailSession.status !== "cancelled" && !sessionHasStarted(detailSession));
 
   return (
     <section className="teams-page-shell">
@@ -398,6 +473,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
             <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem", fontSize: "0.82rem" }}>
               <span className="vc-modal__muted">Title</span>
               <input
+                ref={titleInputRef}
                 className="vc-dash-team-select"
                 value={newSessionTitle}
                 onChange={(e) => setNewSessionTitle(e.target.value)}
@@ -442,28 +518,31 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
             </label>
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem", marginTop: "0.75rem", alignItems: "center" }}>
-            <label style={{ display: "flex", gap: "0.4rem", alignItems: "center", fontSize: "0.88rem" }}>
+            <label className="session-toggle" style={{ fontSize: "0.88rem" }}>
               <input
                 type="checkbox"
                 checked={newSessionNotifyPlayers}
                 onChange={(e) => setNewSessionNotifyPlayers(e.target.checked)}
               />
-              Notify players
+              <span className="vc-switch__track"><span className="vc-switch__thumb" /></span>
+              <span>Notify players</span>
             </label>
-            <label style={{ display: "flex", gap: "0.4rem", alignItems: "center", fontSize: "0.88rem" }}>
+
+            <label className="session-toggle" style={{ fontSize: "0.88rem" }}>
               <input
                 type="checkbox"
                 checked={newSessionNotifyParents}
                 onChange={(e) => setNewSessionNotifyParents(e.target.checked)}
               />
-              Notify parents
+              <span className="vc-switch__track"><span className="vc-switch__thumb" /></span>
+              <span>Notify parents</span>
             </label>
           </div>
           <div style={{ marginTop: "0.85rem" }}>
             <button
               type="button"
               className="vc-action-btn"
-              disabled={createSessionBusy || !newSessionTitle.trim()}
+              disabled={createSessionBusy}
               onClick={() => void onCreateTrainingSession()}
             >
               {createSessionBusy ? "Saving…" : "Add session"}
@@ -543,14 +622,45 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
           </label>
           <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem", fontSize: "0.82rem" }}>
             <span className="vc-modal__muted">Group trend by</span>
-            <select
-              value={analyticsGrouping}
-              onChange={(e) => setAnalyticsGrouping(e.target.value)}
-              style={{ padding: "0.45rem 0.5rem", borderRadius: "8px", border: "1px solid #d0d5dd", minWidth: "8rem" }}
+            <div
+              className="vc-fake-select"
+              ref={groupSelectRef}
             >
-              <option value="week">Week</option>
-              <option value="session">Session</option>
-            </select>
+              <button
+                type="button"
+                className="vc-fake-select__btn"
+                aria-haspopup="listbox"
+                aria-expanded={groupOpen}
+                onClick={() => setGroupOpen((v) => !v)}
+              >
+                {analyticsGrouping === "week" ? "Week" : "Session"}
+                <span className="vc-fake-select__caret" aria-hidden>▾</span>
+              </button>
+              {groupOpen ? (
+                <ul className="vc-fake-select__menu" role="listbox" tabIndex={-1}>
+                  <li
+                    role="option"
+                    className="vc-fake-select__item"
+                    onClick={() => {
+                      setAnalyticsGrouping("week");
+                      setGroupOpen(false);
+                    }}
+                  >
+                    Week
+                  </li>
+                  <li
+                    role="option"
+                    className="vc-fake-select__item"
+                    onClick={() => {
+                      setAnalyticsGrouping("session");
+                      setGroupOpen(false);
+                    }}
+                  >
+                    Session
+                  </li>
+                </ul>
+              ) : null}
+            </div>
           </label>
           <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem", fontSize: "0.82rem" }}>
             <span className="vc-modal__muted">Last N closed sessions (optional)</span>
@@ -565,7 +675,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
           </label>
           <button
             type="button"
-            className="vc-action-btn"
+            className="vc-action-btn vc-action-btn--sm"
             onClick={() => void loadAnalytics()}
             disabled={analyticsLoading}
           >
@@ -877,6 +987,54 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
                           : "Notify players & parents (unconfirmed)"}
                     </button>
                   </div>
+                </section>
+              ) : null}
+              {canManageTraining ? (
+                <section
+                  style={{
+                    marginBottom: "1rem",
+                    padding: "0.85rem 1rem",
+                    borderRadius: "10px",
+                    border: "1px solid #f1d2d2",
+                    background: "#fff5f5",
+                  }}
+                  aria-labelledby="coach-cancel-session-heading"
+                >
+                  <h4 id="coach-cancel-session-heading" style={{ margin: "0 0 0.35rem", fontSize: "0.95rem" }}>
+                    Session status
+                  </h4>
+                  {detailSession.status === "cancelled" ? (
+                    <p className="vc-modal__muted" style={{ margin: 0, fontSize: "0.84rem", lineHeight: 1.5 }}>
+                      This session has been cancelled. It should no longer appear in the weekly schedule, and cancelled
+                      sessions are excluded from attendance-rate calculations.
+                    </p>
+                  ) : canCancelDetailSession ? (
+                    <>
+                      <p className="vc-modal__muted" style={{ margin: "0 0 0.65rem", fontSize: "0.84rem", lineHeight: 1.5 }}>
+                        This session has not started yet. You can cancel it here to remove it from the schedule and
+                        mark it as cancelled in the sessions list.
+                      </p>
+                      {cancelMessage ? <p className="vc-director-success" style={{ marginBottom: "0.5rem" }}>{cancelMessage}</p> : null}
+                      {cancelError ? (
+                        <p className="schedule-feedback schedule-feedback--error" style={{ marginBottom: "0.5rem" }}>
+                          {cancelError}
+                        </p>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="vc-action-btn"
+                        style={{ background: "linear-gradient(135deg, #d44b4b, #b83232)" }}
+                        disabled={cancelBusy}
+                        onClick={() => void onCancelSession()}
+                      >
+                        {cancelBusy ? "Cancelling..." : "Cancel session"}
+                      </button>
+                    </>
+                  ) : (
+                    <p className="vc-modal__muted" style={{ margin: 0, fontSize: "0.84rem", lineHeight: 1.5 }}>
+                      Only sessions that have not started yet can be cancelled here.
+                    </p>
+                  )}
                 </section>
               ) : null}
               {detailSession.players?.length ? (
