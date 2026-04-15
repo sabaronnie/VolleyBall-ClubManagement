@@ -186,6 +186,13 @@ export default function MemberHubPage() {
   const totalChildUnpaid = childUnpaidFees.reduce((s, f) => s + Number(f.remaining || 0), 0);
   const unpaidLineCount = ownUnpaidFees.length + childUnpaidFees.length;
   const totalUnpaidAll = totalOwnUnpaid + totalChildUnpaid;
+  const playerWorkspaceTitle = children.length
+    ? "Family player workspace"
+    : playing[0]?.name || "Player workspace";
+  const playerWorkspaceSummary = children.length
+    ? "Follow linked players, review fees, and confirm attendance from one family workspace."
+    : "Your schedule, sessions, fees, and development progress in one player workspace.";
+  const playerWorkspaceTeamCount = playing.length + childTeamCount;
 
   const coachClubOptions = useMemo(() => {
     const m = new Map();
@@ -347,18 +354,42 @@ export default function MemberHubPage() {
         className={`vc-member-hub${showCoachDashboard ? " vc-member-hub--coach-dash" : ""}`}
         style={{
           padding: "1.5rem 1.75rem 2.5rem",
-          maxWidth: showCoachDashboard ? "min(1180px, 100%)" : "min(1120px, 100%)",
+          maxWidth: "min(1180px, 100%)",
           margin: "0 auto",
         }}
       >
-        <header style={{ marginBottom: "1.25rem" }}>
-          <h1 style={{ fontSize: "1.45rem", margin: "0 0 0.35rem", fontWeight: 700 }}>Dashboard</h1>
-          <p style={{ margin: 0, color: "#5c6570", lineHeight: 1.5, maxWidth: 640 }}>
-            {showCoachDashboard
-              ? "Team overview, analytics, and quick coaching actions."
-              : "Quick links for your role—open a section below for details."}
-          </p>
-        </header>
+        {showCoachDashboard ? (
+          <header style={{ marginBottom: "1.25rem" }}>
+            <h1 style={{ fontSize: "1.45rem", margin: "0 0 0.35rem", fontWeight: 700 }}>Dashboard</h1>
+            <p style={{ margin: 0, color: "#5c6570", lineHeight: 1.5, maxWidth: 640 }}>
+              Team overview, analytics, and quick coaching actions.
+            </p>
+          </header>
+        ) : (
+          <section className="vc-dashboard-hero">
+            <div className="vc-dashboard-hero__content">
+              <div className="vc-dashboard-hero__copy">
+                <span className="vc-dashboard-hero__eyebrow">Player workspace</span>
+                <h1 className="vc-dashboard-hero__title">{playerWorkspaceTitle}</h1>
+                <p className="vc-dashboard-hero__summary">{playerWorkspaceSummary}</p>
+                <div className="vc-dashboard-hero__meta">
+                  <span className="vc-dashboard-chip">{loading ? "Syncing" : "Live overview"}</span>
+                  <span className="vc-dashboard-chip vc-dashboard-chip--soft">
+                    {playerWorkspaceTeamCount} team{playerWorkspaceTeamCount === 1 ? "" : "s"} linked
+                  </span>
+                  <span className="vc-dashboard-chip vc-dashboard-chip--soft">
+                    {money(payCur, totalUnpaidAll)} due
+                  </span>
+                  {children.length ? (
+                    <span className="vc-dashboard-chip vc-dashboard-chip--soft">
+                      {children.length} linked player{children.length === 1 ? "" : "s"}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
 
         {loading ? <p className="vc-modal__muted">{"Loading\u2026"}</p> : null}
         {error ? <p className="vc-modal__error">{error}</p> : null}

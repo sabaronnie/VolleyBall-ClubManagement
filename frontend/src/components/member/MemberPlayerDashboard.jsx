@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchMemberDashboard } from "../../api";
 import { navigate } from "../../navigation";
+import MyFeesPage from "../../pages/MyFeesPage";
 
 function money(cur, amount) {
   const n = Number(amount);
@@ -22,6 +23,62 @@ function goWithTeam(path, teamId) {
     window.dispatchEvent(new CustomEvent("netup-set-active-team", { detail: { teamId: String(teamId) } }));
   }
   navigate(path);
+}
+
+function openMessages(eventName) {
+  window.dispatchEvent(new CustomEvent(eventName || "vc-open-notifications"));
+}
+
+function formatShortDate(dateValue) {
+  if (!dateValue) {
+    return "No session scheduled";
+  }
+  const parsed = new Date(`${dateValue}T12:00:00`);
+  if (Number.isNaN(parsed.getTime())) {
+    return "No session scheduled";
+  }
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+  }).format(parsed);
+}
+
+function formatFeeDate(dateValue) {
+  if (!dateValue) {
+    return "—";
+  }
+  const parsed = new Date(`${dateValue}T12:00:00`);
+  if (Number.isNaN(parsed.getTime())) {
+    return "—";
+  }
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(parsed);
+}
+
+function formatNextSessionValue(club) {
+  if (!club?.scheduled_date) {
+    return "No session scheduled";
+  }
+  const dateLabel = formatShortDate(club.scheduled_date);
+  return club.start_time_display ? `${dateLabel} · ${club.start_time_display}` : dateLabel;
+}
+
+function PlayerSummaryRow({ items }) {
+  return (
+    <section className="vc-dashboard-kpi-strip" aria-label="Player summary">
+      <div className="vc-dashboard-kpi-strip__grid">
+        {items.map((item) => (
+          <div key={item.label} className="vc-dashboard-kpi-strip__cell">
+            <div className="vc-dashboard-kpi-strip__label">{item.label}</div>
+            <div className="vc-dashboard-kpi-strip__value vc-player-dash-summary__value">{item.value}</div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 function MemberProgressChart({ weeks }) {
@@ -105,11 +162,232 @@ function MemberProgressChart({ weeks }) {
   );
 }
 
+function PlayerProgressPanel({ progress, focusName, teamName }) {
+  return (
+    <div className="vc-player-dash-chart">
+      <div className="vc-dashboard-panel-head vc-player-dash-panel__head">
+        <div>
+          <p className="vc-dashboard-panel-head__eyebrow">Progress</p>
+          <h2 className="vc-panel-title">Development Progress</h2>
+          <p className="vc-player-dash-panel__sub">
+            {focusName
+              ? `Recent coach-recorded skill trends${teamName ? ` for ${teamName}` : ""}.`
+              : "Progress trends appear here once a player is linked to your account."}
+          </p>
+        </div>
+      </div>
+      {progress?.summary && progress.has_weekly_metrics ? (
+        <div className="vc-member-progress__summary">
+          <div>
+            <span className="vc-member-progress__sum-label">Attack</span>
+            <span className="vc-member-progress__sum-val">{progress.summary.attack?.toFixed(1) ?? "—"}</span>
+          </div>
+          <div>
+            <span className="vc-member-progress__sum-label">Defense</span>
+            <span className="vc-member-progress__sum-val">{progress.summary.defense?.toFixed(1) ?? "—"}</span>
+          </div>
+          <div>
+            <span className="vc-member-progress__sum-label">Serve</span>
+            <span className="vc-member-progress__sum-val">{progress.summary.serve?.toFixed(1) ?? "—"}</span>
+          </div>
+        </div>
+      ) : null}
+      <MemberProgressChart weeks={progress?.weeks} />
+    </div>
+  );
+}
+
+function PlayerFeeTable({ payment }) {
+  const lines = useMemo(() => {
+    const list = Array.isArray(payment?.fee_lines) ? [...payment.fee_lines] : [];
+    list.sort((a, b) => {
+      const aOpen = a.status === "paid" ? 1 : 0;
+      const bOpen = b.status === "paid" ? 1 : 0;
+      if (aOpen !== bOpen) {
+        return aOpen - bOpen;
+      }
+      return String(a.due_date || "").localeCompare(String(b.due_date || ""));
+    });
+    return list.slice(0, 6);
+  }, [payment]);
+
+  return (
+    <div className="vc-coach-dash-stats-panel vc-player-dash-table-panel">
+      <div className="vc-dashboard-panel-head vc-player-dash-panel__head">
+        <div>
+          <p className="vc-dashboard-panel-head__eyebrow">Finance</p>
+          <h2 className="vc-panel-title">Fee Lines</h2>
+          <p className="vc-player-dash-panel__sub">Recent balances and due dates for this player account.</p>
+        </div>
+      </div>
+      <div className="vc-coach-dash-stats-panel__scroll">
+        <table className="vc-table vc-coach-dash-stats-table vc-player-dash-fees-table">
+          <thead>
+            <tr>
+              <th>Description</th>
+              <th>Due Date</th>
+              <th>Remaining</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {lines.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="vc-modal__muted">
+                  No fee lines available for this player yet.
+                </td>
+              </tr>
+            ) : (
+              lines.map((line) => (
+                <tr key={line.id}>
+                  <td>{line.description || "Team fee"}</td>
+                  <td>{formatFeeDate(line.due_date)}</td>
+                  <td>{money(line.currency, line.remaining)}</td>
+                  <td>{paymentStatusLabel(line.status)}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function PlayerActionButtons({ actions }) {
+  const visibleActions = actions.filter(Boolean);
+  if (!visibleActions.length) {
+    return null;
+  }
+
+  return (
+    <div className="vc-player-dash-main-actions" role="group" aria-label="Player actions">
+      {visibleActions.map((action) => (
+        <button
+          key={action.label}
+          type="button"
+          className="vc-director-actions-bar__btn"
+          onClick={action.onClick}
+        >
+          {action.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function PlayerDashboardDropdown({
+  id,
+  title,
+  description,
+  isOpen,
+  onToggle,
+  children,
+}) {
+  return (
+    <section className={`vc-dashboard-dropdown${isOpen ? " is-open" : ""}`}>
+      <button
+        id={`${id}-trigger`}
+        type="button"
+        className="vc-dashboard-dropdown__trigger"
+        aria-expanded={isOpen}
+        aria-controls={`${id}-panel`}
+        onClick={onToggle}
+      >
+        <span>
+          <strong>{title}</strong>
+          <small>{description}</small>
+        </span>
+        <span className="vc-dashboard-dropdown__caret" aria-hidden="true">
+          {isOpen ? "−" : "+"}
+        </span>
+      </button>
+      {isOpen ? (
+        <div id={`${id}-panel`} className="vc-dashboard-dropdown__panel" role="region" aria-labelledby={`${id}-trigger`}>
+          {children}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function PlayerOverviewCard({ focus, profile, payment, club, unread }) {
+  return (
+    <section className="vc-panel vc-panel--dashboard vc-panel--director-white vc-player-dash-overview" aria-labelledby="player-overview-heading">
+      <div className="vc-dashboard-panel-head">
+        <div>
+          <p className="vc-dashboard-panel-head__eyebrow">Workspace</p>
+          <h2 id="player-overview-heading" className="vc-panel-title">
+            Player Overview
+          </h2>
+        </div>
+      </div>
+      {!focus ? (
+        <p className="vc-modal__muted" style={{ margin: 0 }}>
+          Join a team roster or link a child account to unlock schedule details, attendance actions, and progress updates here.
+        </p>
+      ) : (
+        <ul className="vc-coach-dash-feedback__list">
+          <li>
+            <strong>Profile</strong>
+            {`: ${profile?.display_name || [focus.first_name, focus.last_name].filter(Boolean).join(" ") || focus.email}`}
+          </li>
+          <li>
+            <strong>Team</strong>
+            {`: ${profile?.team?.name || "No active team roster"}`}
+          </li>
+          {profile?.coach_display ? (
+            <li>
+              <strong>Coach</strong>
+              {`: ${profile.coach_display}`}
+            </li>
+          ) : null}
+          <li>
+            <strong>Upcoming session</strong>
+            {`: ${
+              club
+                ? `${club.title} on ${club.date_display}${club.start_time_display ? ` at ${club.start_time_display}` : ""}${
+                    club.location ? ` in ${club.location}` : ""
+                  }`
+                : "No upcoming session is scheduled right now."
+            }`}
+          </li>
+          <li>
+            <strong>Attendance</strong>
+            {`: ${
+              club?.needs_confirmation
+                ? "Confirmation is still needed for the next session."
+                : club
+                  ? "You are up to date on the next scheduled session."
+                  : "Attendance will appear here once a session is scheduled."
+            }`}
+          </li>
+          <li>
+            <strong>Payments</strong>
+            {`: ${
+              payment
+                ? `${money(payment.currency, payment.amount_due)} due across ${payment.open_item_count} open fee line${
+                    payment.open_item_count === 1 ? "" : "s"
+                  }.`
+                : "No payment data available."
+            }`}
+          </li>
+          <li>
+            <strong>Messages</strong>
+            {`: ${unread > 0 ? `${unread} unread notification${unread === 1 ? "" : "s"}.` : "Inbox clear."}`}
+          </li>
+        </ul>
+      )}
+    </section>
+  );
+}
+
 export default function MemberPlayerDashboard() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [childFilter, setChildFilter] = useState(null);
+  const [feesDropdownOpen, setFeesDropdownOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -150,9 +428,50 @@ export default function MemberPlayerDashboard() {
   const club = data?.club_summary;
   const qa = data?.quick_actions || {};
   const focus = data?.focus_player;
+  const focusDisplayName =
+    profile?.display_name || [focus?.first_name, focus?.last_name].filter(Boolean).join(" ").trim() || focus?.email || "";
+
+  const summaryItems = useMemo(() => {
+    if (!focus) {
+      return [
+        { label: "Roster Status", value: "Not linked yet" },
+        { label: "Linked Players", value: String(childrenOpts.length || 0) },
+        { label: "Fees Due", value: money("USD", 0) },
+        { label: "Messages", value: unread > 0 ? `${unread} unread` : "Inbox clear" },
+      ];
+    }
+
+    return [
+      { label: "Active Team", value: profile?.team?.name || "No active team" },
+      { label: "Next Session", value: formatNextSessionValue(club) },
+      { label: "Fees Due", value: payment ? money(payment.currency, payment.amount_due) : money("USD", 0) },
+      { label: "Messages", value: unread > 0 ? `${unread} unread` : "Inbox clear" },
+    ];
+  }, [club, childrenOpts.length, focus, payment, profile?.team?.name, unread]);
+
+  const actionTeamId = profile?.team?.id || club?.team_id || null;
+  const primaryActionButtons = useMemo(() => {
+    const actions = [];
+
+    if (actionTeamId) {
+      actions.push({
+        label: "Open Schedule",
+        onClick: () => goWithTeam("/schedule", actionTeamId),
+      });
+    }
+
+    if (focus) {
+      actions.push({
+        label: qa.confirm_attendance_mode === "parent" ? "Family Attendance" : "My Sessions",
+        onClick: () => goWithTeam(qa.confirm_attendance_path || "/player/attendance", actionTeamId),
+      });
+    }
+
+    return actions;
+  }, [actionTeamId, focus, qa.confirm_attendance_mode, qa.confirm_attendance_path]);
 
   return (
-    <div className="vc-member-dash">
+    <div className="vc-coach-dash-body vc-player-dash-body">
       {childrenOpts.length > 1 ? (
         <div className="vc-member-dash__child-bar">
           <label className="vc-member-dash__child-label">
@@ -176,226 +495,42 @@ export default function MemberPlayerDashboard() {
       {loading ? <p className="vc-modal__muted">Loading dashboard…</p> : null}
       {error ? <p className="vc-modal__error">{error}</p> : null}
 
-      {!loading && !error && !focus ? (
+      {!loading && !error ? (
         <>
-          <p className="vc-modal__muted" style={{ margin: "0 0 1rem", lineHeight: 1.55, maxWidth: 640 }}>
-            You are not on a player roster yet and have no linked players. The layout below stays available so
-            you can see what will appear once your director assigns teams or approves parent linking.
-          </p>
-          <div className="vc-member-dash__top-row">
-            <section className="vc-panel vc-panel--dashboard vc-member-card vc-member-card--profile">
-              <h2 className="vc-member-card__title">Profile</h2>
-              <p className="vc-modal__muted" style={{ margin: 0, lineHeight: 1.55 }}>
-                No player profile to show yet. Join a team roster or complete parent linking to see name, team,
-                and coach details here.
-              </p>
-            </section>
-            <section className="vc-panel vc-panel--dashboard vc-member-card vc-member-card--payment">
-              <h2 className="vc-member-card__title">Payment status</h2>
-              <p className="vc-modal__muted" style={{ margin: "0 0 0.75rem", lineHeight: 1.55 }}>
-                No payments available yet for a linked player account.
-              </p>
-              <button type="button" className="vc-member-btn vc-member-btn--primary" onClick={() => navigate("/my-fees")}>
-                Open fees
-              </button>
-            </section>
-          </div>
-          <div className="vc-member-dash__mid-row">
-            <section className="vc-panel vc-panel--dashboard vc-member-card vc-member-card--progress">
-              <h2 className="vc-member-card__title">Progress</h2>
-              <MemberProgressChart weeks={[]} />
-            </section>
-            <div className="vc-member-dash__side">
-              <section className="vc-panel vc-panel--dashboard vc-member-card vc-member-card--compact">
-                <h2 className="vc-member-card__title vc-member-card__title--sm">Club summary</h2>
-                <p className="vc-modal__muted" style={{ margin: 0 }}>
-                  No sessions available on your teams yet.
-                </p>
-              </section>
-              <button
-                type="button"
-                className="vc-member-btn vc-member-btn--primary vc-member-btn--block"
-                onClick={() => goWithTeam(qa.confirm_attendance_path || "/player/attendance", null)}
-              >
-                Confirm attendance
-              </button>
-              <button
-                type="button"
-                className="vc-panel vc-panel--dashboard vc-member-quick"
-                onClick={() => {
-                  window.dispatchEvent(new CustomEvent(qa.messages_event_name || "vc-open-notifications"));
-                }}
-              >
-                <span className="vc-member-quick__title">Messages</span>
-                {unread > 0 ? (
-                  <span className="vc-member-quick__badge">{unread > 99 ? "99+" : unread}</span>
-                ) : (
-                  <span className="vc-modal__muted vc-member-quick__sub">Inbox</span>
-                )}
-              </button>
-              <button
-                type="button"
-                className="vc-panel vc-panel--dashboard vc-member-quick"
-                onClick={() => navigate(qa.development_progress_path || "/teams")}
-              >
-                <span className="vc-member-quick__title">Development progress</span>
-                <span className="vc-modal__muted vc-member-quick__sub">Statistics &amp; trends</span>
-              </button>
+          <PlayerSummaryRow items={summaryItems} />
+
+          <div className="vc-dash-row vc-dash-row--dashboard">
+            <div className="vc-panel vc-panel--dashboard vc-panel--director-white">
+              <PlayerProgressPanel
+                progress={progress}
+                focusName={focusDisplayName}
+                teamName={profile?.team?.name || club?.team_name || ""}
+              />
+            </div>
+            <div className="vc-panel vc-panel--dashboard vc-panel--director-white">
+              <PlayerFeeTable payment={payment} />
             </div>
           </div>
-        </>
-      ) : null}
 
-      {!loading && !error && focus ? (
-        <>
-          <div className="vc-member-dash__top-row">
-            <section className="vc-panel vc-panel--dashboard vc-member-card vc-member-card--profile">
-              <h2 className="vc-member-card__title">Profile</h2>
-              <div className="vc-member-profile">
-                <div className="vc-member-profile__avatar" aria-hidden="true">
-                  {[focus.first_name?.[0], focus.last_name?.[0]].filter(Boolean).join("").toUpperCase() || "?"}
-                </div>
-                <div className="vc-member-profile__body">
-                  <div className="vc-member-profile__name">
-                    {profile?.display_name || [focus.first_name, focus.last_name].filter(Boolean).join(" ") || focus.email}
-                  </div>
-                  {profile?.age_years != null ? (
-                    <div className="vc-member-profile__meta">Age {profile.age_years}</div>
-                  ) : (
-                    <div className="vc-member-profile__meta vc-modal__muted">Age not on file</div>
-                  )}
-                  {profile?.team ? (
-                    <div className="vc-member-profile__meta">
-                      <strong>Team:</strong> {profile.team.name}
-                      {profile.team.club_name ? ` · ${profile.team.club_name}` : ""}
-                    </div>
-                  ) : (
-                    <div className="vc-member-profile__meta vc-modal__muted">No active team roster</div>
-                  )}
-                  {profile?.coach_display ? (
-                    <div className="vc-member-profile__meta">
-                      <strong>Coach:</strong> {profile.coach_display}
-                    </div>
-                  ) : (
-                    <div className="vc-member-profile__meta vc-modal__muted">Coach not assigned</div>
-                  )}
-                </div>
-              </div>
-            </section>
+          <PlayerActionButtons actions={primaryActionButtons} />
 
-            <section className="vc-panel vc-panel--dashboard vc-member-card vc-member-card--payment">
-              <h2 className="vc-member-card__title">Payment status</h2>
-              {payment ? (
-                <>
-                  <div className="vc-member-payment__due">
-                    <span className="vc-member-payment__label">Amount due</span>
-                    <span className="vc-member-payment__value">{money(payment.currency, payment.amount_due)}</span>
-                  </div>
-                  <div className="vc-member-payment__state">
-                    <span className="vc-member-payment__label">Status</span>
-                    <span
-                      className={`vc-member-payment__badge vc-member-payment__badge--${payment.overall_status || "pending"}`}
-                    >
-                      {paymentStatusLabel(payment.overall_status)}
-                    </span>
-                  </div>
-                  {payment.open_item_count > 0 ? (
-                    <p className="vc-modal__muted vc-member-payment__hint">
-                      {payment.open_item_count} open fee line{payment.open_item_count === 1 ? "" : "s"}.
-                    </p>
-                  ) : (
-                    <p className="vc-modal__muted vc-member-payment__hint">No outstanding fee lines.</p>
-                  )}
-                  <button
-                    type="button"
-                    className="vc-member-btn vc-member-btn--primary"
-                    onClick={() => navigate(payment.pay_path || "/my-fees")}
-                  >
-                    Make payment
-                  </button>
-                </>
-              ) : null}
-            </section>
-          </div>
+          <PlayerDashboardDropdown
+            id="player-dashboard-fees"
+            title="My Fees"
+            description="Open your fees and payments without leaving the dashboard."
+            isOpen={feesDropdownOpen}
+            onToggle={() => setFeesDropdownOpen((current) => !current)}
+          >
+            <MyFeesPage embedded />
+          </PlayerDashboardDropdown>
 
-          <div className="vc-member-dash__mid-row">
-            <section className="vc-panel vc-panel--dashboard vc-member-card vc-member-card--progress">
-              <h2 className="vc-member-card__title">Progress</h2>
-              {progress?.summary && progress.has_weekly_metrics ? (
-                <div className="vc-member-progress__summary">
-                  <div>
-                    <span className="vc-member-progress__sum-label">Attack</span>
-                    <span className="vc-member-progress__sum-val">{progress.summary.attack?.toFixed(1) ?? "—"}</span>
-                  </div>
-                  <div>
-                    <span className="vc-member-progress__sum-label">Defense</span>
-                    <span className="vc-member-progress__sum-val">{progress.summary.defense?.toFixed(1) ?? "—"}</span>
-                  </div>
-                  <div>
-                    <span className="vc-member-progress__sum-label">Serve</span>
-                    <span className="vc-member-progress__sum-val">{progress.summary.serve?.toFixed(1) ?? "—"}</span>
-                  </div>
-                </div>
-              ) : null}
-              <MemberProgressChart weeks={progress?.weeks} />
-            </section>
-
-            <div className="vc-member-dash__side">
-              <section className="vc-panel vc-panel--dashboard vc-member-card vc-member-card--compact">
-                <h2 className="vc-member-card__title vc-member-card__title--sm">Club summary</h2>
-                {club ? (
-                  <>
-                    <p className="vc-member-club__line">
-                      <strong>{club.title}</strong>
-                    </p>
-                    <p className="vc-member-club__line vc-modal__muted">
-                      {club.date_display} · {club.start_time_display}
-                      {club.session_type_label ? ` · ${club.session_type_label}` : ""}
-                    </p>
-                    {club.team_name ? (
-                      <p className="vc-member-club__line vc-modal__muted">{club.team_name}</p>
-                    ) : null}
-                  </>
-                ) : (
-                  <p className="vc-modal__muted" style={{ margin: 0 }}>
-                    No upcoming sessions on your teams.
-                  </p>
-                )}
-              </section>
-
-              <button
-                type="button"
-                className="vc-member-btn vc-member-btn--primary vc-member-btn--block"
-                onClick={() => goWithTeam(qa.confirm_attendance_path || "/player/attendance", club?.team_id)}
-              >
-                Confirm attendance
-              </button>
-
-              <button
-                type="button"
-                className="vc-panel vc-panel--dashboard vc-member-quick"
-                onClick={() => {
-                  window.dispatchEvent(new CustomEvent(qa.messages_event_name || "vc-open-notifications"));
-                }}
-              >
-                <span className="vc-member-quick__title">Messages</span>
-                {unread > 0 ? (
-                  <span className="vc-member-quick__badge">{unread > 99 ? "99+" : unread}</span>
-                ) : (
-                  <span className="vc-modal__muted vc-member-quick__sub">Inbox</span>
-                )}
-              </button>
-
-              <button
-                type="button"
-                className="vc-panel vc-panel--dashboard vc-member-quick"
-                onClick={() => navigate(qa.development_progress_path || "/teams")}
-              >
-                <span className="vc-member-quick__title">Development progress</span>
-                <span className="vc-modal__muted vc-member-quick__sub">Statistics &amp; trends</span>
-              </button>
-            </div>
-          </div>
+          <PlayerOverviewCard
+            focus={focus}
+            profile={profile}
+            payment={payment}
+            club={club}
+            unread={unread}
+          />
         </>
       ) : null}
     </div>

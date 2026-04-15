@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { fetchMyFees, recordSelfPayment } from "../api";
+import { ChevronDownIcon } from "../components/AppIcons";
 import { navigate } from "../navigation";
 
 function money(cur, amount) {
@@ -12,6 +14,130 @@ function statusBadge(status) {
   if (status === "paid") return <span className="vc-status-paid">Paid</span>;
   if (status === "overdue") return <span className="vc-status-overdue">Overdue</span>;
   return <span className="vc-status-pending">Pending</span>;
+}
+
+function PaymentMethodDropdown({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+  const menuRef = useRef(null);
+  const menuId = useId();
+  const [menuStyle, setMenuStyle] = useState(null);
+  const options = [
+    { value: "in_person", label: "In person" },
+    { value: "online", label: "Online / transfer" },
+  ];
+  const selectedOption = options.find((option) => option.value === value) || options[0];
+
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+
+    const updateMenuPosition = () => {
+      const trigger = wrapRef.current;
+      if (!trigger) {
+        return;
+      }
+      const rect = trigger.getBoundingClientRect();
+      const viewportPadding = 12;
+      const availableBelow = Math.max(
+        120,
+        window.innerHeight - rect.bottom - viewportPadding,
+      );
+
+      setMenuStyle({
+        position: "fixed",
+        top: rect.bottom + 8,
+        left: rect.left,
+        width: rect.width,
+        maxHeight: Math.min(260, availableBelow),
+        overflowY: "auto",
+        zIndex: 1200,
+      });
+    };
+
+    updateMenuPosition();
+    window.addEventListener("resize", updateMenuPosition);
+    window.addEventListener("scroll", updateMenuPosition, true);
+    return () => {
+      window.removeEventListener("resize", updateMenuPosition);
+      window.removeEventListener("scroll", updateMenuPosition, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+
+    const onPointerDown = (event) => {
+      const target = event.target;
+      const insideTrigger = wrapRef.current && wrapRef.current.contains(target);
+      const insideMenu = menuRef.current && menuRef.current.contains(target);
+      if (!insideTrigger && !insideMenu) {
+        setOpen(false);
+      }
+    };
+
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    };
+
+    document.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div className={`vc-inline-dropdown vc-inline-dropdown--method${open ? " is-open" : ""}`} ref={wrapRef}>
+      <button
+        type="button"
+        className={`vc-inline-dropdown__trigger${open ? " is-open" : ""}`}
+        aria-label="Payment method"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={menuId}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className="vc-inline-dropdown__value">{selectedOption.label}</span>
+        <ChevronDownIcon className={`vc-inline-dropdown__chevron${open ? " is-open" : ""}`} />
+      </button>
+      {open && menuStyle
+        ? createPortal(
+            <div
+              ref={menuRef}
+              className="vc-inline-dropdown__menu vc-inline-dropdown__menu--floating"
+              id={menuId}
+              role="listbox"
+              aria-label="Payment method"
+              style={menuStyle}
+            >
+              {options.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="option"
+                  aria-selected={selectedOption.value === option.value}
+                  className={`vc-inline-dropdown__option${selectedOption.value === option.value ? " is-selected" : ""}`}
+                  onClick={() => {
+                    onChange(option.value);
+                    setOpen(false);
+                  }}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>,
+            document.body,
+          )
+        : null}
+    </div>
+  );
 }
 
 function FeeRow({ fee, onPaySuccess }) {
@@ -67,10 +193,7 @@ function FeeRow({ fee, onPaySuccess }) {
               </label>
               <label style={{ display: "grid", gap: "0.2rem", fontSize: "0.85rem" }}>
                 Method
-                <select className="vc-director-modal__select" value={method} onChange={(e) => setMethod(e.target.value)}>
-                  <option value="in_person">In person</option>
-                  <option value="online">Online / transfer</option>
-                </select>
+                <PaymentMethodDropdown value={method} onChange={setMethod} />
               </label>
               <label style={{ display: "grid", gap: "0.2rem", fontSize: "0.85rem", flex: "1 1 140px" }}>
                 Note (optional)
@@ -88,7 +211,7 @@ function FeeRow({ fee, onPaySuccess }) {
   );
 }
 
-export default function MyFeesPage() {
+export default function MyFeesPage({ embedded = false }) {
   const [ownFees, setOwnFees] = useState([]);
   const [childrenFees, setChildrenFees] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -131,11 +254,13 @@ export default function MyFeesPage() {
   };
 
   return (
-    <section style={{ padding: "2rem 1.75rem", maxWidth: 940, margin: "0 auto" }}>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", alignItems: "center", marginBottom: "1.25rem" }}>
-        <button type="button" className="vc-director-back" onClick={() => navigate("/dashboard")}>← Dashboard</button>
-        <h1 style={{ fontSize: "1.3rem", margin: 0 }}>My Fees & Payments</h1>
-      </div>
+    <section style={{ padding: embedded ? "0" : "2rem 1.75rem", maxWidth: embedded ? "none" : 940, margin: embedded ? 0 : "0 auto" }}>
+      {!embedded ? (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", alignItems: "center", marginBottom: "1.25rem" }}>
+          <button type="button" className="vc-director-back" onClick={() => navigate("/dashboard")}>← Dashboard</button>
+          <h1 style={{ fontSize: "1.3rem", margin: 0 }}>My Fees & Payments</h1>
+        </div>
+      ) : null}
 
       {success ? <div className="vc-director-success">{success}</div> : null}
       {error ? <div className="vc-director-error">{error}</div> : null}
