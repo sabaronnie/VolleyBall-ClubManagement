@@ -2212,6 +2212,14 @@
   box-shadow: 0 0 0 3px rgba(132, 197, 221, 0.16);
 }
 
+.vc-inline-dropdown__trigger:disabled {
+  cursor: not-allowed;
+  border-color: #d8dee6;
+  background: #f1f4f7;
+  color: #64707d;
+  box-shadow: none;
+}
+
 .vc-inline-dropdown__value {
   flex: 1 1 auto;
   min-width: 0;
@@ -2228,6 +2236,10 @@
   transition: transform 180ms ease;
 }
 
+.vc-inline-dropdown__trigger:disabled .vc-inline-dropdown__chevron {
+  opacity: 0.4;
+}
+
 .vc-inline-dropdown__chevron.is-open {
   transform: rotate(180deg);
 }
@@ -2237,11 +2249,18 @@
   top: calc(100% + 0.45rem);
   left: 0;
   right: 0;
+  max-height: 280px;
+  overflow-y: auto;
   padding: 0.35rem;
   border-radius: 0.95rem;
   background: #ffffff;
   box-shadow: 0 18px 40px rgba(15, 24, 35, 0.18);
   z-index: 120;
+}
+
+.vc-inline-dropdown__menu--portal {
+  right: auto;
+  z-index: 9999;
 }
 
 .vc-inline-dropdown--method {
@@ -2294,6 +2313,17 @@
 
 .vc-inline-dropdown--directory-filter .vc-inline-dropdown__trigger {
   width: 100%;
+}
+
+.vc-inline-dropdown--directory-role {
+  min-width: 9rem;
+  max-width: 10rem;
+}
+
+.vc-inline-dropdown--directory-role .vc-inline-dropdown__trigger {
+  min-height: 38px;
+  border-radius: 999px;
+  padding-inline: 0.8rem;
 }
 
 .vc-team-invitations__header {

@@ -3339,11 +3339,69 @@ class DirectorUserDirectoryApiTests(TestCase):
             content_type="application/json",
             HTTP_AUTHORIZATION=f"Bearer {token}",
         )
-        self.assertEqual(response2.status_code, 200)
-        self.assertEqual(response2.json()["user"]["assigned_account_role"], "parent")
-        self.assertEqual(response2.json()["user"]["role"], "parent")
-        target.refresh_from_db()
-        self.assertEqual(target.assigned_account_role, "parent")
+        self.assertEqual(response2.status_code, 400)
+        self.assertIn("role", response2.json()["errors"])
+
+    def test_set_role_updates_roster_membership_role_for_managed_team(self):
+        director = User.objects.create_user(
+            email="dir-role-change@example.com",
+            password="StrongPassword123!",
+        )
+        club = Club.objects.create_club(name="Role Change Club", director=director)
+        team = Team.objects.create_team(club=club, name="Role Change Team")
+        target = User.objects.create_user(
+            email="role-change-player@example.com",
+            password="StrongPassword123!",
+            verification_status=VerificationStatus.VERIFIED,
+        )
+        TeamMembership.objects.add_member(user=target, team=team, role=TeamRole.PLAYER)
+
+        token = generate_auth_token(director)
+        response = self.client.post(
+            reverse("core:directors-set-account-role", kwargs={"user_id": target.id}),
+            data=json.dumps({"role": "coach", "team_id": team.id}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["user"]["role"], "coach")
+        membership = TeamMembership.objects.get(user=target, team=team)
+        self.assertEqual(membership.role, TeamRole.COACH)
+
+        directory = self.client.get(
+            reverse("core:directors-user-directory"),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        row = next(row for row in directory.json()["users"] if row["id"] == target.id)
+        self.assertEqual(row["role"], "coach")
+
+    def test_set_team_role_requires_single_team_scope_for_multi_team_user(self):
+        director = User.objects.create_user(
+            email="dir-role-multi@example.com",
+            password="StrongPassword123!",
+        )
+        club = Club.objects.create_club(name="Role Multi Club", director=director)
+        team_a = Team.objects.create_team(club=club, name="Role Multi A")
+        team_b = Team.objects.create_team(club=club, name="Role Multi B")
+        target = User.objects.create_user(
+            email="role-multi-player@example.com",
+            password="StrongPassword123!",
+            verification_status=VerificationStatus.VERIFIED,
+        )
+        TeamMembership.objects.add_member(user=target, team=team_a, role=TeamRole.PLAYER)
+        TeamMembership.objects.add_member(user=target, team=team_b, role=TeamRole.PLAYER)
+
+        token = generate_auth_token(director)
+        response = self.client.post(
+            reverse("core:directors-set-account-role", kwargs={"user_id": target.id}),
+            data=json.dumps({"role": "coach"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("team_id", response.json()["errors"])
 
     def test_directory_scopes_rows_to_coachs_own_team(self):
         director = User.objects.create_user(
@@ -3492,8 +3550,7 @@ class DirectorUserDirectoryApiTests(TestCase):
             HTTP_AUTHORIZATION=f"Bearer {token}",
         )
         self.assertEqual(response.status_code, 200)
-        director_b.refresh_from_db()
-        self.assertEqual(director_b.assigned_account_role, AssignedAccountRole.PLAYER)
+        self.assertIsNone(response.json()["user"]["role"])
         self.assertFalse(
             ClubMembership.objects.active()
             .filter(user=director_b, club=club, role=ClubRole.CLUB_DIRECTOR)

@@ -1592,11 +1592,16 @@ def directors_set_user_account_role(request, user_id):
     if raw is None or (isinstance(raw, str) and not str(raw).strip()):
         return JsonResponse({"errors": {"role": "Role is required."}}, status=400)
     new_role = str(raw).strip().lower()
-    if new_role not in AssignedAccountRole.values:
+    allowed_roles = {
+        AssignedAccountRole.DIRECTOR,
+        AssignedAccountRole.COACH,
+        AssignedAccountRole.PLAYER,
+    }
+    if new_role not in allowed_roles:
         return JsonResponse(
             {
                 "errors": {
-                    "role": "Must be one of: director, player, parent, coach.",
+                    "role": "Must be one of: director, player, coach.",
                 },
             },
             status=400,
@@ -1656,20 +1661,61 @@ def directors_set_user_account_role(request, user_id):
                 status=403,
             )
 
+    existing_manageable_director_memberships = list(
+        ClubMembership.objects.active().filter(
+            user=target,
+            role=ClubRole.CLUB_DIRECTOR,
+            club_id__in=manageable_club_ids,
+        )
+    )
+    target_team_memberships = []
+    if new_role in (AssignedAccountRole.COACH, AssignedAccountRole.PLAYER):
+        memberships = TeamMembership.objects.active().filter(
+            user=target,
+            team__club_id__in=manageable_club_ids,
+        ).select_related("team")
+
+        raw_team_id = payload.get("team_id")
+        if raw_team_id not in (None, ""):
+            try:
+                team_id = int(raw_team_id)
+            except (TypeError, ValueError):
+                return JsonResponse({"errors": {"team_id": "Invalid team id."}}, status=400)
+
+            if not Team.objects.filter(pk=team_id, club_id__in=manageable_club_ids).exists():
+                return JsonResponse(
+                    {"errors": {"team_id": "You cannot update roles for this team."}},
+                    status=403,
+                )
+            memberships = memberships.filter(team_id=team_id)
+
+        target_team_memberships = list(memberships)
+        director_downgrade_without_team = (
+            new_role == AssignedAccountRole.PLAYER and existing_manageable_director_memberships
+        )
+        if not target_team_memberships and not director_downgrade_without_team:
+            return JsonResponse(
+                {"errors": {"team_id": "This user is not on a team you manage."}},
+                status=400,
+            )
+        if raw_team_id in (None, "") and len(target_team_memberships) > 1:
+            return JsonResponse(
+                {"errors": {"team_id": "Filter to a single team before changing this team role."}},
+                status=400,
+            )
+
     try:
         with transaction.atomic():
             if new_role == AssignedAccountRole.DIRECTOR:
                 ClubMembership.objects.assign_director(user=target, club=director_club)
-            elif new_role in (
-                AssignedAccountRole.PLAYER,
-                AssignedAccountRole.PARENT,
-                AssignedAccountRole.COACH,
-            ):
-                for membership in ClubMembership.objects.active().filter(
-                    user=target,
-                    role=ClubRole.CLUB_DIRECTOR,
-                    club_id__in=manageable_club_ids,
-                ):
+            elif new_role in (AssignedAccountRole.PLAYER, AssignedAccountRole.COACH):
+                team_role = TeamRole.COACH if new_role == AssignedAccountRole.COACH else TeamRole.PLAYER
+                for membership in target_team_memberships:
+                    membership.role = team_role
+                    if team_role == TeamRole.COACH:
+                        membership.is_captain = False
+                    membership.save(update_fields=["role", "is_captain"])
+                for membership in existing_manageable_director_memberships:
                     ClubMembership.objects.deactivate(membership)
     except IntegrityError:
         return JsonResponse(

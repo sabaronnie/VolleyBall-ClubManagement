@@ -23,8 +23,14 @@ const DIRECTORY_ROLE_OPTIONS = [
   { value: "director", label: "Director" },
   { value: "coach", label: "Coach" },
   { value: "player", label: "Player" },
-  { value: "parent", label: "Parent" },
 ];
+
+function formatDirectoryRole(role) {
+  const match = DIRECTORY_ROLE_OPTIONS.find((option) => option.value === role);
+  if (match) return match.label;
+  if (role === "parent") return "Parent";
+  return role ? role.charAt(0).toUpperCase() + role.slice(1) : "—";
+}
 
 function formatVerificationStatus(status) {
   if (status === "pending") {
@@ -351,6 +357,17 @@ export default function DirectorUserManagementPage({
           body.club_id = Number(cid);
         }
       }
+      if (nextRole === "coach" || nextRole === "player") {
+        const teamId =
+          focusedTeamId != null && focusedTeamId !== "__all__"
+            ? focusedTeamId
+            : Array.isArray(row?.teams) && row.teams.length === 1
+              ? row.teams[0]?.id
+              : null;
+        if (teamId != null) {
+          body.team_id = Number(teamId);
+        }
+      }
       await directorSetUserAccountRole(userId, body);
       setRoleEdits((m) => {
         const next = { ...m };
@@ -668,7 +685,7 @@ export default function DirectorUserManagementPage({
             {directoryDescription}{" "}
             {canManageRoles ? (
               <>
-                Each person has one <strong>role</strong> (Director, Coach, Player, or Parent). Changing it updates
+                Each person has one <strong>role</strong> (Director, Coach, or Player). Changing it updates
                 their permissions. You cannot remove your own Director role; you can promote others to Director for a
                 club you manage, or change another Director to a different role.
               </>
@@ -763,42 +780,28 @@ export default function DirectorUserManagementPage({
                           <td>{teamLabels.join(", ") || "—"}</td>
                           <td>{formatVerificationStatus(u.verification_status)}</td>
                           <td>
-                            {canManageRoles ? (
-                              <div style={{ display: "grid", gap: "0.35rem", maxWidth: 280 }}>
-                                <select
-                                  className="vc-director-modal__select"
-                                  style={{ minWidth: "9rem" }}
-                                  value={selectVal}
-                                  disabled={staffLocked || busy || selfDirectorLocked}
-                                  title={
-                                    selfDirectorLocked
-                                      ? "You cannot remove your own Director role."
-                                      : staffLocked
-                                        ? "Staff account — only platform staff can change this."
-                                        : ""
+                            <div style={{ display: "grid", gap: "0.35rem", maxWidth: 280 }}>
+                              <InlineDropdown
+                                value={selectVal}
+                                valueLabel={formatDirectoryRole(selectVal)}
+                                onChange={(v) => {
+                                  setRoleEdits((m) => ({ ...m, [u.id]: v }));
+                                  if (v === "director" && ownedClubs.length > 1) {
+                                    setDirectorClubEdits((m) => ({
+                                      ...m,
+                                      [u.id]: m[u.id] ?? ownedClubs[0]?.id,
+                                    }));
                                   }
-                                  onChange={(e) => {
-                                    const v = e.target.value;
-                                    setRoleEdits((m) => ({ ...m, [u.id]: v }));
-                                    if (v === "director" && ownedClubs.length > 1) {
-                                      setDirectorClubEdits((m) => ({
-                                        ...m,
-                                        [u.id]: m[u.id] ?? ownedClubs[0]?.id,
-                                      }));
-                                    }
-                                  }}
-                                >
-                                  {!currentRole ? (
-                                    <option value="">
-                                      {"\u2014"}
-                                    </option>
-                                  ) : null}
-                                  {DIRECTORY_ROLE_OPTIONS.map((opt) => (
-                                    <option key={opt.value} value={opt.value}>
-                                      {opt.label}
-                                    </option>
-                                  ))}
-                                </select>
+                                }}
+                                options={DIRECTORY_ROLE_OPTIONS}
+                                ariaLabel={`Account role for ${fullName}`}
+                                className="vc-inline-dropdown--directory-role"
+                                placeholder="—"
+                                disabled={!canManageRoles || staffLocked || busy || selfDirectorLocked}
+                                portal
+                              />
+                              {canManageRoles ? (
+                                <>
                                 {selectVal === "director" && ownedClubs.length > 1 ? (
                                   <label className="vc-modal__muted" style={{ fontSize: "0.82rem", display: "grid", gap: "0.25rem" }}>
                                     Club for director access
@@ -826,10 +829,9 @@ export default function DirectorUserManagementPage({
                                     Your director role is fixed on your own account.
                                   </span>
                                 ) : null}
-                              </div>
-                            ) : (
-                              <span>{currentRole ? currentRole.charAt(0).toUpperCase() + currentRole.slice(1) : "—"}</span>
-                            )}
+                                </>
+                              ) : null}
+                            </div>
                           </td>
                           {showActionColumn ? (
                             <td>
