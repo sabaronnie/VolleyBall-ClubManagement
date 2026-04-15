@@ -1617,6 +1617,31 @@ class ParentAssociationEndpointTests(TestCase):
 
 
 class PlayerParentManagementEndpointTests(TestCase):
+    def test_parent_cannot_start_link_request_flow_from_dashboard(self):
+        parent = User.objects.create_user(
+            email="parent@example.com",
+            password="StrongPassword123!",
+            first_name="Parent",
+            last_name="User",
+        )
+        player = User.objects.create_user(
+            email="player@example.com",
+            password="StrongPassword123!",
+            first_name="Player",
+            last_name="User",
+        )
+        token = generate_auth_token(parent)
+
+        response = self.client.post(
+            reverse("core:request-parent-link"),
+            data=json.dumps({"player_id": player.id}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("player must send", response.json()["errors"]["authorization"].lower())
+
     def test_parent_can_view_and_update_minor_player_management_settings(self):
         parent = User.objects.create_user(
             email="parent@example.com",
@@ -4863,6 +4888,47 @@ class MemberHubDashboardTests(TestCase):
         response = self.client.get(url, HTTP_AUTHORIZATION=f"Bearer {token}")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["focus_player"]["id"], fx["other_child"].id)
+
+    def test_parent_gets_manageable_permissions_for_minor_child(self):
+        fx = self._fixture()
+        PlayerAccessPolicy.objects.create(
+            player=fx["player"],
+            is_parent_managed=True,
+            can_self_make_payments=False,
+            can_self_update_emergency_contact=False,
+        )
+        token = generate_auth_token(fx["parent"])
+        url = reverse("core:member-hub-dashboard") + f"?for_player_id={fx['player'].id}"
+        response = self.client.get(url, HTTP_AUTHORIZATION=f"Bearer {token}")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["parent_permissions"]["can_manage"])
+        self.assertTrue(data["parent_permissions"]["policy"]["is_parent_managed"])
+        self.assertFalse(data["parent_permissions"]["policy"]["can_self_make_payments"])
+        self.assertFalse(data["parent_permissions"]["policy"]["can_self_update_emergency_contact"])
+
+    def test_parent_gets_adult_child_permissions_disclaimer(self):
+        fx = self._fixture()
+        fx["player"].date_of_birth = date(2000, 3, 10)
+        fx["player"].save(update_fields=["date_of_birth"])
+        PlayerAccessPolicy.objects.create(
+            player=fx["player"],
+            is_parent_managed=True,
+            can_self_make_payments=False,
+            can_self_update_emergency_contact=False,
+        )
+        token = generate_auth_token(fx["parent"])
+        url = reverse("core:member-hub-dashboard") + f"?for_player_id={fx['player'].id}"
+        response = self.client.get(url, HTTP_AUTHORIZATION=f"Bearer {token}")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertFalse(data["parent_access"]["minor_locked"])
+        self.assertFalse(data["parent_permissions"]["can_manage"])
+        self.assertIsNone(data["parent_permissions"]["policy"])
+        self.assertEqual(data["parent_permissions"]["reason"], "adult_player")
+        self.assertIn("adult now", data["parent_permissions"]["message"])
 
     def test_parent_cannot_view_unrelated_player(self):
         fx = self._fixture()

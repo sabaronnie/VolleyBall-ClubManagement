@@ -5,9 +5,10 @@ import {
   fetchCurrentUser,
   fetchMyFees,
   fetchTeamMembers,
-  requestParentLinkToPlayer,
+  updateUserEmergencyContact,
 } from "../api";
 import ClubWorkspaceLayout from "../components/ClubWorkspaceLayout";
+import EmergencyContactForm from "../components/EmergencyContactForm";
 import CoachDashboardBody from "../components/coach/CoachDashboardBody";
 import MemberPlayerDashboard from "../components/member/MemberPlayerDashboard";
 import { navigate } from "../navigation";
@@ -40,11 +41,6 @@ export default function MemberHubPage() {
   const [createTeamBusy, setCreateTeamBusy] = useState(false);
   const [createTeamError, setCreateTeamError] = useState("");
   const [createTeamSuccess, setCreateTeamSuccess] = useState("");
-  const [linkPlayerId, setLinkPlayerId] = useState("");
-  const [linkLegalGuardian, setLinkLegalGuardian] = useState(false);
-  const [linkBusy, setLinkBusy] = useState(false);
-  const [linkMessage, setLinkMessage] = useState("");
-  const [linkError, setLinkError] = useState("");
   /** teamId -> { playerCount, coachCount } */
   const [coachTeamRoster, setCoachTeamRoster] = useState({});
   const [coachDashTeamId, setCoachDashTeamId] = useState("");
@@ -111,12 +107,7 @@ export default function MemberHubPage() {
   const feeDue = typeof fees.total_due === "number" ? fees.total_due : 0;
   const hasTeams = coached.length + playing.length + childTeamCount > 0;
   const accountRoles = me?.account_profile?.roles || [];
-  const pendingParentLinks = me?.pending_parent_links || [];
-  const showParentLinking =
-    accountRoles.includes("parent") ||
-    me?.user?.role === "parent" ||
-    children.length > 0 ||
-    pendingParentLinks.length > 0;
+  const familyWorkspace = accountRoles.includes("parent") || me?.user?.role === "parent" || children.length > 0;
   const coachOnlyPayer =
     coached.length > 0 && !playing.length && !children.length && !isDirector;
 
@@ -186,11 +177,13 @@ export default function MemberHubPage() {
   const totalChildUnpaid = childUnpaidFees.reduce((s, f) => s + Number(f.remaining || 0), 0);
   const unpaidLineCount = ownUnpaidFees.length + childUnpaidFees.length;
   const totalUnpaidAll = totalOwnUnpaid + totalChildUnpaid;
-  const playerWorkspaceTitle = children.length
+  const playerWorkspaceTitle = children.length || familyWorkspace
     ? "Family player workspace"
     : playing[0]?.name || "Player workspace";
   const playerWorkspaceSummary = children.length
     ? "Follow linked players, review fees, and confirm attendance from one family workspace."
+    : familyWorkspace
+      ? "Player-invited family access, attendance, and fees will appear here once a child links your account."
     : "Your schedule, sessions, fees, and development progress in one player workspace.";
   const playerWorkspaceTeamCount = playing.length + childTeamCount;
 
@@ -271,32 +264,6 @@ export default function MemberHubPage() {
     });
   }, [coachClubOptions]);
 
-  const onRequestParentLink = async () => {
-    const uid = Number(linkPlayerId.trim());
-    if (!linkPlayerId.trim() || Number.isNaN(uid) || uid < 1) {
-      setLinkError("Enter your child’s numeric user ID.");
-      return;
-    }
-    setLinkBusy(true);
-    setLinkError("");
-    setLinkMessage("");
-    try {
-      const res = await requestParentLinkToPlayer(uid, { is_legal_guardian: linkLegalGuardian });
-      setLinkMessage(res.message || "Request submitted.");
-      setLinkPlayerId("");
-      const data = await fetchCurrentUser();
-      setMe(data);
-      const feesData = await fetchMyFees();
-      setOwnFees(feesData.own_fees || []);
-      setChildrenFees(feesData.children_fees || []);
-      window.dispatchEvent(new Event("vc-member-dashboard-refresh"));
-    } catch (err) {
-      setLinkError(err.message || "Could not submit link request.");
-    } finally {
-      setLinkBusy(false);
-    }
-  };
-
   const onCreateTeamForCoach = async () => {
     const clubId = Number(newTeamClubId);
     const name = newTeamName.trim();
@@ -333,6 +300,27 @@ export default function MemberHubPage() {
     } finally {
       setCreateTeamBusy(false);
     }
+  };
+
+  const saveOwnEmergencyContact = async (nextValue) => {
+    const userId = me?.user?.id;
+    if (!userId) {
+      throw new Error("Could not identify your account.");
+    }
+    const result = await updateUserEmergencyContact(userId, nextValue);
+    setMe((current) => {
+      if (!current) {
+        return current;
+      }
+      return {
+        ...current,
+        user: {
+          ...(current.user || {}),
+          emergency_contact: result?.user?.emergency_contact ?? nextValue,
+        },
+      };
+    });
+    return result;
   };
 
   const showCoachAttendanceTab =
@@ -391,6 +379,15 @@ export default function MemberHubPage() {
             </div>
           </section>
         )}
+
+        {showCoachDashboard && me?.user ? (
+          <EmergencyContactForm
+            value={me.user.emergency_contact || ""}
+            canEdit={me.account_profile?.can_update_emergency_contact !== false}
+            disabledReason="Your parent-managed settings do not allow you to update this contact."
+            onSave={saveOwnEmergencyContact}
+          />
+        ) : null}
 
         {loading ? <p className="vc-modal__muted">{"Loading\u2026"}</p> : null}
         {error ? <p className="vc-modal__error">{error}</p> : null}
@@ -682,59 +679,6 @@ export default function MemberHubPage() {
                 <button type="button" className="vc-action-btn" onClick={() => navigate("/my-fees")}>
                   View & pay fees
                 </button>
-              </section>
-            ) : null}
-
-            {showParentLinking ? (
-              <section
-                className="vc-dash-kpi-card"
-                style={{ marginBottom: "1.25rem" }}
-                aria-labelledby="hub-parent-link-heading"
-              >
-                <h2 id="hub-parent-link-heading" style={{ fontSize: "1.05rem", margin: "0 0 0.75rem" }}>
-                  Parent linking
-                </h2>
-                <p style={{ margin: "0 0 0.75rem", color: "#5c6570", lineHeight: 1.5 }}>
-                  Request access to a child&apos;s player account by user ID. A club director must approve before you can
-                  see their payments or pay on their behalf.
-                </p>
-                {pendingParentLinks.length ? (
-                  <ul className="vc-modal__muted" style={{ margin: "0 0 0.75rem", paddingLeft: "1.1rem" }}>
-                    {pendingParentLinks.map((row) => (
-                      <li key={row.relation_id}>
-                        Pending approval for player ID {row.player?.id}
-                        {row.player?.email ? ` (${row.player.email})` : ""}.
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-                {linkMessage ? <p className="vc-director-success">{linkMessage}</p> : null}
-                {linkError ? <p className="vc-director-error">{linkError}</p> : null}
-                <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center" }}>
-                  <input
-                    className="vc-dash-team-select"
-                    style={{ maxWidth: 200 }}
-                    placeholder="Child user ID"
-                    value={linkPlayerId}
-                    onChange={(e) => setLinkPlayerId(e.target.value)}
-                  />
-                  <label style={{ display: "flex", gap: "0.35rem", alignItems: "center", fontSize: "0.9rem" }}>
-                    <input
-                      type="checkbox"
-                      checked={linkLegalGuardian}
-                      onChange={(e) => setLinkLegalGuardian(e.target.checked)}
-                    />
-                    Legal guardian
-                  </label>
-                  <button
-                    type="button"
-                    className="vc-action-btn"
-                    disabled={linkBusy}
-                    onClick={() => void onRequestParentLink()}
-                  >
-                    {linkBusy ? "Submitting…" : "Request link"}
-                  </button>
-                </div>
               </section>
             ) : null}
 

@@ -52,6 +52,7 @@ from .views import (
     team_training_sessions,
     update_team_details,
     update_team_member_data,
+    update_user_emergency_contact,
     view_team_members,
     resolve_player_parent_invitation,
 )
@@ -63,6 +64,11 @@ urlpatterns = [
     path("auth/login/", login, name="login"),
     path("auth/password-reset/request/", password_reset_request, name="password-reset-request"),
     path("auth/password-reset/confirm/", password_reset_confirm, name="password-reset-confirm"),
+    path(
+        "users/<int:user_id>/emergency-contact/",
+        update_user_emergency_contact,
+        name="update-user-emergency-contact",
+    ),
     path("directors/pending-users/", directors_pending_users, name="directors-pending-users"),
     path("directors/users/directory/", directors_user_directory, name="directors-user-directory"),
     path(

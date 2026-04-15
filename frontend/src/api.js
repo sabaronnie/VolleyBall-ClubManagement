@@ -183,6 +183,12 @@ export async function fetchCurrentUser() {
   return authenticatedGet("/api/auth/me/");
 }
 
+export async function updateUserEmergencyContact(userId, emergencyContact) {
+  return authenticatedJson(`/api/users/${userId}/emergency-contact/`, "PATCH", {
+    emergency_contact: emergencyContact,
+  });
+}
+
 /** Create a club; creator becomes club director (see POST /api/clubs/create/). */
 export async function createClub(body) {
   return authenticatedJson("/api/clubs/create/", "POST", body);
@@ -583,17 +589,14 @@ export async function deletePaymentSchedule(clubId, scheduleId) {
   );
 }
 
-export async function requestParentLinkToPlayer(playerId, body = {}) {
-  return authenticatedJson("/api/me/parent-link-request/", "POST", {
-    player_id: playerId,
-    ...body,
-  });
-}
-
 export async function requestPlayerParentInvitation(email) {
   return authenticatedJson("/api/me/player-parent-invitations/", "POST", {
     email,
   });
+}
+
+export async function updatePlayerParentAccess(playerId, body) {
+  return authenticatedJson(`/api/players/${playerId}/parent-management/`, "PATCH", body);
 }
 
 export async function fetchDirectorPendingParentLinks() {

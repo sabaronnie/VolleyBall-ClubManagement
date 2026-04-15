@@ -8,8 +8,10 @@ import {
   fetchTeamAttendanceSummary,
   fetchTeamMembers,
   fetchTeamPlayerPayments,
+  updateUserEmergencyContact,
 } from "../api";
 import ClubWorkspaceLayout from "../components/ClubWorkspaceLayout";
+import EmergencyContactForm from "../components/EmergencyContactForm";
 import DirectorAttendanceTrendCard from "../components/director/DirectorAttendanceTrendCard";
 import DirectorClubSummaryCard from "../components/director/DirectorClubSummaryCard";
 import DirectorPaymentsOverviewCard from "../components/director/DirectorPaymentsOverviewCard";
@@ -359,6 +361,7 @@ export default function DashboardPage({
   const [coachOverviewError, setCoachOverviewError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [viewerAccountRole, setViewerAccountRole] = useState(null);
+  const [profileMe, setProfileMe] = useState(null);
   const [hasPlayerTeams, setHasPlayerTeams] = useState(false);
   const [showCoachAttendanceTab, setShowCoachAttendanceTab] = useState(false);
   const [isDirectorOrStaff, setIsDirectorOrStaff] = useState(false);
@@ -390,6 +393,7 @@ export default function DashboardPage({
     setProfileError("");
     try {
       const me = await fetchCurrentUser();
+      setProfileMe(me);
       setIsDirectorOrStaff(Boolean(me.is_director_or_staff));
       setViewerAccountRole(me.user?.role || null);
       setHasPlayerTeams(Array.isArray(me.player_teams) && me.player_teams.length > 0);
@@ -414,6 +418,7 @@ export default function DashboardPage({
       setProfileError(err.message || "Could not load your profile.");
       setOwnedClubs([]);
       setCoachedTeams([]);
+      setProfileMe(null);
       setClubId(null);
       setHasAnyClubAffiliation(false);
     } finally {
@@ -694,6 +699,27 @@ export default function DashboardPage({
     }
   };
 
+  const saveOwnEmergencyContact = async (nextValue) => {
+    const userId = profileMe?.user?.id;
+    if (!userId) {
+      throw new Error("Could not identify your account.");
+    }
+    const result = await updateUserEmergencyContact(userId, nextValue);
+    setProfileMe((current) => {
+      if (!current) {
+        return current;
+      }
+      return {
+        ...current,
+        user: {
+          ...(current.user || {}),
+          emergency_contact: result?.user?.emergency_contact ?? nextValue,
+        },
+      };
+    });
+    return result;
+  };
+
   const toggleDirectorSection = (sectionId) => {
     setOpenDirectorSection((current) => (current === sectionId ? "" : sectionId));
   };
@@ -782,6 +808,15 @@ export default function DashboardPage({
           </div>
 
         </section>
+      ) : null}
+
+      {showWorkspace && profileMe?.user ? (
+        <EmergencyContactForm
+          value={profileMe.user.emergency_contact || ""}
+          canEdit={profileMe.account_profile?.can_update_emergency_contact !== false}
+          disabledReason="Your parent-managed settings do not allow you to update this contact."
+          onSave={saveOwnEmergencyContact}
+        />
       ) : null}
 
       {successMessage ? <div className="vc-director-success vc-dashboard-alert">{successMessage}</div> : null}

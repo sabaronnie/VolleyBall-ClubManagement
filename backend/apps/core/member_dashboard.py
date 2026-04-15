@@ -17,6 +17,7 @@ from .coach_dashboard import _format_time_12h
 from .models import (
     Notification,
     ParentPlayerRelation,
+    PlayerAccessPolicy,
     PlayerParentInvitation,
     PlayerParentInvitationStatus,
     PlayerFeeRecord,
@@ -27,7 +28,11 @@ from .models import (
     TrainingSessionConfirmation,
 )
 from .payment_views import _family_overall_status, _serialize_fee_record
-from .permissions import is_user_adult
+from .permissions import (
+    can_parent_manage_player_access,
+    can_player_update_own_emergency_contact,
+    is_user_adult,
+)
 
 User = get_user_model()
 
@@ -260,6 +265,35 @@ def _pending_parent_invites_for_player(player: User) -> list[dict[str, Any]]:
     return out
 
 
+def _serialize_player_access_policy(policy: Optional[PlayerAccessPolicy]) -> dict[str, Any]:
+    if policy is None:
+        return {
+            "is_parent_managed": False,
+            "can_self_confirm_attendance": True,
+            "can_self_make_payments": True,
+            "can_self_submit_absence_reasons": True,
+            "can_self_approve_schedule_confirmations": True,
+            "can_self_update_emergency_contact": True,
+        }
+
+    return {
+        "is_parent_managed": policy.is_parent_managed,
+        "can_self_confirm_attendance": policy.can_self_confirm_attendance,
+        "can_self_make_payments": policy.can_self_make_payments,
+        "can_self_submit_absence_reasons": policy.can_self_submit_absence_reasons,
+        "can_self_approve_schedule_confirmations": policy.can_self_approve_schedule_confirmations,
+        "can_self_update_emergency_contact": policy.can_self_update_emergency_contact,
+    }
+
+
+def _can_update_focus_emergency_contact(*, viewer: User, focus: User) -> bool:
+    if viewer == focus:
+        is_player = TeamMembership.objects.active().filter(user=focus, role=TeamRole.PLAYER).exists()
+        return can_player_update_own_emergency_contact(focus) if is_player else True
+
+    return ParentPlayerRelation.objects.approved().filter(parent=viewer, player=focus).exists()
+
+
 def build_member_hub_dashboard_payload(
     viewer: User,
     *,
@@ -288,6 +322,7 @@ def build_member_hub_dashboard_payload(
         "payment": None,
         "progress": None,
         "club_summary": None,
+        "parent_permissions": None,
         "quick_actions": {
             "confirm_attendance_path": "/parent/attendance"
             if child_ids and not _viewer_is_active_player(viewer)
@@ -320,6 +355,11 @@ def build_member_hub_dashboard_payload(
         "first_name": focus.first_name,
         "last_name": focus.last_name,
         "date_of_birth": focus.date_of_birth.isoformat() if focus.date_of_birth else None,
+        "emergency_contact": focus.emergency_contact,
+        "can_update_emergency_contact": _can_update_focus_emergency_contact(
+            viewer=viewer,
+            focus=focus,
+        ),
     }
     base["profile"] = {
         "display_name": format_person_name(focus),
@@ -344,6 +384,31 @@ def build_member_hub_dashboard_payload(
         "pending_requests": pending_parent_invites,
         "minor_locked": not is_user_adult(focus),
     }
+    if can_parent_manage_player_access(viewer, focus):
+        policy = PlayerAccessPolicy.objects.for_player(focus).first()
+        base["parent_permissions"] = {
+            "can_manage": True,
+            "policy": _serialize_player_access_policy(policy),
+            "reason": None,
+            "message": "",
+        }
+    elif focus.id in child_ids and is_user_adult(focus):
+        base["parent_permissions"] = {
+            "can_manage": False,
+            "policy": None,
+            "reason": "adult_player",
+            "message": (
+                "This player is an adult now, so parent-managed permissions no "
+                "longer apply and can no longer be modified."
+            ),
+        }
+    else:
+        base["parent_permissions"] = {
+            "can_manage": False,
+            "policy": None,
+            "reason": None,
+            "message": "",
+        }
 
     fee_lines = list(
         PlayerFeeRecord.objects.filter(player=focus)

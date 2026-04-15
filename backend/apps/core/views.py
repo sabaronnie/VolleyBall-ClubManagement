@@ -571,6 +571,7 @@ def _serialize_basic_user(user):
         "first_name": user.first_name,
         "last_name": user.last_name,
         "date_of_birth": user.date_of_birth.isoformat() if user.date_of_birth else None,
+        "emergency_contact": user.emergency_contact,
         "verification_status": user.verification_status,
         "role": _canonical_app_role(user) or None,
     }
@@ -690,12 +691,16 @@ def _pending_fees_summary(request_user):
 
 
 def _build_account_profile(request_user):
+    is_player = TeamMembership.objects.active().filter(user=request_user, role=TeamRole.PLAYER).exists()
     return {
         "roles": _account_roles_for_user(request_user),
         "display_role": _display_role_for_account(request_user),
         "pending_fees": _pending_fees_summary(request_user),
         "linked_parents": _linked_parent_accounts(request_user),
         "linked_children": _linked_children_accounts(request_user),
+        "can_update_emergency_contact": (
+            can_player_update_own_emergency_contact(request_user) if is_player else True
+        ),
     }
 
 
@@ -2067,6 +2072,58 @@ def member_hub_dashboard(request):
     return JsonResponse(payload, status=status)
 
 
+@csrf_exempt
+@login_required
+@require_http_methods(["PATCH"])
+def update_user_emergency_contact(request, user_id):
+    payload = _parse_json_request(request)
+    if payload is None:
+        return JsonResponse({"errors": {"body": "Invalid JSON."}}, status=400)
+
+    if "emergency_contact" not in payload:
+        return JsonResponse(
+            {"errors": {"payload": "Emergency contact is required."}},
+            status=400,
+        )
+
+    target_user = get_object_or_404(User, pk=user_id)
+    is_self_edit = request.user == target_user
+    is_parent_edit = ParentPlayerRelation.objects.approved().filter(
+        parent=request.user,
+        player=target_user,
+    ).exists()
+
+    if is_self_edit:
+        is_player = TeamMembership.objects.active().filter(user=target_user, role=TeamRole.PLAYER).exists()
+        if is_player and not can_player_update_own_emergency_contact(target_user):
+            return JsonResponse(
+                {
+                    "errors": {
+                        "authorization": (
+                            "Your parent-managed settings do not allow you to update "
+                            "your emergency contact."
+                        )
+                    }
+                },
+                status=403,
+            )
+    elif not is_parent_edit:
+        return JsonResponse(
+            {"errors": {"authorization": "You cannot update this emergency contact."}},
+            status=403,
+        )
+
+    target_user.emergency_contact = (payload["emergency_contact"] or "").strip()
+    target_user.save(update_fields=["emergency_contact"])
+
+    return JsonResponse(
+        {
+            "message": "Emergency contact updated successfully.",
+            "user": _serialize_basic_user(target_user),
+        }
+    )
+
+
 @login_required
 @require_GET
 def parent_child_attendance_history(request):
@@ -2479,60 +2536,17 @@ def directors_resolve_parent_link(request, relation_id):
 @csrf_exempt
 @require_POST
 def request_parent_link_to_player(request):
-    """Parent requests to be linked to a player (child); requires director approval."""
-    payload = _parse_json_request(request) or {}
-    raw = payload.get("player_id")
-    try:
-        player_id = int(raw)
-    except (TypeError, ValueError):
-        return JsonResponse({"errors": {"player_id": "A valid player user ID is required."}}, status=400)
-
-    player = get_object_or_404(User, pk=player_id)
-    if player.id == request.user.id:
-        return JsonResponse({"errors": {"player_id": "You cannot link to yourself as a parent."}}, status=400)
-
-    existing = ParentPlayerRelation.objects.filter(
-        parent=request.user,
-        player=player,
-    ).first()
-    if existing and existing.is_active and existing.approval_status == ParentLinkApprovalStatus.APPROVED:
-        return JsonResponse(
-            {"errors": {"player_id": "You are already linked to this player."}},
-            status=400,
-        )
-    if existing and existing.is_active and existing.approval_status == ParentLinkApprovalStatus.PENDING:
-        return JsonResponse(
-            {
-                "message": "Your link request is already pending director approval.",
-                "relation": _serialize_parent_relation(existing),
-            },
-            status=200,
-        )
-    if existing is None and not _player_has_parent_slot_available(player):
-        return JsonResponse(
-            {
-                "errors": {
-                    "player_id": "This player already has the maximum of 2 parent links or pending parent requests."
-                }
-            },
-            status=400,
-        )
-
-    relation, created = ParentPlayerRelation.objects.link(
-        parent=request.user,
-        player=player,
-        is_legal_guardian=bool(payload.get("is_legal_guardian", False)),
-        approval_status=ParentLinkApprovalStatus.PENDING,
-    )
+    """Legacy parent-initiated linking is disabled; players must invite parents instead."""
     return JsonResponse(
         {
-            "message": (
-                "Your link request was submitted. A club director must approve it before you can manage that "
-                "player's payments."
-            ),
-            "relation": _serialize_parent_relation(relation),
+            "errors": {
+                "authorization": (
+                    "Parents cannot request player links from this dashboard anymore. "
+                    "A player must send the parent invitation first."
+                )
+            }
         },
-        status=201 if created else 200,
+        status=403,
     )
 
 

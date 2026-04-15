@@ -1,7 +1,42 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { fetchMemberDashboard, removeParentAssociation, requestPlayerParentInvitation } from "../../api";
+import {
+  fetchMemberDashboard,
+  removeParentAssociation,
+  requestPlayerParentInvitation,
+  updatePlayerParentAccess,
+  updateUserEmergencyContact,
+} from "../../api";
+import EmergencyContactForm from "../EmergencyContactForm";
 import { navigate } from "../../navigation";
 import MyFeesPage from "../../pages/MyFeesPage";
+
+const PARENT_PERMISSION_OPTIONS = [
+  {
+    field: "can_self_confirm_attendance",
+    title: "Attendance confirmations",
+    description: "Allow the player to confirm their own attendance for upcoming sessions.",
+  },
+  {
+    field: "can_self_make_payments",
+    title: "Payments",
+    description: "Allow the player to pay their own fee lines from the app.",
+  },
+  {
+    field: "can_self_submit_absence_reasons",
+    title: "Absence reasons",
+    description: "Allow the player to submit absence reasons for missed sessions.",
+  },
+  {
+    field: "can_self_approve_schedule_confirmations",
+    title: "Schedule confirmations",
+    description: "Allow the player to approve schedule confirmation requests themselves.",
+  },
+  {
+    field: "can_self_update_emergency_contact",
+    title: "Emergency contact updates",
+    description: "Allow the player to edit their emergency contact information.",
+  },
+];
 
 function money(cur, amount) {
   const n = Number(amount);
@@ -64,6 +99,16 @@ function formatNextSessionValue(club) {
   }
   const dateLabel = formatShortDate(club.scheduled_date);
   return club.start_time_display ? `${dateLabel} · ${club.start_time_display}` : dateLabel;
+}
+
+function buildUpdatedParentPolicy(policy, field, allowed) {
+  const nextPolicy = {
+    ...(policy || {}),
+    [field]: allowed,
+  };
+  const hasAnyDenied = PARENT_PERMISSION_OPTIONS.some(({ field: optionField }) => !nextPolicy[optionField]);
+  nextPolicy.is_parent_managed = hasAnyDenied;
+  return nextPolicy;
 }
 
 function PlayerSummaryRow({ items }) {
@@ -311,6 +356,133 @@ function PlayerDashboardDropdown({
   );
 }
 
+function ParentManagedPermissionsDropdown({
+  focus,
+  profile,
+  permissions,
+  isOpen,
+  onToggle,
+  busyField,
+  message,
+  error,
+  onChangePermission,
+}) {
+  const isAdultPlayer = permissions?.reason === "adult_player";
+  const canEditPermissions = Boolean(permissions?.can_manage && permissions?.policy);
+
+  if (!focus || (!canEditPermissions && !isAdultPlayer)) {
+    return null;
+  }
+
+  const focusName =
+    profile?.display_name || [focus.first_name, focus.last_name].filter(Boolean).join(" ").trim() || focus.email;
+  const deniedCount = PARENT_PERMISSION_OPTIONS.filter(
+    ({ field }) => !permissions?.policy?.[field],
+  ).length;
+  const adultMessage =
+    permissions?.message ||
+    "This player is an adult now, so parent-managed permissions no longer apply and can no longer be modified.";
+
+  return (
+    <PlayerDashboardDropdown
+      id="parent-dashboard-permissions"
+      title="Permissions"
+      description={
+        isAdultPlayer
+          ? `${focusName} is an adult now, so these controls are no longer available.`
+          : `Control what ${focusName} can do from their player account.`
+      }
+      isOpen={isOpen}
+      onToggle={onToggle}
+    >
+      <div className="vc-parent-permissions">
+        <div className="vc-parent-permissions__summary">
+          <div>
+            <div className="vc-parent-permissions__eyebrow">Linked player</div>
+            <div className="vc-parent-permissions__name">{focusName}</div>
+            <p className="vc-parent-permissions__note">
+              {isAdultPlayer ? (
+                "Parent-managed restrictions automatically stop applying once a player is 18 or older."
+              ) : (
+                <>
+                  Choose <strong>Allow</strong> or <strong>Deny</strong> for each player action.
+                </>
+              )}
+            </p>
+          </div>
+          <span className="vc-parent-permissions__status">
+            {isAdultPlayer ? "Adult player" : deniedCount === 0 ? "All allowed" : `${deniedCount} denied`}
+          </span>
+        </div>
+
+        {message ? <div className="vc-director-success">{message}</div> : null}
+        {error ? <div className="vc-director-error">{error}</div> : null}
+
+        {isAdultPlayer ? (
+          <div className="vc-parent-permissions__adult-notice">
+            <strong>Permissions are no longer editable.</strong>
+            <p>{adultMessage}</p>
+          </div>
+        ) : (
+          <>
+            <div className="vc-parent-permissions__list">
+              {PARENT_PERMISSION_OPTIONS.map((option) => {
+                const allowed = Boolean(permissions.policy?.[option.field]);
+                const isSaving = busyField === option.field;
+                return (
+                  <div key={option.field} className="vc-parent-permissions__item">
+                    <div className="vc-parent-permissions__copy">
+                      <strong>{option.title}</strong>
+                      <p>{option.description}</p>
+                    </div>
+                    <div
+                      className="vc-parent-permissions__controls"
+                      role="group"
+                      aria-label={`${option.title} permission`}
+                    >
+                      <button
+                        type="button"
+                        className={`vc-parent-permissions__choice${allowed ? " is-active" : ""}`}
+                        disabled={isSaving}
+                        onClick={() => {
+                          if (!allowed) {
+                            void onChangePermission(option.field, true);
+                          }
+                        }}
+                      >
+                        Allow
+                      </button>
+                      <button
+                        type="button"
+                        className={`vc-parent-permissions__choice vc-parent-permissions__choice--deny${
+                          !allowed ? " is-active" : ""
+                        }`}
+                        disabled={isSaving}
+                        onClick={() => {
+                          if (allowed) {
+                            void onChangePermission(option.field, false);
+                          }
+                        }}
+                      >
+                        Deny
+                      </button>
+                    </div>
+                    {isSaving ? <span className="vc-parent-permissions__saving">Saving…</span> : null}
+                  </div>
+                );
+              })}
+            </div>
+
+            <p className="vc-parent-permissions__footnote">
+              Denying any item turns on parent-managed restrictions for this linked player.
+            </p>
+          </>
+        )}
+      </div>
+    </PlayerDashboardDropdown>
+  );
+}
+
 function PlayerOverviewCard({ focus, profile, payment, club, unread }) {
   return (
     <section className="vc-panel vc-panel--dashboard vc-panel--director-white vc-player-dash-overview" aria-labelledby="player-overview-heading">
@@ -324,7 +496,8 @@ function PlayerOverviewCard({ focus, profile, payment, club, unread }) {
       </div>
       {!focus ? (
         <p className="vc-modal__muted" style={{ margin: 0 }}>
-          Join a team roster or link a child account to unlock schedule details, attendance actions, and progress updates here.
+          Join a team roster or use approved family access to unlock schedule details, attendance actions, and progress
+          updates here.
         </p>
       ) : (
         <ul className="vc-coach-dash-feedback__list">
@@ -532,11 +705,15 @@ export default function MemberPlayerDashboard() {
   const [error, setError] = useState("");
   const [childFilter, setChildFilter] = useState(null);
   const [feesDropdownOpen, setFeesDropdownOpen] = useState(false);
+  const [permissionsDropdownOpen, setPermissionsDropdownOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteMessage, setInviteMessage] = useState("");
   const [inviteError, setInviteError] = useState("");
   const [removeBusyParentId, setRemoveBusyParentId] = useState(null);
+  const [permissionBusyField, setPermissionBusyField] = useState("");
+  const [permissionMessage, setPermissionMessage] = useState("");
+  const [permissionError, setPermissionError] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -578,8 +755,12 @@ export default function MemberPlayerDashboard() {
   const qa = data?.quick_actions || {};
   const focus = data?.focus_player;
   const parentAccess = data?.parent_access;
+  const parentPermissions = data?.parent_permissions;
   const focusDisplayName =
     profile?.display_name || [focus?.first_name, focus?.last_name].filter(Boolean).join(" ").trim() || focus?.email || "";
+  const viewerId = data?.viewer?.id ?? null;
+  const isLinkedPlayerView = Boolean(focus?.id && viewerId != null && viewerId !== focus.id);
+  const linkedPlayerTeamName = profile?.team?.name || club?.team_name || "";
 
   useEffect(() => {
     setInviteEmail("");
@@ -587,6 +768,10 @@ export default function MemberPlayerDashboard() {
     setInviteMessage("");
     setInviteError("");
     setRemoveBusyParentId(null);
+    setPermissionsDropdownOpen(false);
+    setPermissionBusyField("");
+    setPermissionMessage("");
+    setPermissionError("");
   }, [focus?.id]);
 
   const summaryItems = useMemo(() => {
@@ -669,8 +854,76 @@ export default function MemberPlayerDashboard() {
     }
   };
 
+  const onChangeParentPermission = async (field, allowed) => {
+    if (!focus?.id || !parentPermissions?.policy) {
+      return;
+    }
+
+    const nextPolicy = buildUpdatedParentPolicy(parentPermissions.policy, field, allowed);
+    setPermissionBusyField(field);
+    setPermissionMessage("");
+    setPermissionError("");
+    try {
+      const res = await updatePlayerParentAccess(focus.id, {
+        is_parent_managed: nextPolicy.is_parent_managed,
+        [field]: allowed,
+      });
+      setData((current) => {
+        if (!current) {
+          return current;
+        }
+        return {
+          ...current,
+          parent_permissions: {
+            ...(current.parent_permissions || {}),
+            can_manage: true,
+            policy: {
+              ...(current.parent_permissions?.policy || {}),
+              ...(res?.policy || nextPolicy),
+            },
+          },
+        };
+      });
+      setPermissionMessage(res?.message || "Permissions updated.");
+    } catch (err) {
+      setPermissionError(err.message || "Could not update player permissions.");
+    } finally {
+      setPermissionBusyField("");
+    }
+  };
+
+  const onSaveEmergencyContact = async (nextValue) => {
+    if (!focus?.id) {
+      throw new Error("Could not identify this player.");
+    }
+    const result = await updateUserEmergencyContact(focus.id, nextValue);
+    setData((current) => {
+      if (!current) {
+        return current;
+      }
+      return {
+        ...current,
+        focus_player: {
+          ...(current.focus_player || {}),
+          emergency_contact: result?.user?.emergency_contact ?? nextValue,
+        },
+      };
+    });
+    return result;
+  };
+
   return (
     <div className="vc-coach-dash-body vc-player-dash-body">
+      {isLinkedPlayerView ? (
+        <section className="vc-parent-focus-banner" aria-label="Linked player">
+          <div className="vc-parent-focus-banner__eyebrow">Parent dashboard</div>
+          <div className="vc-parent-focus-banner__name">{focusDisplayName || "Linked player"}</div>
+          <div className="vc-parent-focus-banner__meta">
+            {linkedPlayerTeamName ? `Viewing ${linkedPlayerTeamName}` : "Viewing linked player details"}
+          </div>
+        </section>
+      ) : null}
+
       {childrenOpts.length > 1 ? (
         <div className="vc-member-dash__child-bar">
           <label className="vc-member-dash__child-label">
@@ -696,6 +949,15 @@ export default function MemberPlayerDashboard() {
 
       {!loading && !error ? (
         <>
+          {focus ? (
+            <EmergencyContactForm
+              value={focus.emergency_contact || ""}
+              canEdit={focus.can_update_emergency_contact !== false}
+              disabledReason="Your parent-managed settings do not allow you to update this contact."
+              onSave={onSaveEmergencyContact}
+            />
+          ) : null}
+
           <PlayerSummaryRow items={summaryItems} />
 
           <div className="vc-dash-row vc-dash-row--dashboard">
@@ -722,6 +984,18 @@ export default function MemberPlayerDashboard() {
           >
             <MyFeesPage embedded />
           </PlayerDashboardDropdown>
+
+          <ParentManagedPermissionsDropdown
+            focus={focus}
+            profile={profile}
+            permissions={parentPermissions}
+            isOpen={permissionsDropdownOpen}
+            onToggle={() => setPermissionsDropdownOpen((current) => !current)}
+            busyField={permissionBusyField}
+            message={permissionMessage}
+            error={permissionError}
+            onChangePermission={onChangeParentPermission}
+          />
 
           <PlayerOverviewCard
             focus={focus}
