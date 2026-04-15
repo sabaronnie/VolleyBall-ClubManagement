@@ -48,6 +48,8 @@ from .models import (
     ParentLinkApprovalStatus,
     ParentPlayerRelation,
     PasswordResetOTP,
+    PlayerParentInvitation,
+    PlayerParentInvitationStatus,
     RegistrationOTP,
     PlayerAccessPolicy,
     PlayerFeeRecord,
@@ -811,6 +813,7 @@ def _send_team_invitation_email(*, invited_email, team_name, club_name, code):
 
 def _serialize_team_invitation(invite):
     return {
+        "kind": "team",
         "id": invite.id,
         "code": invite.code,
         "status": invite.status,
@@ -830,6 +833,83 @@ def _expire_invitation_if_needed(invite):
         and invite.expires_at <= timezone.now()
     ):
         invite.status = TeamInvitationStatus.EXPIRED
+        invite.responded_at = timezone.now()
+        invite.save(update_fields=["status", "responded_at"])
+    return invite
+
+
+def _send_parent_link_invitation_email(*, invited_email, player_name, club_name, code):
+    if not invited_email:
+        return
+    if not _password_reset_email_configured():
+        return
+    invite_url = _team_invitation_url(code)
+    subject = f"Parent access invitation for {player_name}"
+    body = (
+        "Hello,\n\n"
+        f"You were invited to link as a parent for {player_name}'s player account"
+        f"{f' in {club_name}' if club_name else ''}.\n"
+        "Use the invitation link below to accept or decline:\n"
+        f"{invite_url}\n\n"
+        "If you do not have an account yet, register first with this same email, then open the same invitation link.\n"
+    )
+    try:
+        send_mail(
+            subject,
+            body,
+            settings.DEFAULT_FROM_EMAIL,
+            [invited_email],
+            fail_silently=False,
+        )
+    except Exception:
+        logger.exception("Failed to send parent link invitation email to %s", invited_email)
+
+
+def _primary_player_membership(player):
+    return (
+        TeamMembership.objects.active()
+        .filter(user=player, role=TeamRole.PLAYER)
+        .select_related("team", "team__club")
+        .order_by("team__club__name", "team__name", "team_id")
+        .first()
+    )
+
+
+def _serialize_player_parent_invitation(invite):
+    membership = _primary_player_membership(invite.player)
+    waiting_for = []
+    if invite.status == PlayerParentInvitationStatus.PENDING_APPROVAL:
+        if invite.director_approved_at is None:
+            waiting_for.append("director")
+        if invite.coach_approved_at is None:
+            waiting_for.append("coach")
+    return {
+        "kind": "parent_link",
+        "id": invite.id,
+        "code": invite.code,
+        "status": invite.status,
+        "invited_email": invite.invited_email,
+        "created_at": invite.created_at.isoformat() if invite.created_at else None,
+        "invited_at": invite.invited_at.isoformat() if invite.invited_at else None,
+        "expires_at": invite.expires_at.isoformat() if invite.expires_at else None,
+        "responded_at": invite.responded_at.isoformat() if invite.responded_at else None,
+        "player": _serialize_basic_user(invite.player),
+        "requested_by": _serialize_basic_user(invite.requested_by),
+        "team": _serialize_team(membership.team) if membership else None,
+        "club_name": membership.team.club.name if membership and membership.team.club_id else None,
+        "director_approved": invite.director_approved_at is not None,
+        "coach_approved": invite.coach_approved_at is not None,
+        "waiting_for": waiting_for,
+    }
+
+
+def _expire_parent_link_invitation_if_needed(invite):
+    if (
+        invite.status == PlayerParentInvitationStatus.PENDING_PARENT_RESPONSE
+        and invite.expires_at is not None
+        and invite.expires_at <= timezone.now()
+    ):
+        invite.status = PlayerParentInvitationStatus.EXPIRED
         invite.responded_at = timezone.now()
         invite.save(update_fields=["status", "responded_at"])
     return invite
@@ -2211,6 +2291,121 @@ def _context_team_for_parent_link_row(rel, club_ids, *, staff_viewer: bool):
     return qs.order_by("id").first()
 
 
+def _active_parent_slot_count(player, *, exclude_relation_id=None, exclude_invitation_id=None):
+    relation_qs = ParentPlayerRelation.objects.active().filter(
+        player=player,
+        approval_status__in=[
+            ParentLinkApprovalStatus.PENDING,
+            ParentLinkApprovalStatus.APPROVED,
+        ],
+    )
+    if exclude_relation_id is not None:
+        relation_qs = relation_qs.exclude(pk=exclude_relation_id)
+    relation_count = relation_qs.count()
+    invitation_qs = PlayerParentInvitation.objects.filter(
+        player=player,
+        status__in=[
+            PlayerParentInvitationStatus.PENDING_APPROVAL,
+            PlayerParentInvitationStatus.PENDING_PARENT_RESPONSE,
+        ],
+    )
+    if exclude_invitation_id is not None:
+        invitation_qs = invitation_qs.exclude(pk=exclude_invitation_id)
+    return relation_count + invitation_qs.count()
+
+
+def _player_has_parent_slot_available(player, *, exclude_relation_id=None, exclude_invitation_id=None):
+    return (
+        _active_parent_slot_count(
+            player,
+            exclude_relation_id=exclude_relation_id,
+            exclude_invitation_id=exclude_invitation_id,
+        )
+        < 2
+    )
+
+
+def _reviewable_parent_invitations_queryset(user):
+    base = PlayerParentInvitation.objects.filter(
+        status=PlayerParentInvitationStatus.PENDING_APPROVAL
+    ).select_related("player", "requested_by", "invited_parent")
+
+    if is_staff_user(user):
+        return base
+
+    clauses = Q()
+    club_ids = _director_managed_club_ids(user)
+    if club_ids:
+        clauses |= Q(
+            player__team_memberships__is_active=True,
+            player__team_memberships__role=TeamRole.PLAYER,
+            player__team_memberships__team__club_id__in=club_ids,
+        )
+
+    coach_team_ids = list(
+        TeamMembership.objects.active()
+        .filter(user=user, role=TeamRole.COACH)
+        .values_list("team_id", flat=True)
+    )
+    if coach_team_ids:
+        clauses |= Q(
+            player__team_memberships__is_active=True,
+            player__team_memberships__role=TeamRole.PLAYER,
+            player__team_memberships__team_id__in=coach_team_ids,
+        )
+
+    if not clauses:
+        return PlayerParentInvitation.objects.none()
+    return base.filter(clauses).distinct()
+
+
+def _review_context_team_for_parent_invitation(invite, user):
+    memberships = (
+        TeamMembership.objects.active()
+        .filter(user=invite.player, role=TeamRole.PLAYER)
+        .select_related("team", "team__club")
+        .order_by("team__club__name", "team__name", "team_id")
+    )
+    if is_staff_user(user):
+        return memberships.first()
+
+    club_ids = set(_director_managed_club_ids(user))
+    coach_team_ids = set(
+        TeamMembership.objects.active()
+        .filter(user=user, role=TeamRole.COACH)
+        .values_list("team_id", flat=True)
+    )
+    for membership in memberships:
+        if membership.team_id in coach_team_ids or membership.team.club_id in club_ids:
+            return membership
+    return memberships.first()
+
+
+def _user_can_approve_parent_invitation_as_director(user, invite) -> bool:
+    if is_staff_user(user):
+        return True
+    club_ids = _director_managed_club_ids(user)
+    if not club_ids:
+        return False
+    return TeamMembership.objects.active().filter(
+        user=invite.player,
+        role=TeamRole.PLAYER,
+        team__club_id__in=club_ids,
+    ).exists()
+
+
+def _user_can_approve_parent_invitation_as_coach(user, invite) -> bool:
+    if is_staff_user(user):
+        return True
+    return TeamMembership.objects.active().filter(
+        user=user,
+        role=TeamRole.COACH,
+        team__memberships__user=invite.player,
+        team__memberships__role=TeamRole.PLAYER,
+        team__memberships__is_active=True,
+    ).exists()
+
+
 @login_required
 @require_GET
 def directors_pending_parent_links(request):
@@ -2262,6 +2457,15 @@ def directors_resolve_parent_link(request, relation_id):
             status=403,
         )
     if action == "approve":
+        if not _player_has_parent_slot_available(rel.player, exclude_relation_id=rel.id):
+            return JsonResponse(
+                {
+                    "errors": {
+                        "player": "This player already has the maximum of 2 parent links or pending parent requests."
+                    }
+                },
+                status=400,
+            )
         rel.approval_status = ParentLinkApprovalStatus.APPROVED
         rel.save(update_fields=["approval_status"])
     else:
@@ -2304,6 +2508,15 @@ def request_parent_link_to_player(request):
             },
             status=200,
         )
+    if existing is None and not _player_has_parent_slot_available(player):
+        return JsonResponse(
+            {
+                "errors": {
+                    "player_id": "This player already has the maximum of 2 parent links or pending parent requests."
+                }
+            },
+            status=400,
+        )
 
     relation, created = ParentPlayerRelation.objects.link(
         parent=request.user,
@@ -2320,6 +2533,221 @@ def request_parent_link_to_player(request):
             "relation": _serialize_parent_relation(relation),
         },
         status=201 if created else 200,
+    )
+
+
+@login_required
+@csrf_exempt
+@require_POST
+def request_player_parent_invitation(request):
+    payload = _parse_json_request(request) or {}
+    invited_email = (payload.get("email") or "").strip().lower()
+    if not invited_email:
+        return JsonResponse({"errors": {"email": "An email address is required."}}, status=400)
+    try:
+        EmailValidator()(invited_email)
+    except ValidationError:
+        return JsonResponse({"errors": {"email": "Enter a valid email address."}}, status=400)
+
+    player = request.user
+    if not TeamMembership.objects.active().filter(user=player, role=TeamRole.PLAYER).exists():
+        return JsonResponse(
+            {"errors": {"authorization": "Only active player accounts can invite a parent from this dashboard."}},
+            status=403,
+        )
+    if invited_email == (player.email or "").strip().lower():
+        return JsonResponse({"errors": {"email": "You cannot invite your own email as a parent."}}, status=400)
+
+    target_parent = User.objects.filter(email=invited_email, is_active=True).first()
+    if target_parent is not None and target_parent.id == player.id:
+        return JsonResponse({"errors": {"email": "You cannot invite yourself as a parent."}}, status=400)
+
+    existing_relation = None
+    if target_parent is not None:
+        existing_relation = ParentPlayerRelation.objects.active().filter(parent=target_parent, player=player).first()
+    if existing_relation and existing_relation.approval_status == ParentLinkApprovalStatus.APPROVED:
+        return JsonResponse({"errors": {"email": "That parent is already linked to your account."}}, status=400)
+    if existing_relation and existing_relation.approval_status == ParentLinkApprovalStatus.PENDING:
+        return JsonResponse(
+            {
+                "message": "A parent link request for this email is already pending approval.",
+                "request": {
+                    "kind": "existing_parent_link",
+                    "relation_id": existing_relation.id,
+                    "invited_email": invited_email,
+                },
+            },
+            status=200,
+        )
+
+    existing_invite = (
+        PlayerParentInvitation.objects.filter(
+            player=player,
+            invited_email=invited_email,
+            status__in=[
+                PlayerParentInvitationStatus.PENDING_APPROVAL,
+                PlayerParentInvitationStatus.PENDING_PARENT_RESPONSE,
+            ],
+        )
+        .order_by("-id")
+        .first()
+    )
+    if existing_invite is not None:
+        return JsonResponse(
+            {
+                "message": "A request for this parent email is already in progress.",
+                "request": _serialize_player_parent_invitation(existing_invite),
+            }
+        )
+    if not _player_has_parent_slot_available(player):
+        return JsonResponse(
+            {
+                "errors": {
+                    "email": "You can have at most 2 linked or pending parents on this account."
+                }
+            },
+            status=400,
+        )
+
+    invite = PlayerParentInvitation.objects.create(
+        player=player,
+        requested_by=player,
+        invited_parent=target_parent,
+        invited_email=invited_email,
+    )
+    return JsonResponse(
+        {
+            "message": "Parent request sent for coach and director approval.",
+            "request": _serialize_player_parent_invitation(invite),
+        },
+        status=201,
+    )
+
+
+@login_required
+@require_GET
+def pending_player_parent_invitation_reviews(request):
+    can_review = (
+        is_staff_user(request.user)
+        or is_any_club_director(request.user)
+        or TeamMembership.objects.active().filter(user=request.user, role=TeamRole.COACH).exists()
+    )
+    if not can_review:
+        return JsonResponse(
+            {"errors": {"authorization": "Only coaches or club directors can review these parent invitations."}},
+            status=403,
+        )
+
+    rows = []
+    for invite in _reviewable_parent_invitations_queryset(request.user).order_by("id"):
+        membership = _review_context_team_for_parent_invitation(invite, request.user)
+        rows.append(
+            {
+                "request": _serialize_player_parent_invitation(invite),
+                "player": _serialize_basic_user(invite.player),
+                "club_name": membership.team.club.name if membership and membership.team.club_id else None,
+                "team_name": membership.team.name if membership else None,
+                "can_approve_as_director": _user_can_approve_parent_invitation_as_director(request.user, invite),
+                "can_approve_as_coach": _user_can_approve_parent_invitation_as_coach(request.user, invite),
+            }
+        )
+    return JsonResponse({"requests": rows})
+
+
+@login_required
+@csrf_exempt
+@require_POST
+def resolve_player_parent_invitation(request, invitation_id):
+    payload = _parse_json_request(request) or {}
+    action = (payload.get("action") or "").strip().lower()
+    if action not in ("approve", "reject"):
+        return JsonResponse(
+            {"errors": {"action": 'Send JSON {"action": "approve"} or {"action": "reject"}.'}},
+            status=400,
+        )
+
+    invite = get_object_or_404(
+        PlayerParentInvitation.objects.select_related("player", "requested_by", "invited_parent"),
+        pk=invitation_id,
+    )
+    if invite.status != PlayerParentInvitationStatus.PENDING_APPROVAL:
+        return JsonResponse(
+            {"errors": {"request": f"This request is already {invite.status}."}},
+            status=400,
+        )
+
+    may_direct = _user_can_approve_parent_invitation_as_director(request.user, invite)
+    may_coach = _user_can_approve_parent_invitation_as_coach(request.user, invite)
+    if not (may_direct or may_coach):
+        return JsonResponse(
+            {"errors": {"authorization": "You cannot review this parent invitation request."}},
+            status=403,
+        )
+
+    if action == "reject":
+        invite.status = PlayerParentInvitationStatus.REJECTED
+        invite.responded_at = timezone.now()
+        invite.save(update_fields=["status", "responded_at"])
+        return JsonResponse(
+            {
+                "message": "Parent invitation request rejected.",
+                "request": _serialize_player_parent_invitation(invite),
+            }
+        )
+
+    update_fields = []
+    approved_now = False
+    if may_direct and invite.director_approved_at is None:
+        invite.director_approved_at = timezone.now()
+        invite.director_approved_by = request.user
+        update_fields.extend(["director_approved_at", "director_approved_by"])
+        approved_now = True
+    if may_coach and invite.coach_approved_at is None:
+        invite.coach_approved_at = timezone.now()
+        invite.coach_approved_by = request.user
+        update_fields.extend(["coach_approved_at", "coach_approved_by"])
+        approved_now = True
+    if not approved_now:
+        return JsonResponse(
+            {"errors": {"authorization": "Your approval has already been recorded for this request."}},
+            status=400,
+        )
+
+    if not _player_has_parent_slot_available(invite.player, exclude_invitation_id=invite.id):
+        invite.status = PlayerParentInvitationStatus.REJECTED
+        invite.responded_at = timezone.now()
+        update_fields.extend(["status", "responded_at"])
+        invite.save(update_fields=update_fields)
+        return JsonResponse(
+            {
+                "errors": {
+                    "player": "This player already has the maximum of 2 parent links or pending parent requests."
+                }
+            },
+            status=400,
+        )
+
+    invite.status = PlayerParentInvitationStatus.PENDING_PARENT_RESPONSE
+    invite.invited_at = timezone.now()
+    invite.expires_at = timezone.now() + timedelta(days=7)
+    invite.invited_parent = User.objects.filter(email=invite.invited_email, is_active=True).first()
+    update_fields.extend(["status", "invited_at", "expires_at", "invited_parent"])
+    membership = _primary_player_membership(invite.player)
+    _send_parent_link_invitation_email(
+        invited_email=invite.invited_email,
+        player_name=invite.player.get_full_name() or invite.player.email,
+        club_name=membership.team.club.name if membership and membership.team.club_id else "",
+        code=invite.code,
+    )
+    approver_label = "director" if may_direct else "coach"
+    message = f"{approver_label.capitalize()} approval recorded. Parent invitation sent."
+
+    invite.save(update_fields=update_fields)
+    return JsonResponse(
+        {
+            "message": message,
+            "request": _serialize_player_parent_invitation(invite),
+        }
     )
 
 
@@ -3288,10 +3716,20 @@ def invite_team_member(request, team_id):
 @require_GET
 def invitation_detail(request, code):
     invite = TeamInvitation.objects.select_related("team__club").filter(code=code).first()
+    parent_invite = None
     if invite is None:
-        return JsonResponse({"errors": {"invitation": "Invitation not found."}}, status=404)
+        parent_invite = (
+            PlayerParentInvitation.objects.select_related("player", "requested_by", "invited_parent")
+            .filter(code=code)
+            .first()
+        )
+        if parent_invite is None:
+            return JsonResponse({"errors": {"invitation": "Invitation not found."}}, status=404)
 
-    invite = _expire_invitation_if_needed(invite)
+    if invite is not None:
+        invite = _expire_invitation_if_needed(invite)
+    else:
+        parent_invite = _expire_parent_link_invitation_if_needed(parent_invite)
 
     viewer_email = ""
     viewer_is_authenticated = False
@@ -3314,11 +3752,17 @@ def invitation_detail(request, code):
 
     return JsonResponse(
         {
-            "invitation": _serialize_team_invitation(invite),
+            "invitation": (
+                _serialize_team_invitation(invite)
+                if invite is not None
+                else _serialize_player_parent_invitation(parent_invite)
+            ),
             "requires_login": True,
             "viewer_is_authenticated": viewer_is_authenticated,
             "viewer_email_matches_invite": bool(
-                viewer_email and viewer_email == (invite.invited_email or "").strip().lower()
+                viewer_email
+                and viewer_email
+                == ((invite.invited_email if invite is not None else parent_invite.invited_email) or "").strip().lower()
             ),
         }
     )
@@ -3337,49 +3781,106 @@ def respond_team_invitation(request, code):
         return JsonResponse({"errors": {"action": "Action must be 'accept' or 'decline'."}}, status=400)
 
     invite = TeamInvitation.objects.select_related("team__club").filter(code=code).first()
+    parent_invite = None
     if invite is None:
-        return JsonResponse({"errors": {"invitation": "Invitation not found."}}, status=404)
-
-    invite = _expire_invitation_if_needed(invite)
-    if invite.status != TeamInvitationStatus.PENDING:
-        return JsonResponse(
-            {"errors": {"invitation": f"This invitation is already {invite.status}."}},
-            status=400,
+        parent_invite = (
+            PlayerParentInvitation.objects.select_related("player", "requested_by", "invited_parent")
+            .filter(code=code)
+            .first()
         )
+        if parent_invite is None:
+            return JsonResponse({"errors": {"invitation": "Invitation not found."}}, status=404)
 
     viewer_email = (request.user.email or "").strip().lower()
-    if viewer_email != (invite.invited_email or "").strip().lower():
+    current_email = (invite.invited_email if invite is not None else parent_invite.invited_email or "").strip().lower()
+    if viewer_email != current_email:
         return JsonResponse(
             {"errors": {"authorization": "This invitation belongs to a different email address."}},
             status=403,
         )
 
-    if action == "decline":
-        invite.status = TeamInvitationStatus.DECLINED
+    if invite is not None:
+        invite = _expire_invitation_if_needed(invite)
+        if invite.status != TeamInvitationStatus.PENDING:
+            return JsonResponse(
+                {"errors": {"invitation": f"This invitation is already {invite.status}."}},
+                status=400,
+            )
+
+        if action == "decline":
+            invite.status = TeamInvitationStatus.DECLINED
+            invite.responded_at = timezone.now()
+            invite.save(update_fields=["status", "responded_at"])
+            return JsonResponse(
+                {
+                    "message": "Invitation declined.",
+                    "invitation": _serialize_team_invitation(invite),
+                }
+            )
+
+        TeamMembership.objects.add_member(
+            user=request.user,
+            team=invite.team,
+            role=invite.role,
+        )
+        if invite.role == TeamRole.PLAYER:
+            ensure_monthly_fee_for_new_player(invite.team, request.user)
+        invite.status = TeamInvitationStatus.ACCEPTED
         invite.responded_at = timezone.now()
         invite.save(update_fields=["status", "responded_at"])
         return JsonResponse(
             {
-                "message": "Invitation declined.",
+                "message": "Invitation accepted. You are now a team member.",
                 "invitation": _serialize_team_invitation(invite),
+                "team": _serialize_team(invite.team),
             }
         )
 
-    TeamMembership.objects.add_member(
-        user=request.user,
-        team=invite.team,
-        role=invite.role,
+    parent_invite = _expire_parent_link_invitation_if_needed(parent_invite)
+    if parent_invite.status != PlayerParentInvitationStatus.PENDING_PARENT_RESPONSE:
+        return JsonResponse(
+            {"errors": {"invitation": f"This invitation is already {parent_invite.status}."}},
+            status=400,
+        )
+    if request.user.id == parent_invite.player_id:
+        return JsonResponse(
+            {"errors": {"authorization": "You cannot accept a parent invitation for your own account."}},
+            status=400,
+        )
+
+    if action == "decline":
+        parent_invite.status = PlayerParentInvitationStatus.DECLINED
+        parent_invite.responded_at = timezone.now()
+        parent_invite.save(update_fields=["status", "responded_at"])
+        return JsonResponse(
+            {
+                "message": "Invitation declined.",
+                "invitation": _serialize_player_parent_invitation(parent_invite),
+            }
+        )
+
+    if not _player_has_parent_slot_available(parent_invite.player, exclude_invitation_id=parent_invite.id):
+        return JsonResponse(
+            {
+                "errors": {
+                    "player": "This player already has the maximum of 2 parent links or pending parent requests."
+                }
+            },
+            status=400,
+        )
+    ParentPlayerRelation.objects.link(
+        parent=request.user,
+        player=parent_invite.player,
+        approval_status=ParentLinkApprovalStatus.APPROVED,
     )
-    if invite.role == TeamRole.PLAYER:
-        ensure_monthly_fee_for_new_player(invite.team, request.user)
-    invite.status = TeamInvitationStatus.ACCEPTED
-    invite.responded_at = timezone.now()
-    invite.save(update_fields=["status", "responded_at"])
+    parent_invite.invited_parent = request.user
+    parent_invite.status = PlayerParentInvitationStatus.ACCEPTED
+    parent_invite.responded_at = timezone.now()
+    parent_invite.save(update_fields=["invited_parent", "status", "responded_at"])
     return JsonResponse(
         {
-            "message": "Invitation accepted. You are now a team member.",
-            "invitation": _serialize_team_invitation(invite),
-            "team": _serialize_team(invite.team),
+            "message": "Invitation accepted. Parent access is now linked.",
+            "invitation": _serialize_player_parent_invitation(parent_invite),
         }
     )
 
@@ -3520,6 +4021,16 @@ def add_parent_association(request, player_id):
     if parent == player:
         return JsonResponse(
             {"errors": {"parent_id": "A user cannot be linked as their own parent."}},
+            status=400,
+        )
+    existing_relation = ParentPlayerRelation.objects.active().filter(parent=parent, player=player).first()
+    if existing_relation is None and not _player_has_parent_slot_available(player):
+        return JsonResponse(
+            {
+                "errors": {
+                    "player": "This player already has the maximum of 2 parent links or pending parent requests."
+                }
+            },
             status=400,
         )
 

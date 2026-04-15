@@ -43,7 +43,10 @@ export default function TeamInvitationPage({ invitationCode, isAuthenticated }) 
 
   const invitation = payload?.invitation || null;
   const canRespond = invitation?.status === "pending" && payload?.viewer_email_matches_invite;
+  const canRespondToParentLink =
+    invitation?.status === "pending_parent_response" && payload?.viewer_email_matches_invite;
   const showAuthPrompt = !isAuthenticated;
+  const isParentLinkInvite = invitation?.kind === "parent_link";
 
   const clubAndTeam = useMemo(() => {
     if (!invitation?.team) return "";
@@ -79,7 +82,7 @@ export default function TeamInvitationPage({ invitationCode, isAuthenticated }) 
   return (
     <div className="vc-director-page">
       <div className="vc-director-card" style={{ maxWidth: "760px", margin: "2rem auto" }}>
-        <h1 className="vc-panel-title">Team invitation</h1>
+        <h1 className="vc-panel-title">{isParentLinkInvite ? "Parent access invitation" : "Team invitation"}</h1>
         {loading ? <p className="vc-modal__muted">Loading invitation…</p> : null}
         {error ? <div className="vc-director-error">{error}</div> : null}
         {success ? <div className="vc-director-success">{success}</div> : null}
@@ -90,11 +93,25 @@ export default function TeamInvitationPage({ invitationCode, isAuthenticated }) 
               Invitation for <strong>{invitation.invited_email}</strong>
             </p>
             <p className="vc-modal__muted" style={{ marginTop: "0.2rem" }}>
-              Team: <strong>{clubAndTeam}</strong>
+              {isParentLinkInvite ? (
+                <>
+                  Player:{" "}
+                  <strong>
+                    {[invitation.player?.first_name, invitation.player?.last_name].filter(Boolean).join(" ").trim() ||
+                      invitation.player?.email}
+                  </strong>
+                </>
+              ) : (
+                <>
+                  Team: <strong>{clubAndTeam}</strong>
+                </>
+              )}
             </p>
-            <p className="vc-modal__muted" style={{ marginTop: "0.2rem" }}>
-              Role: <strong>{invitation.role}</strong>
-            </p>
+            {!isParentLinkInvite ? (
+              <p className="vc-modal__muted" style={{ marginTop: "0.2rem" }}>
+                Role: <strong>{invitation.role}</strong>
+              </p>
+            ) : null}
             <p className="vc-modal__muted" style={{ marginTop: "0.2rem" }}>
               Status: <strong>{invitation.status}</strong>
             </p>
@@ -145,7 +162,7 @@ export default function TeamInvitationPage({ invitationCode, isAuthenticated }) 
                 </div>
               </>
             ) : null}
-            {canRespond ? (
+            {canRespond || canRespondToParentLink ? (
               <div style={{ display: "flex", gap: "0.6rem", marginTop: "1rem", flexWrap: "wrap" }}>
                 <button
                   type="button"
@@ -153,7 +170,7 @@ export default function TeamInvitationPage({ invitationCode, isAuthenticated }) 
                   disabled={submitting}
                   onClick={() => void onRespond("accept")}
                 >
-                  {submitting ? "Please wait…" : "Accept invitation"}
+                  {submitting ? "Please wait…" : `Accept ${isParentLinkInvite ? "invitation" : "invitation"}`}
                 </button>
                 <button
                   type="button"

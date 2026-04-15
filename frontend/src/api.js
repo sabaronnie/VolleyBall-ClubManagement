@@ -590,10 +590,28 @@ export async function requestParentLinkToPlayer(playerId, body = {}) {
   });
 }
 
+export async function requestPlayerParentInvitation(email) {
+  return authenticatedJson("/api/me/player-parent-invitations/", "POST", {
+    email,
+  });
+}
+
 export async function fetchDirectorPendingParentLinks() {
   return authenticatedGet("/api/directors/parent-link-requests/");
 }
 
 export async function directorResolveParentLink(relationId, action) {
   return authenticatedJson(`/api/directors/parent-link-requests/${relationId}/`, "POST", { action });
+}
+
+export async function fetchPendingPlayerParentInvitations() {
+  return authenticatedGet("/api/managers/player-parent-invitations/");
+}
+
+export async function resolvePlayerParentInvitation(invitationId, action) {
+  return authenticatedJson(`/api/managers/player-parent-invitations/${invitationId}/`, "POST", { action });
+}
+
+export async function removeParentAssociation(playerId, parentId) {
+  return authenticatedJson(`/api/players/${playerId}/parents/${parentId}/`, "DELETE", {});
 }

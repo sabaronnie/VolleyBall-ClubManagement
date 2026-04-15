@@ -33,8 +33,10 @@ from .views import (
     me,
     member_hub_dashboard,
     parent_child_attendance_history,
+    pending_player_parent_invitation_reviews,
     player_team_attendance_summary,
     request_parent_link_to_player,
+    request_player_parent_invitation,
     notifications,
     remove_parent_association,
     remove_team_captain,
@@ -51,6 +53,7 @@ from .views import (
     update_team_details,
     update_team_member_data,
     view_team_members,
+    resolve_player_parent_invitation,
 )
 
 app_name = "core"
@@ -79,6 +82,11 @@ urlpatterns = [
     path("me/parent/child-attendance/", parent_child_attendance_history, name="parent-child-attendance"),
     path("me/parent-link-request/", request_parent_link_to_player, name="request-parent-link"),
     path(
+        "me/player-parent-invitations/",
+        request_player_parent_invitation,
+        name="request-player-parent-invitation",
+    ),
+    path(
         "directors/parent-link-requests/",
         directors_pending_parent_links,
         name="directors-pending-parent-links",
@@ -87,6 +95,16 @@ urlpatterns = [
         "directors/parent-link-requests/<int:relation_id>/",
         directors_resolve_parent_link,
         name="directors-resolve-parent-link",
+    ),
+    path(
+        "managers/player-parent-invitations/",
+        pending_player_parent_invitation_reviews,
+        name="pending-player-parent-invitations",
+    ),
+    path(
+        "managers/player-parent-invitations/<int:invitation_id>/",
+        resolve_player_parent_invitation,
+        name="resolve-player-parent-invitation",
     ),
     path("notifications/", notifications, name="notifications"),
     path("notifications/read/", mark_notifications_read, name="mark-notifications-read"),

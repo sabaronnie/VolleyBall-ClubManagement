@@ -30,6 +30,8 @@ from .models import (
     PaymentSchedule,
     PlayerAccessPolicy,
     PlayerFeeRecord,
+    PlayerParentInvitation,
+    PlayerParentInvitationStatus,
     PlayerProfile,
     PlayerWeeklySkillMetric,
     RegistrationOTP,
@@ -872,6 +874,125 @@ class TeamInvitationEndpointTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("role", response.json().get("errors", {}))
+
+
+@override_settings(
+    EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+    EMAIL_HOST_USER="sender@example.com",
+    EMAIL_HOST_PASSWORD="secret",
+)
+class PlayerParentInvitationEndpointTests(TestCase):
+    def _fixture(self):
+        director = User.objects.create_user(
+            email="ppi-director@example.com",
+            password="StrongPassword123!",
+        )
+        coach = User.objects.create_user(
+            email="ppi-coach@example.com",
+            password="StrongPassword123!",
+        )
+        player = User.objects.create_user(
+            email="ppi-player@example.com",
+            password="StrongPassword123!",
+            first_name="Maya",
+            last_name="Player",
+            date_of_birth=date(2011, 5, 10),
+        )
+        parent = User.objects.create_user(
+            email="ppi-parent@example.com",
+            password="StrongPassword123!",
+            first_name="Rana",
+            last_name="Parent",
+        )
+        club = Club.objects.create_club(name="PPI Club", director=director)
+        team = Team.objects.create_team(club=club, name="PPI Team")
+        TeamMembership.objects.add_member(user=coach, team=team, role=TeamRole.COACH)
+        TeamMembership.objects.add_member(user=player, team=team, role=TeamRole.PLAYER)
+        return {
+            "director": director,
+            "coach": coach,
+            "player": player,
+            "parent": parent,
+            "club": club,
+            "team": team,
+        }
+
+    def test_player_parent_invitation_requires_only_one_approval_before_acceptance(self):
+        fx = self._fixture()
+        player_token = generate_auth_token(fx["player"])
+
+        create_response = self.client.post(
+            reverse("core:request-player-parent-invitation"),
+            data=json.dumps({"email": fx["parent"].email}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {player_token}",
+        )
+
+        self.assertEqual(create_response.status_code, 201)
+        invite = PlayerParentInvitation.objects.get(player=fx["player"], invited_email=fx["parent"].email)
+        self.assertEqual(invite.status, PlayerParentInvitationStatus.PENDING_APPROVAL)
+
+        coach_token = generate_auth_token(fx["coach"])
+        coach_response = self.client.post(
+            reverse("core:resolve-player-parent-invitation", kwargs={"invitation_id": invite.id}),
+            data=json.dumps({"action": "approve"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {coach_token}",
+        )
+        self.assertEqual(coach_response.status_code, 200)
+        invite.refresh_from_db()
+        self.assertIsNotNone(invite.coach_approved_at)
+        self.assertIsNone(invite.director_approved_at)
+        self.assertEqual(invite.status, PlayerParentInvitationStatus.PENDING_PARENT_RESPONSE)
+        self.assertEqual(len(mail.outbox), 1)
+
+        detail_response = self.client.get(reverse("core:invitation-detail", kwargs={"code": invite.code}))
+        self.assertEqual(detail_response.status_code, 200)
+        self.assertEqual(detail_response.json()["invitation"]["kind"], "parent_link")
+
+        parent_token = generate_auth_token(fx["parent"])
+        accept_response = self.client.post(
+            reverse("core:respond-team-invitation", kwargs={"code": invite.code}),
+            data=json.dumps({"action": "accept"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {parent_token}",
+        )
+        self.assertEqual(accept_response.status_code, 200)
+        invite.refresh_from_db()
+        self.assertEqual(invite.status, PlayerParentInvitationStatus.ACCEPTED)
+        self.assertTrue(
+            ParentPlayerRelation.objects.approved().filter(parent=fx["parent"], player=fx["player"]).exists()
+        )
+
+    def test_player_parent_invitation_third_parent_is_rejected(self):
+        fx = self._fixture()
+        other_parent = User.objects.create_user(
+            email="ppi-parent-2@example.com",
+            password="StrongPassword123!",
+        )
+        ParentPlayerRelation.objects.link(
+            parent=fx["parent"],
+            player=fx["player"],
+            approval_status=ParentLinkApprovalStatus.APPROVED,
+        )
+        PlayerParentInvitation.objects.create(
+            player=fx["player"],
+            requested_by=fx["player"],
+            invited_parent=other_parent,
+            invited_email=other_parent.email,
+            status=PlayerParentInvitationStatus.PENDING_APPROVAL,
+        )
+        player_token = generate_auth_token(fx["player"])
+
+        response = self.client.post(
+            reverse("core:request-player-parent-invitation"),
+            data=json.dumps({"email": "ppi-parent-3@example.com"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {player_token}",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("email", response.json().get("errors", {}))
 
 
 class AddTeamMemberEndpointTests(TestCase):
@@ -4722,6 +4843,9 @@ class MemberHubDashboardTests(TestCase):
         self.assertTrue(data["progress"]["has_weekly_metrics"])
         self.assertEqual(len(data["progress"]["weeks"]), 2)
         self.assertAlmostEqual(data["progress"]["summary"]["serve"], 72.0)
+        self.assertTrue(data["parent_access"]["can_manage"])
+        self.assertTrue(data["parent_access"]["minor_locked"])
+        self.assertEqual(len(data["parent_access"]["linked_parents"]), 1)
 
     def test_parent_sees_linked_child_default_first_id(self):
         fx = self._fixture()

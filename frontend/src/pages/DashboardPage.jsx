@@ -840,13 +840,14 @@ export default function DashboardPage({
             <DirectorDashboardDropdown
               id="dashboard-users"
               title="Users"
-              description="Manage roles and review parent-child link requests."
+              description="Manage roles and review your club directory."
               isOpen={openDirectorSection === "users"}
               onToggle={() => toggleDirectorSection("users")}
             >
               <DirectorUserManagementPage
                 embedded
                 onOpenPayments={() => openDirectorSectionPanel("payments")}
+                showParentLinkRequests={false}
               />
             </DirectorDashboardDropdown>
 

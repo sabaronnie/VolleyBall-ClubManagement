@@ -63,6 +63,7 @@ export default function ClubWorkspaceLayout({
   teamOptions = [],
   activeTeamId = "",
   onChangeTeam = null,
+  teamSelectorVariant = "custom",
   includeAllTeamsOption = true,
   /** Show "My sessions" when the user has at least one player team (roster membership). */
   showPlayerSessionsTab = false,
@@ -179,6 +180,7 @@ export default function ClubWorkspaceLayout({
             teams={teamOptions}
             activeTeamId={activeTeamId}
             onChangeTeam={onChangeTeam}
+            variant={teamSelectorVariant}
             includeAllTeamsOption={includeAllTeamsOption}
           />
         }
@@ -384,6 +386,7 @@ export function ClubTeamSelect({
   teams,
   activeTeamId,
   onChangeTeam,
+  variant = "custom",
   includeAllTeamsOption = true,
 }) {
   const menuId = useId();
@@ -457,6 +460,28 @@ export function ClubTeamSelect({
     }
     onChangeTeam(option.team);
   };
+
+  if (variant === "native") {
+    return (
+      <label className="vc-dash-team-field">
+        <span className="vc-dash-team-field__label">Team</span>
+        <select
+          className="vc-dash-team-select"
+          value={selectedOption?.value ?? ""}
+          onChange={(event) => {
+            const option = options.find((item) => item.value === event.target.value) || options[0];
+            handleSelect(option);
+          }}
+        >
+          {options.map((option) => (
+            <option key={option.key} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+    );
+  }
 
   return (
     <div className="vc-dash-team-field vc-team-dropdown" ref={wrapRef}>

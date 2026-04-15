@@ -17,6 +17,8 @@ from .coach_dashboard import _format_time_12h
 from .models import (
     Notification,
     ParentPlayerRelation,
+    PlayerParentInvitation,
+    PlayerParentInvitationStatus,
     PlayerFeeRecord,
     PlayerWeeklySkillMetric,
     TeamMembership,
@@ -25,6 +27,7 @@ from .models import (
     TrainingSessionConfirmation,
 )
 from .payment_views import _family_overall_status, _serialize_fee_record
+from .permissions import is_user_adult
 
 User = get_user_model()
 
@@ -185,6 +188,78 @@ def _progress_payload(focus: User, progress_team_id: Optional[int]) -> dict[str,
     }
 
 
+def _linked_parent_rows_for_player(player: User) -> list[dict[str, Any]]:
+    rows = (
+        ParentPlayerRelation.objects.approved()
+        .filter(player=player)
+        .select_related("parent")
+        .order_by("parent__first_name", "parent__last_name", "parent__email", "id")
+    )
+    return [
+        {
+            "id": rel.parent_id,
+            "email": rel.parent.email,
+            "first_name": rel.parent.first_name,
+            "last_name": rel.parent.last_name,
+            "is_legal_guardian": rel.is_legal_guardian,
+        }
+        for rel in rows
+    ]
+
+
+def _pending_parent_invites_for_player(player: User) -> list[dict[str, Any]]:
+    pending_relations = (
+        ParentPlayerRelation.objects.pending()
+        .filter(player=player)
+        .select_related("parent")
+        .order_by("-id")
+    )
+    invites = (
+        PlayerParentInvitation.objects.filter(
+            player=player,
+            status__in=[
+                PlayerParentInvitationStatus.PENDING_APPROVAL,
+                PlayerParentInvitationStatus.PENDING_PARENT_RESPONSE,
+            ],
+        )
+        .order_by("-created_at", "-id")
+    )
+    out: list[dict[str, Any]] = []
+    for rel in pending_relations:
+        out.append(
+            {
+                "id": f"relation-{rel.id}",
+                "email": rel.parent.email,
+                "status": "pending_parent_link",
+                "director_approved": False,
+                "coach_approved": False,
+                "waiting_for": ["director"],
+                "invited_at": None,
+                "expires_at": None,
+            }
+        )
+    for invite in invites:
+        waiting_for = []
+        if invite.status == PlayerParentInvitationStatus.PENDING_APPROVAL:
+            if invite.director_approved_at is None:
+                waiting_for.append("director")
+            if invite.coach_approved_at is None:
+                waiting_for.append("coach")
+        out.append(
+            {
+                "id": invite.id,
+                "email": invite.invited_email,
+                "status": invite.status,
+                "director_approved": invite.director_approved_at is not None,
+                "coach_approved": invite.coach_approved_at is not None,
+                "waiting_for": waiting_for,
+                "invited_at": invite.invited_at.isoformat() if invite.invited_at else None,
+                "expires_at": invite.expires_at.isoformat() if invite.expires_at else None,
+            }
+        )
+    return out
+
+
 def build_member_hub_dashboard_payload(
     viewer: User,
     *,
@@ -259,6 +334,15 @@ def build_member_hub_dashboard_payload(
         },
         "coach_names": coach_names,
         "coach_display": ", ".join(coach_names) if coach_names else None,
+    }
+    linked_parents = _linked_parent_rows_for_player(focus)
+    pending_parent_invites = _pending_parent_invites_for_player(focus)
+    base["parent_access"] = {
+        "can_manage": viewer.id == focus.id,
+        "max_parents": 2,
+        "linked_parents": linked_parents,
+        "pending_requests": pending_parent_invites,
+        "minor_locked": not is_user_adult(focus),
     }
 
     fee_lines = list(

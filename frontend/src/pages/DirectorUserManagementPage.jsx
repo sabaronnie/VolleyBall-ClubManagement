@@ -7,7 +7,10 @@ import {
   fetchCurrentUser,
   fetchDirectorPendingParentLinks,
   fetchDirectorUserDirectory,
+  fetchPendingPlayerParentInvitations,
+  resolvePlayerParentInvitation,
 } from "../api";
+import InlineDropdown from "../components/InlineDropdown";
 
 const AUTH_TOKEN_KEY = "netup.auth.token";
 
@@ -105,6 +108,7 @@ export default function DirectorUserManagementPage({
   embedded = false,
   onOpenPayments = null,
   focusedTeamId = null,
+  showParentLinkRequests = true,
 }) {
   const [allUsers, setAllUsers] = useState([]);
   const [directoryCount, setDirectoryCount] = useState(0);
@@ -115,6 +119,7 @@ export default function DirectorUserManagementPage({
   const [canManageRoles, setCanManageRoles] = useState(false);
   const [canRemovePlayers, setCanRemovePlayers] = useState(false);
   const [showParentLinks, setShowParentLinks] = useState(false);
+  const [showPlayerParentInvites, setShowPlayerParentInvites] = useState(false);
   const [directoryScopeKind, setDirectoryScopeKind] = useState("club");
   const [directoryHeading, setDirectoryHeading] = useState("All people in your club");
   const [directoryDescription, setDirectoryDescription] = useState(
@@ -130,6 +135,10 @@ export default function DirectorUserManagementPage({
   const [loadingParentLinks, setLoadingParentLinks] = useState(true);
   const [parentLinkError, setParentLinkError] = useState("");
   const [parentLinkSuccess, setParentLinkSuccess] = useState("");
+  const [playerParentInviteRows, setPlayerParentInviteRows] = useState([]);
+  const [loadingPlayerParentInvites, setLoadingPlayerParentInvites] = useState(true);
+  const [playerParentInviteError, setPlayerParentInviteError] = useState("");
+  const [playerParentInviteSuccess, setPlayerParentInviteSuccess] = useState("");
   const [teamFilter, setTeamFilter] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [directorySuccess, setDirectorySuccess] = useState("");
@@ -154,7 +163,8 @@ export default function DirectorUserManagementPage({
       const coachView = !directorView && (me.coached_teams || []).length > 0;
       setCanManageRoles(directorView);
       setCanRemovePlayers(directorView || coachView);
-      setShowParentLinks(directorView);
+      setShowParentLinks(directorView && showParentLinkRequests);
+      setShowPlayerParentInvites(directorView || coachView);
       setDirectoryTeams(directorView ? (me.director_teams || []) : (me.coached_teams || []));
       const payload = await fetchDirectorUserDirectory(800, { teamId: focusedTeamId });
       const rows = payload.users || [];
@@ -205,7 +215,7 @@ export default function DirectorUserManagementPage({
     } finally {
       setLoadingDirectory(false);
     }
-  }, [focusedTeamId]);
+  }, [focusedTeamId, showParentLinkRequests]);
 
   const availableTeamFilters = useMemo(() => {
     const names = new Set();
@@ -230,6 +240,17 @@ export default function DirectorUserManagementPage({
     });
     return Array.from(names).sort((left, right) => left.localeCompare(right));
   }, [allUsers, directoryTeams]);
+
+  const teamFilterOptions = useMemo(
+    () => [
+      { value: "", label: "All teams" },
+      ...availableTeamFilters.map((teamShortName) => ({
+        value: teamShortName,
+        label: teamShortName,
+      })),
+    ],
+    [availableTeamFilters],
+  );
 
   const filteredUsers = useMemo(() => {
     const normalizedTeam = teamFilter.trim().toLowerCase();
@@ -264,6 +285,20 @@ export default function DirectorUserManagementPage({
     }
   }, []);
 
+  const loadPlayerParentInvites = useCallback(async () => {
+    setLoadingPlayerParentInvites(true);
+    setPlayerParentInviteError("");
+    try {
+      const payload = await fetchPendingPlayerParentInvitations();
+      setPlayerParentInviteRows(payload.requests || []);
+    } catch (err) {
+      setPlayerParentInviteRows([]);
+      setPlayerParentInviteError(err.message || "Could not load player parent invitations.");
+    } finally {
+      setLoadingPlayerParentInvites(false);
+    }
+  }, []);
+
   useEffect(() => {
     void loadDirectory();
   }, [loadDirectory]);
@@ -277,6 +312,16 @@ export default function DirectorUserManagementPage({
     setParentLinkError("");
     setLoadingParentLinks(false);
   }, [loadParentLinks, showParentLinks]);
+
+  useEffect(() => {
+    if (showPlayerParentInvites) {
+      void loadPlayerParentInvites();
+      return;
+    }
+    setPlayerParentInviteRows([]);
+    setPlayerParentInviteError("");
+    setLoadingPlayerParentInvites(false);
+  }, [loadPlayerParentInvites, showPlayerParentInvites]);
 
   useEffect(() => {
     return () => {
@@ -352,6 +397,25 @@ export default function DirectorUserManagementPage({
     }
   };
 
+  const onResolvePlayerParentInvite = async (invitationId, action) => {
+    const key = `player-parent-invite-${invitationId}-${action}`;
+    setActionKey(key);
+    setPlayerParentInviteError("");
+    setPlayerParentInviteSuccess("");
+    try {
+      const res = await resolvePlayerParentInvitation(invitationId, action);
+      setPlayerParentInviteSuccess(
+        res?.message || (action === "approve" ? "Approval saved successfully." : "Request rejected."),
+      );
+      await loadPlayerParentInvites();
+    } catch (err) {
+      setPlayerParentInviteSuccess("");
+      setPlayerParentInviteError(err.message || "Could not update player parent invitation.");
+    } finally {
+      setActionKey("");
+    }
+  };
+
   const onRemovePlayer = async (row) => {
     const rowTeams = Array.isArray(row?.teams) ? row.teams : [];
     const targetTeamId =
@@ -410,6 +474,8 @@ export default function DirectorUserManagementPage({
       {directorySuccess ? <div className="vc-director-success">{directorySuccess}</div> : null}
       {parentLinkError ? <div className="vc-director-error">{parentLinkError}</div> : null}
       {parentLinkSuccess ? <div className="vc-director-success">{parentLinkSuccess}</div> : null}
+      {playerParentInviteError ? <div className="vc-director-error">{playerParentInviteError}</div> : null}
+      {playerParentInviteSuccess ? <div className="vc-director-success">{playerParentInviteSuccess}</div> : null}
 
       {showParentLinks ? (
         <section className="vc-director-section">
@@ -477,7 +543,7 @@ export default function DirectorUserManagementPage({
                             <td>
                               <button
                                 type="button"
-                                className="vc-du-action"
+                                className="vc-du-action vc-du-action--success"
                                 disabled={busyA || busyR}
                                 onClick={() => void onResolveParentLink(rid, "approve")}
                               >
@@ -485,7 +551,7 @@ export default function DirectorUserManagementPage({
                               </button>
                               <button
                                 type="button"
-                                className="vc-du-action"
+                                className="vc-du-action vc-du-action--danger"
                                 disabled={busyA || busyR}
                                 onClick={() => void onResolveParentLink(rid, "reject")}
                               >
@@ -500,6 +566,99 @@ export default function DirectorUserManagementPage({
                 </table>
               </div>
             )}
+        </section>
+      ) : null}
+
+      {showPlayerParentInvites ? (
+        <section className="vc-director-section">
+          <h2 className="vc-panel-title">Player parent invitations</h2>
+          <p className="vc-modal__muted" style={{ marginTop: 0 }}>
+            Players can request parent access by email. A coach or a club director can approve before the invitation
+            email is sent.
+          </p>
+          {loadingPlayerParentInvites ? (
+            <p className="vc-director-loading">Loading player parent invitations…</p>
+          ) : (
+            <div className="vc-director-table-wrap">
+              <table className="vc-director-table">
+                <thead>
+                  <tr>
+                    <th>Player</th>
+                    <th>Parent email</th>
+                    <th>Club / team</th>
+                    <th>Approvals</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {playerParentInviteRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} style={{ color: "#6b7580", fontWeight: 600 }}>
+                        No pending player parent invitations.
+                      </td>
+                    </tr>
+                  ) : (
+                    playerParentInviteRows.map((row) => {
+                      const req = row.request || {};
+                      const playerUser = row.player || req.player || {};
+                      const rid = req.id;
+                      const busyApprove = actionKey === `player-parent-invite-${rid}-approve`;
+                      const busyReject = actionKey === `player-parent-invite-${rid}-reject`;
+                      const playerLabel =
+                        [playerUser.first_name, playerUser.last_name].filter(Boolean).join(" ").trim() ||
+                        playerUser.email ||
+                        "—";
+                      const approvalBits = [];
+                      if (req.coach_approved) {
+                        approvalBits.push("Coach approved");
+                      }
+                      if (req.director_approved) {
+                        approvalBits.push("Director approved");
+                      }
+                      if (!approvalBits.length) {
+                        approvalBits.push("Waiting for coach or director");
+                      }
+                      return (
+                        <tr key={rid}>
+                          <td>
+                            <div style={{ fontWeight: 600 }}>{playerLabel}</div>
+                            <div className="vc-modal__muted" style={{ fontSize: "0.85rem" }}>
+                              ID {playerUser.id} {playerUser.email ? `· ${playerUser.email}` : ""}
+                            </div>
+                          </td>
+                          <td>{req.invited_email || "—"}</td>
+                          <td>
+                            {row.club_name || req.club_name || "—"}
+                            <br />
+                            <span className="vc-modal__muted">{row.team_name || req.team?.name || "—"}</span>
+                          </td>
+                          <td>{approvalBits.join(" · ")}</td>
+                          <td>
+                            <button
+                              type="button"
+                              className="vc-du-action vc-du-action--success"
+                              disabled={busyApprove || busyReject}
+                              onClick={() => void onResolvePlayerParentInvite(rid, "approve")}
+                            >
+                              {busyApprove ? "…" : "Approve"}
+                            </button>
+                            <button
+                              type="button"
+                              className="vc-du-action vc-du-action--danger"
+                              disabled={busyApprove || busyReject}
+                              onClick={() => void onResolvePlayerParentInvite(rid, "reject")}
+                            >
+                              {busyReject ? "…" : "Reject"}
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
         </section>
       ) : null}
 
@@ -520,18 +679,14 @@ export default function DirectorUserManagementPage({
           <div className="vc-director-directory-filters">
             <label className="vc-director-directory-filters__field">
               <span>Team</span>
-              <select
-                className="vc-director-modal__select"
+              <InlineDropdown
                 value={teamFilter}
-                onChange={(event) => setTeamFilter(event.target.value)}
-              >
-                <option value="">All teams</option>
-                {availableTeamFilters.map((teamShortName) => (
-                  <option key={teamShortName} value={teamShortName}>
-                    {teamShortName}
-                  </option>
-                ))}
-              </select>
+                onChange={setTeamFilter}
+                options={teamFilterOptions}
+                ariaLabel="Filter directory by team"
+                className="vc-inline-dropdown--directory-filter"
+                placeholder="All teams"
+              />
             </label>
             <label className="vc-director-directory-filters__field">
               <span>Search</span>
@@ -691,7 +846,7 @@ export default function DirectorUserManagementPage({
                                 ) : null}
                                 <button
                                   type="button"
-                                  className="vc-du-action"
+                                  className="vc-du-action vc-du-action--danger"
                                   disabled={!canRemovePlayers || removePlayerDisabled}
                                   title={removePlayerTitle}
                                   onClick={() => void onRemovePlayer(u)}

@@ -348,6 +348,7 @@ export default function MemberHubPage() {
       teamOptions={showCoachDashboard ? coachTeamsManaging : []}
       activeTeamId={showCoachDashboard && resolvedCoachTeamId != null ? String(resolvedCoachTeamId) : ""}
       onChangeTeam={showCoachDashboard ? handleCoachTeamSelect : null}
+      teamSelectorVariant={showCoachDashboard ? "native" : "custom"}
       includeAllTeamsOption={showCoachDashboard && coachTeamsManaging.length > 1}
     >
       <section

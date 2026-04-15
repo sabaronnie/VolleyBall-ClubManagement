@@ -11,6 +11,7 @@ from .member_progress import PlayerWeeklySkillMetric
 from .membership import ClubMembership, ClubRole, TeamMembership, TeamRole
 from .notification import Notification
 from .parent_player_relation import ParentLinkApprovalStatus, ParentPlayerRelation
+from .player_parent_invitation import PlayerParentInvitation, PlayerParentInvitationStatus
 from .player_access_policy import PlayerAccessPolicy
 from .player_profile import PlayerProfile
 from .registration_otp import RegistrationOTP

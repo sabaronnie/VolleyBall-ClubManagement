@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { fetchMemberDashboard } from "../../api";
+import { fetchMemberDashboard, removeParentAssociation, requestPlayerParentInvitation } from "../../api";
 import { navigate } from "../../navigation";
 import MyFeesPage from "../../pages/MyFeesPage";
 
@@ -382,12 +382,161 @@ function PlayerOverviewCard({ focus, profile, payment, club, unread }) {
   );
 }
 
+function formatPendingParentRequestStatus(row) {
+  const waitingFor = Array.isArray(row?.waiting_for) ? row.waiting_for : [];
+  if (row?.status === "pending_parent_response") {
+    return "Invitation sent";
+  }
+  if (waitingFor.length === 2) {
+    return "Waiting for coach or director approval";
+  }
+  if (waitingFor.includes("coach")) {
+    return "Waiting for coach approval";
+  }
+  if (waitingFor.includes("director")) {
+    return "Waiting for director approval";
+  }
+  return "Pending";
+}
+
+function PlayerParentAccessCard({
+  focus,
+  parentAccess,
+  inviteEmail,
+  onInviteEmailChange,
+  onSubmitInvite,
+  onRemoveParent,
+  inviteBusy,
+  inviteMessage,
+  inviteError,
+  removeBusyParentId,
+}) {
+  if (!focus || !parentAccess?.can_manage) {
+    return null;
+  }
+
+  const linkedParents = Array.isArray(parentAccess?.linked_parents) ? parentAccess.linked_parents : [];
+  const pendingRequests = Array.isArray(parentAccess?.pending_requests) ? parentAccess.pending_requests : [];
+  const maxParents = Number(parentAccess?.max_parents || 2);
+  const activeCount = linkedParents.length + pendingRequests.length;
+  const atLimit = activeCount >= maxParents;
+  const minorLocked = Boolean(parentAccess?.minor_locked);
+
+  return (
+    <section className="vc-panel vc-panel--dashboard vc-panel--director-white vc-player-parent-access">
+      <div className="vc-dashboard-panel-head vc-player-dash-panel__head">
+        <div>
+          <p className="vc-dashboard-panel-head__eyebrow">Family Access</p>
+          <h2 className="vc-panel-title">Parent Access</h2>
+          <p className="vc-player-dash-panel__sub">
+            Add up to {maxParents} parents by email. A coach and club director must approve before the invitation is sent.
+          </p>
+        </div>
+      </div>
+
+      {minorLocked ? (
+        <p className="vc-modal__muted" style={{ marginTop: "0.9rem" }}>
+          Players under 18 cannot remove parent access once it is linked.
+        </p>
+      ) : (
+        <p className="vc-modal__muted" style={{ marginTop: "0.9rem" }}>
+          You can remove an approved parent from this account because your date of birth marks you as 18+.
+        </p>
+      )}
+
+      {inviteMessage ? <div className="vc-director-success">{inviteMessage}</div> : null}
+      {inviteError ? <div className="vc-director-error">{inviteError}</div> : null}
+
+      <form className="vc-player-parent-access__form" onSubmit={onSubmitInvite}>
+        <label className="vc-player-parent-access__field">
+          <span>Parent email</span>
+          <input
+            className="vc-director-modal__select"
+            type="email"
+            value={inviteEmail}
+            onChange={(event) => onInviteEmailChange(event.target.value)}
+            placeholder="parent@example.com"
+            disabled={inviteBusy || atLimit}
+          />
+        </label>
+        <button type="submit" className="vc-director-actions-bar__btn" disabled={inviteBusy || atLimit}>
+          {inviteBusy ? "Sending…" : "Request parent"}
+        </button>
+      </form>
+
+      {atLimit ? (
+        <p className="vc-modal__muted" style={{ marginTop: "0.75rem" }}>
+          You already have the maximum of {maxParents} linked or pending parent slots on this account.
+        </p>
+      ) : null}
+
+      <div className="vc-player-parent-access__lists">
+        <div className="vc-player-parent-access__list">
+          <h3>Linked parents</h3>
+          {linkedParents.length ? (
+            <ul className="vc-profile-list">
+              {linkedParents.map((parent) => {
+                const parentLabel =
+                  [parent.first_name, parent.last_name].filter(Boolean).join(" ").trim() || parent.email;
+                const removeBusy = removeBusyParentId === parent.id;
+                return (
+                  <li key={parent.id} className="vc-player-parent-access__item">
+                    <div>
+                      <strong>{parentLabel}</strong>
+                      <div className="vc-modal__muted">{parent.email}</div>
+                    </div>
+                    {!minorLocked ? (
+                      <button
+                        type="button"
+                        className="vc-director-actions-bar__btn vc-player-parent-access__remove"
+                        disabled={removeBusy}
+                        onClick={() => onRemoveParent(parent.id)}
+                      >
+                        {removeBusy ? "Removing…" : "Remove"}
+                      </button>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <p className="vc-modal__muted">No linked parents yet.</p>
+          )}
+        </div>
+
+        <div className="vc-player-parent-access__list">
+          <h3>Pending requests</h3>
+          {pendingRequests.length ? (
+            <ul className="vc-profile-list">
+              {pendingRequests.map((request) => (
+                <li key={request.id} className="vc-player-parent-access__item">
+                  <div>
+                    <strong>{request.email}</strong>
+                    <div className="vc-modal__muted">{formatPendingParentRequestStatus(request)}</div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="vc-modal__muted">No pending parent requests.</p>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export default function MemberPlayerDashboard() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [childFilter, setChildFilter] = useState(null);
   const [feesDropdownOpen, setFeesDropdownOpen] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteBusy, setInviteBusy] = useState(false);
+  const [inviteMessage, setInviteMessage] = useState("");
+  const [inviteError, setInviteError] = useState("");
+  const [removeBusyParentId, setRemoveBusyParentId] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -428,8 +577,17 @@ export default function MemberPlayerDashboard() {
   const club = data?.club_summary;
   const qa = data?.quick_actions || {};
   const focus = data?.focus_player;
+  const parentAccess = data?.parent_access;
   const focusDisplayName =
     profile?.display_name || [focus?.first_name, focus?.last_name].filter(Boolean).join(" ").trim() || focus?.email || "";
+
+  useEffect(() => {
+    setInviteEmail("");
+    setInviteBusy(false);
+    setInviteMessage("");
+    setInviteError("");
+    setRemoveBusyParentId(null);
+  }, [focus?.id]);
 
   const summaryItems = useMemo(() => {
     if (!focus) {
@@ -469,6 +627,47 @@ export default function MemberPlayerDashboard() {
 
     return actions;
   }, [actionTeamId, focus, qa.confirm_attendance_mode, qa.confirm_attendance_path]);
+
+  const onSubmitInvite = async (event) => {
+    event.preventDefault();
+    const normalizedEmail = inviteEmail.trim().toLowerCase();
+    if (!normalizedEmail) {
+      setInviteError("Enter a parent email address.");
+      setInviteMessage("");
+      return;
+    }
+    setInviteBusy(true);
+    setInviteError("");
+    setInviteMessage("");
+    try {
+      const res = await requestPlayerParentInvitation(normalizedEmail);
+      setInviteMessage(res?.message || "Parent request submitted.");
+      setInviteEmail("");
+      await load();
+    } catch (err) {
+      setInviteError(err.message || "Could not request parent access.");
+    } finally {
+      setInviteBusy(false);
+    }
+  };
+
+  const onRemoveParent = async (parentId) => {
+    if (!focus?.id) {
+      return;
+    }
+    setRemoveBusyParentId(parentId);
+    setInviteError("");
+    setInviteMessage("");
+    try {
+      const res = await removeParentAssociation(focus.id, parentId);
+      setInviteMessage(res?.message || "Parent access removed.");
+      await load();
+    } catch (err) {
+      setInviteError(err.message || "Could not remove parent access.");
+    } finally {
+      setRemoveBusyParentId(null);
+    }
+  };
 
   return (
     <div className="vc-coach-dash-body vc-player-dash-body">
@@ -530,6 +729,19 @@ export default function MemberPlayerDashboard() {
             payment={payment}
             club={club}
             unread={unread}
+          />
+
+          <PlayerParentAccessCard
+            focus={focus}
+            parentAccess={parentAccess}
+            inviteEmail={inviteEmail}
+            onInviteEmailChange={setInviteEmail}
+            onSubmitInvite={onSubmitInvite}
+            onRemoveParent={onRemoveParent}
+            inviteBusy={inviteBusy}
+            inviteMessage={inviteMessage}
+            inviteError={inviteError}
+            removeBusyParentId={removeBusyParentId}
           />
         </>
       ) : null}
