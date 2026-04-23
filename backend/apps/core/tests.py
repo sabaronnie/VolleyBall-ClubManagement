@@ -4631,6 +4631,90 @@ class SharedMatchRequestFlowTests(TestCase):
         self.assertEqual(final_score["tournament_label"], "Friendly")
 
 
+class TeamStandingsApiTests(TestCase):
+    def setUp(self):
+        self.director = User.objects.create_user(email="standings-dir@example.com", password="StrongPassword123!")
+        self.club = Club.objects.create_club(name="Standings Club", director=self.director)
+        self.team_a = Team.objects.create(club=self.club, name="Team A")
+        self.team_b = Team.objects.create(club=self.club, name="Team B")
+        self.coach = User.objects.create_user(email="standings-coach@example.com", password="StrongPassword123!")
+        self.player = User.objects.create_user(email="standings-player@example.com", password="StrongPassword123!")
+        self.parent = User.objects.create_user(email="standings-parent@example.com", password="StrongPassword123!")
+        self.outsider = User.objects.create_user(email="standings-outsider@example.com", password="StrongPassword123!")
+        self.team_b_player = User.objects.create_user(email="standings-b@example.com", password="StrongPassword123!")
+
+        TeamMembership.objects.add_member(user=self.coach, team=self.team_a, role=TeamRole.COACH)
+        TeamMembership.objects.add_member(user=self.player, team=self.team_a, role=TeamRole.PLAYER)
+        TeamMembership.objects.add_member(user=self.team_b_player, team=self.team_b, role=TeamRole.PLAYER)
+        ParentPlayerRelation.objects.link(
+            parent=self.parent,
+            player=self.player,
+            approval_status=ParentLinkApprovalStatus.APPROVED,
+        )
+
+        today = timezone.localdate()
+        shared_win = TrainingSession.objects.create(
+            team=self.team_a,
+            created_by=self.coach,
+            title="Shared match",
+            session_type=TrainingSession.SessionType.MATCH,
+            scheduled_date=today - timedelta(days=7),
+            start_time=time(18, 0),
+            end_time=time(19, 30),
+            opponent=self.team_b.name,
+            opponent_team=self.team_b,
+            match_type=TrainingSession.MatchType.LEAGUE,
+            match_request_status=TrainingSession.MatchRequestStatus.ACCEPTED,
+            match_ended_at=timezone.now() - timedelta(days=7),
+        )
+        MatchPlayerStat.objects.create(training_session=shared_win, player=self.player, points_scored=25)
+        MatchPlayerStat.objects.create(training_session=shared_win, player=self.team_b_player, points_scored=20)
+
+        external_loss = TrainingSession.objects.create(
+            team=self.team_a,
+            created_by=self.coach,
+            title="External match",
+            session_type=TrainingSession.SessionType.MATCH,
+            scheduled_date=today - timedelta(days=3),
+            start_time=time(18, 0),
+            end_time=time(19, 30),
+            opponent="Rivals",
+            match_type=TrainingSession.MatchType.FRIENDLY,
+            match_ended_at=timezone.now() - timedelta(days=3),
+            opponent_final_score=25,
+        )
+        MatchPlayerStat.objects.create(training_session=external_loss, player=self.player, points_scored=18)
+
+    def test_director_can_view_team_standings(self):
+        response = self.client.get(
+            reverse("core:team-standings", kwargs={"team_id": self.team_a.id}),
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(self.director)}",
+        )
+        self.assertEqual(response.status_code, 200)
+        standings = response.json()["standings"]
+        self.assertEqual(standings["wins"], 1)
+        self.assertEqual(standings["losses"], 1)
+        self.assertEqual(standings["points_for"], 43)
+        self.assertEqual(standings["points_against"], 45)
+        self.assertEqual(standings["point_differential"], -2)
+        self.assertEqual(standings["matches_played"], 2)
+
+    def test_player_parent_and_coach_can_view_team_standings(self):
+        for user in (self.player, self.parent, self.coach):
+            response = self.client.get(
+                reverse("core:team-standings", kwargs={"team_id": self.team_a.id}),
+                HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(user)}",
+            )
+            self.assertEqual(response.status_code, 200)
+
+    def test_unrelated_user_cannot_view_team_standings(self):
+        response = self.client.get(
+            reverse("core:team-standings", kwargs={"team_id": self.team_a.id}),
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(self.outsider)}",
+        )
+        self.assertEqual(response.status_code, 403)
+
+
 class RemindUnconfirmedAttendanceTests(TestCase):
     """Targeted session reminders: only unconfirmed roster; no parents for past/cancelled."""
 

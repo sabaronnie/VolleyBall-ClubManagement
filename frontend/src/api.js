@@ -611,6 +611,10 @@ export async function fetchCoachTeamDashboard(teamId) {
   return authenticatedGet(`/api/teams/${teamId}/coach-dashboard/`);
 }
 
+export async function fetchTeamStandings(teamId) {
+  return authenticatedGet(`/api/teams/${teamId}/standings/`);
+}
+
 export async function directorAddTeamMember(teamId, body) {
   return authenticatedJson(`/api/teams/${teamId}/members/add/`, "POST", body);
 }

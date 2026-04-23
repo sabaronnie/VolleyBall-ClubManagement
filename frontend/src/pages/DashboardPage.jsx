@@ -16,6 +16,7 @@ import DirectorAttendanceTrendCard from "../components/director/DirectorAttendan
 import DirectorClubSummaryCard from "../components/director/DirectorClubSummaryCard";
 import DirectorPaymentsOverviewCard from "../components/director/DirectorPaymentsOverviewCard";
 import DirectorSummaryRow from "../components/director/DirectorSummaryRow";
+import TeamStandingsCard from "../components/TeamStandingsCard";
 import { navigate } from "../navigation";
 import CoachPaymentsPage from "./CoachPaymentsPage";
 import DirectorPaymentLogsPage from "./DirectorPaymentLogsPage";
@@ -848,6 +849,10 @@ export default function DashboardPage({
           </div>
 
           <div className="vc-dash-bottom vc-dash-bottom--dashboard">
+            <TeamStandingsCard
+              activeTeamId={activeTeamId}
+              emptySelectionMessage="Select a team in the focus dropdown to load standings."
+            />
             <DirectorClubSummaryCard
               loading={loading}
               clubId={clubId}
@@ -986,6 +991,10 @@ export default function DashboardPage({
           </div>
 
           <div className="vc-dash-bottom vc-dash-bottom--dashboard">
+            <TeamStandingsCard
+              activeTeamId={activeTeamId}
+              emptySelectionMessage="Select a team in the focus dropdown to load standings."
+            />
             <DirectorClubSummaryCard
               loading={coachOverviewLoading}
               clubId={activeCoachTeam?.id || null}

@@ -29,6 +29,29 @@ function setActiveTeamAndNavigate(teamId, path) {
   navigate(path);
 }
 
+function buildMemberFocusTeams(me) {
+  const byId = new Map();
+
+  const addTeam = (team) => {
+    if (!team?.id || byId.has(team.id)) {
+      return;
+    }
+    byId.set(team.id, {
+      id: team.id,
+      name: team.name,
+      clubId: team.club_id || null,
+      clubName: team.club_name || "",
+      clubShortName: team.club_short_name || "",
+      canManageSchedule: Boolean(team.can_manage_schedule),
+      canManageTraining: Boolean(team.can_manage_training),
+    });
+  };
+
+  (me?.player_teams || []).forEach(addTeam);
+  (me?.children || []).forEach((child) => (child.teams || []).forEach(addTeam));
+  return Array.from(byId.values());
+}
+
 export default function MemberHubPage() {
   const [me, setMe] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -44,6 +67,7 @@ export default function MemberHubPage() {
   /** teamId -> { playerCount, coachCount } */
   const [coachTeamRoster, setCoachTeamRoster] = useState({});
   const [coachDashTeamId, setCoachDashTeamId] = useState("");
+  const [memberFocusTeamId, setMemberFocusTeamId] = useState("");
   const [coachDashData, setCoachDashData] = useState(null);
   const [coachDashLoading, setCoachDashLoading] = useState(false);
   const [coachDashError, setCoachDashError] = useState("");
@@ -83,6 +107,7 @@ export default function MemberHubPage() {
       return undefined;
     }
     setCoachDashTeamId(localStorage.getItem(ACTIVE_TEAM_KEY) || "");
+    setMemberFocusTeamId(localStorage.getItem(ACTIVE_TEAM_KEY) || "");
     return undefined;
   }, [me]);
 
@@ -91,6 +116,7 @@ export default function MemberHubPage() {
       const tid = e.detail?.teamId;
       if (tid != null) {
         setCoachDashTeamId(String(tid));
+        setMemberFocusTeamId(String(tid));
       }
     };
     window.addEventListener("netup-set-active-team", onSetTeam);
@@ -115,6 +141,7 @@ export default function MemberHubPage() {
     () => (me?.coached_teams || []).filter((t) => t.can_manage_training),
     [me?.coached_teams],
   );
+  const memberFocusTeams = useMemo(() => buildMemberFocusTeams(me), [me]);
 
   const resolvedCoachTeamId = useMemo(() => {
     if (!coachTeamsManaging.length) {
@@ -129,11 +156,28 @@ export default function MemberHubPage() {
   }, [coachTeamsManaging, coachDashTeamId]);
 
   const showCoachDashboard = coachTeamsManaging.length > 0;
+  const resolvedMemberFocusTeamId = useMemo(() => {
+    if (!memberFocusTeams.length) {
+      return "";
+    }
+    const ids = new Set(memberFocusTeams.map((team) => String(team.id)));
+    if (memberFocusTeamId && (memberFocusTeamId === "__all__" || ids.has(memberFocusTeamId))) {
+      return memberFocusTeamId;
+    }
+    return String(memberFocusTeams[0].id);
+  }, [memberFocusTeamId, memberFocusTeams]);
 
   const handleCoachTeamSelect = (team) => {
     const id = String(team.id);
     localStorage.setItem(ACTIVE_TEAM_KEY, id);
     setCoachDashTeamId(id);
+    window.dispatchEvent(new CustomEvent("netup-set-active-team", { detail: { teamId: id } }));
+  };
+
+  const handleMemberFocusTeamSelect = (team) => {
+    const id = String(team.id);
+    localStorage.setItem(ACTIVE_TEAM_KEY, id);
+    setMemberFocusTeamId(id);
     window.dispatchEvent(new CustomEvent("netup-set-active-team", { detail: { teamId: id } }));
   };
 
@@ -333,11 +377,11 @@ export default function MemberHubPage() {
       viewerAccountRole={me?.user?.role || null}
       showPlayerSessionsTab={playing.length > 0}
       showCoachAttendanceTab={showCoachAttendanceTab}
-      teamOptions={showCoachDashboard ? coachTeamsManaging : []}
-      activeTeamId={showCoachDashboard && resolvedCoachTeamId != null ? String(resolvedCoachTeamId) : ""}
-      onChangeTeam={showCoachDashboard ? handleCoachTeamSelect : null}
+      teamOptions={showCoachDashboard ? coachTeamsManaging : memberFocusTeams}
+      activeTeamId={showCoachDashboard && resolvedCoachTeamId != null ? String(resolvedCoachTeamId) : resolvedMemberFocusTeamId}
+      onChangeTeam={showCoachDashboard ? handleCoachTeamSelect : handleMemberFocusTeamSelect}
       teamSelectorVariant={showCoachDashboard ? "native" : "custom"}
-      includeAllTeamsOption={showCoachDashboard && coachTeamsManaging.length > 1}
+      includeAllTeamsOption={showCoachDashboard ? coachTeamsManaging.length > 1 : memberFocusTeams.length > 1}
     >
       <section
         className={`vc-member-hub${showCoachDashboard ? " vc-member-hub--coach-dash" : ""}`}
@@ -401,7 +445,7 @@ export default function MemberHubPage() {
                 error={coachDashError}
               />
             ) : (
-              <MemberPlayerDashboard />
+              <MemberPlayerDashboard activeTeamId={resolvedMemberFocusTeamId} />
             )}
 
             {showCoachDashboard ? (

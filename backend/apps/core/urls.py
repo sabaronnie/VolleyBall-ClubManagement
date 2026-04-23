@@ -54,6 +54,7 @@ from .views import (
     set_team_captain,
     team_attendance_analytics,
     team_attendance_summary,
+    team_standings,
     team_schedule,
     team_training_sessions,
     update_match_player_stats,
@@ -272,6 +273,7 @@ urlpatterns = [
         coach_team_dashboard,
         name="coach-team-dashboard",
     ),
+    path("teams/<int:team_id>/standings/", team_standings, name="team-standings"),
     path(
         "training-sessions/<int:session_id>/",
         manage_training_session,

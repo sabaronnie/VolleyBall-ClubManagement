@@ -7,6 +7,7 @@ import {
   updateUserEmergencyContact,
 } from "../../api";
 import EmergencyContactForm from "../EmergencyContactForm";
+import TeamStandingsCard from "../TeamStandingsCard";
 import { navigate } from "../../navigation";
 import MyFeesPage from "../../pages/MyFeesPage";
 
@@ -689,7 +690,7 @@ function PlayerParentAccessCard({
   );
 }
 
-export default function MemberPlayerDashboard() {
+export default function MemberPlayerDashboard({ activeTeamId = "" }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -949,6 +950,12 @@ export default function MemberPlayerDashboard() {
           ) : null}
 
           <PlayerSummaryRow items={summaryItems} />
+
+          <TeamStandingsCard
+            activeTeamId={activeTeamId}
+            title="Selected Team Standings"
+            emptySelectionMessage="Select a team in the focus dropdown to load standings."
+          />
 
           <div className="vc-dash-row vc-dash-row--dashboard">
             <div className="vc-panel vc-panel--dashboard vc-panel--director-white">

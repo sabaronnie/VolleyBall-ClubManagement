@@ -86,7 +86,24 @@ describe("DashboardPage create-club flow", () => {
     vi.spyOn(api, "fetchCurrentUser");
     vi.spyOn(api, "fetchDirectorPaymentOverview");
     vi.spyOn(api, "fetchCoachTeamDashboard");
+    vi.spyOn(api, "fetchTeamStandings");
     vi.spyOn(api, "createClub");
+    vi.mocked(api.fetchTeamStandings).mockResolvedValue({
+      team: { id: 11, name: "Falcons" },
+      standings: {
+        team_id: 11,
+        team_name: "Falcons",
+        club_name: "My Club",
+        matches_played: 0,
+        wins: 0,
+        losses: 0,
+        points_for: 0,
+        points_against: 0,
+        point_differential: 0,
+        record_label: "0-0",
+        note: "Completed matches only.",
+      },
+    });
   });
 
   afterEach(() => {

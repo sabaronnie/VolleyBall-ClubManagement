@@ -654,6 +654,94 @@ def _format_duration_label(duration_minutes):
     return f"{minutes}m"
 
 
+def _match_points_by_team(session):
+    player_stats = list(session.match_player_stats.all())
+    if not player_stats:
+        return {}
+
+    candidate_team_ids = [session.team_id]
+    if session.opponent_team_id:
+        candidate_team_ids.append(session.opponent_team_id)
+
+    memberships = (
+        TeamMembership.objects.active()
+        .filter(
+            user_id__in=[row.player_id for row in player_stats],
+            role=TeamRole.PLAYER,
+            team_id__in=candidate_team_ids,
+        )
+        .values_list("user_id", "team_id")
+    )
+    team_by_player_id = {}
+    for user_id, team_id in memberships:
+        team_by_player_id.setdefault(user_id, team_id)
+
+    totals = defaultdict(int)
+    for row in player_stats:
+        team_id = team_by_player_id.get(row.player_id)
+        if team_id is not None:
+            totals[team_id] += int(row.points_scored or 0)
+    return totals
+
+
+def _build_team_standings(team):
+    sessions = list(
+        TrainingSession.objects.filter(
+            Q(team=team)
+            | Q(
+                opponent_team=team,
+                match_request_status=TrainingSession.MatchRequestStatus.ACCEPTED,
+            ),
+            session_type=TrainingSession.SessionType.MATCH,
+            match_ended_at__isnull=False,
+        )
+        .exclude(status=TrainingSession.Status.CANCELLED)
+        .select_related("team", "team__club", "opponent_team")
+        .prefetch_related("match_player_stats")
+        .order_by("-scheduled_date", "-start_time", "-id")
+    )
+
+    wins = 0
+    losses = 0
+    points_for = 0
+    points_against = 0
+    matches_played = 0
+
+    for session in sessions:
+        if team.id != session.team_id and not (
+            team.id == session.opponent_team_id and _match_is_shared(session)
+        ):
+            continue
+
+        score_summary = _build_match_score_summary(session, team, _match_points_by_team(session))
+        team_score = score_summary.get("your_team_score")
+        opponent_score = score_summary.get("opponent_score")
+        if team_score is None or opponent_score is None:
+            continue
+
+        matches_played += 1
+        points_for += int(team_score)
+        points_against += int(opponent_score)
+        if team_score > opponent_score:
+            wins += 1
+        elif team_score < opponent_score:
+            losses += 1
+
+    return {
+        "team_id": team.id,
+        "team_name": team.name,
+        "club_name": team.club.name if team.club_id else "",
+        "matches_played": matches_played,
+        "wins": wins,
+        "losses": losses,
+        "points_for": points_for,
+        "points_against": points_against,
+        "point_differential": points_for - points_against,
+        "record_label": f"{wins}-{losses}",
+        "note": "Completed matches only.",
+    }
+
+
 def _build_match_score_summary(session, team, team_points):
     context_score = team_points.get(team.id, 0)
     counterparty = _session_counterparty_team(session, team) if _match_is_shared(session) else None
@@ -4466,6 +4554,24 @@ def coach_team_dashboard(request, team_id):
         )
     payload = build_coach_team_dashboard(team=team)
     return JsonResponse(payload)
+
+
+@login_required
+@require_GET
+def team_standings(request, team_id):
+    team = get_object_or_404(Team.objects.select_related("club"), pk=team_id)
+    if not can_view_team(request.user, team):
+        return JsonResponse(
+            {"errors": {"authorization": "You do not have access to this team's standings."}},
+            status=403,
+        )
+
+    return JsonResponse(
+        {
+            "team": _serialize_team_summary(team),
+            "standings": _build_team_standings(team),
+        }
+    )
 
 
 @login_required

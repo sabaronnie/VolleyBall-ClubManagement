@@ -171,7 +171,7 @@ describe("MemberPlayerDashboard parent view", () => {
     await user.click(screen.getByRole("button", { name: /permissions/i }));
 
     expect(screen.getByText("Permissions are no longer editable.")).toBeInTheDocument();
-    expect(screen.getByText(/adult now/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/adult now/i).length).toBeGreaterThan(0);
     expect(screen.queryByText("Attendance confirmation")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Deny" })).not.toBeInTheDocument();
     expect(api.updatePlayerParentAccess).not.toHaveBeenCalled();
