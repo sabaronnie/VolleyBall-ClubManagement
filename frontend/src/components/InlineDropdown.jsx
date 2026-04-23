@@ -21,6 +21,19 @@ export default function InlineDropdown({
   const selectedOption = options.find((option) => option.value === value) || null;
   const displayLabel = selectedOption?.label || valueLabel || placeholder;
 
+  const renderOptionContent = (option, fallbackLabel) => {
+    if (option?.badgeClassName) {
+      return (
+        <span className="vc-inline-dropdown__value vc-inline-dropdown__value--rich">
+          <span className={`vc-inline-dropdown__badge ${option.badgeClassName}`}>
+            {option.badgeLabel || option.label || fallbackLabel}
+          </span>
+        </span>
+      );
+    }
+    return <span className="vc-inline-dropdown__value">{fallbackLabel}</span>;
+  };
+
   useEffect(() => {
     setOpen(false);
   }, [value]);
@@ -109,7 +122,7 @@ export default function InlineDropdown({
             }
           }}
         >
-          {option.label}
+          {renderOptionContent(option, option.label)}
         </button>
       ))}
     </div>
@@ -131,7 +144,7 @@ export default function InlineDropdown({
           }
         }}
       >
-        <span className="vc-inline-dropdown__value">{displayLabel}</span>
+        {renderOptionContent(selectedOption, displayLabel)}
         <ChevronDownIcon className={`vc-inline-dropdown__chevron${open ? " is-open" : ""}`} />
       </button>
       {portal && menu ? createPortal(menu, document.body) : menu}

@@ -93,6 +93,39 @@ const EVENT_TYPE_OPTIONS = [
   { value: "game", label: "Game" },
 ];
 
+const SESSION_LIST_FILTER_OPTIONS = [
+  { value: "all", label: "All", badgeClassName: "session-category-badge session-category-badge--all" },
+  { value: "game", label: "Game", badgeClassName: "session-category-badge session-category-badge--game" },
+  { value: "training", label: "Training", badgeClassName: "session-category-badge session-category-badge--training" },
+  {
+    value: "fundraiser",
+    label: "Fundraiser",
+    badgeClassName: "session-category-badge session-category-badge--fundraiser",
+  },
+];
+
+function sessionCategoryValue(session) {
+  if (session?.session_type === "match") {
+    return "game";
+  }
+  const normalizedTitle = String(session?.title || "")
+    .trim()
+    .toLowerCase();
+  if (normalizedTitle.includes("fundraiser")) {
+    return "fundraiser";
+  }
+  return "training";
+}
+
+function sessionCategoryBadgeClass(session) {
+  return `session-category-badge session-category-badge--${sessionCategoryValue(session)}`;
+}
+
+function sessionCategoryLabel(session) {
+  const match = SESSION_LIST_FILTER_OPTIONS.find((option) => option.value === sessionCategoryValue(session));
+  return match?.label || "Training";
+}
+
 function normalizeStatValue(value) {
   const n = Number(value);
   if (!Number.isFinite(n) || n < 0) return 0;
@@ -267,6 +300,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [analyticsError, setAnalyticsError] = useState("");
   const [analyticsExpanded, setAnalyticsExpanded] = useState(false);
+  const [sessionListFilter, setSessionListFilter] = useState("all");
   const [newEventType, setNewEventType] = useState("training");
   const [newSessionTitle, setNewSessionTitle] = useState("");
   const [newSessionDate, setNewSessionDate] = useState(() => isoDateLocal(new Date()));
@@ -474,6 +508,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
     setAnalyticsGrouping("week");
     setAnalyticsLastN("");
     setAnalyticsExpanded(false);
+    setSessionListFilter("all");
     setAnalyticsPayload(null);
     setNewEventType("training");
     setNewSessionTitle("");
@@ -991,7 +1026,11 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
 
   const sortedSessions = useMemo(() => {
     const sessions = listPayload?.sessions || [];
-    const copy = [...sessions];
+    const filtered =
+      sessionListFilter === "all"
+        ? sessions
+        : sessions.filter((session) => sessionCategoryValue(session) === sessionListFilter);
+    const copy = [...filtered];
     const byDate = (a, b) => {
       const da = parseLocalDate(a.scheduled_date);
       const db = parseLocalDate(b.scheduled_date);
@@ -1000,7 +1039,12 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
     };
     copy.sort(byDate);
     return copy;
-  }, [listPayload]);
+  }, [listPayload, sessionListFilter]);
+
+  const activeSessionFilter = useMemo(
+    () => SESSION_LIST_FILTER_OPTIONS.find((option) => option.value === sessionListFilter) || SESSION_LIST_FILTER_OPTIONS[0],
+    [sessionListFilter],
+  );
 
   if (!teamId) {
     return (
@@ -1482,7 +1526,19 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
           ref={sessionListPanelRef}
         >
           <div className="team-training-panel__header">
-            <h2 style={{ fontSize: "1.05rem", margin: 0 }}>Sessions</h2>
+            <div>
+              <h2 style={{ fontSize: "1.05rem", margin: 0 }}>Sessions</h2>
+              <p className="team-training-panel__subhead">
+                Showing {sortedSessions.length} of {listPayload?.sessions?.length || 0}
+              </p>
+            </div>
+            <InlineDropdown
+              value={sessionListFilter}
+              onChange={setSessionListFilter}
+              options={SESSION_LIST_FILTER_OPTIONS}
+              ariaLabel="Filter sessions by category"
+              className="vc-inline-dropdown--session-filter"
+            />
           </div>
           {sortedSessions.length ? (
             <div className="training-session-list">
@@ -1513,7 +1569,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
                       <div className="training-session-card__top">
                         <div>
                           <div className="training-session-card__meta">
-                            <span>{session.session_type_label || session.session_type}</span>
+                            <span className={sessionCategoryBadgeClass(session)}>{sessionCategoryLabel(session)}</span>
                             {session.status === "cancelled" ? (
                               <span className="training-status-badge training-status-badge--cancelled">Cancelled</span>
                             ) : session.session_type === "match" && session.is_ended ? (
@@ -1549,8 +1605,12 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
             </div>
           ) : (
             <section className="training-empty-state">
-              <h3>No sessions yet</h3>
-              <p>When sessions are scheduled for this team, they will appear here.</p>
+              <h3>{sessionListFilter === "all" ? "No sessions yet" : `No ${activeSessionFilter.label.toLowerCase()} sessions`}</h3>
+              <p>
+                {sessionListFilter === "all"
+                  ? "When sessions are scheduled for this team, they will appear here."
+                  : "Try another filter or create a new event for this category."}
+              </p>
             </section>
           )}
         </div>
