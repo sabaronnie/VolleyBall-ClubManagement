@@ -3648,6 +3648,116 @@ def search_team_players(request, team_id):
     )
 
 
+def _manageable_teams_for_user(user):
+    coached_team_ids = TeamMembership.objects.active().filter(
+        user=user,
+        role=TeamRole.COACH,
+    ).values_list("team_id", flat=True)
+    coached_team_ids = list(coached_team_ids)
+    if coached_team_ids:
+        return Team.objects.select_related("club").filter(id__in=coached_team_ids)
+
+    director_club_ids = ClubMembership.objects.active().filter(
+        user=user,
+        role=ClubRole.CLUB_DIRECTOR,
+    ).values_list("club_id", flat=True)
+    return Team.objects.select_related("club").filter(
+        Q(id__in=coached_team_ids) | Q(club_id__in=director_club_ids)
+    )
+
+
+@login_required
+@require_GET
+def search_coach_players(request):
+    manageable_teams = _manageable_teams_for_user(request.user)
+    manageable_team_ids = list(manageable_teams.values_list("id", flat=True))
+    if not manageable_team_ids:
+        return JsonResponse(
+            {"errors": {"authorization": "Only coaches or directors can search player statistics."}},
+            status=403,
+        )
+
+    team_id_raw = (request.GET.get("team_id") or "").strip()
+    if team_id_raw:
+        try:
+            selected_team_id = int(team_id_raw)
+        except ValueError:
+            return JsonResponse({"errors": {"team_id": "team_id must be a valid number."}}, status=400)
+        if selected_team_id not in manageable_team_ids:
+            return JsonResponse(
+                {"errors": {"team_id": "You do not have access to this team."}},
+                status=403,
+            )
+        search_team_ids = [selected_team_id]
+    else:
+        search_team_ids = manageable_team_ids
+
+    query = (request.GET.get("q") or "").strip()
+    try:
+        limit = min(max(int(request.GET.get("limit", "25")), 1), 100)
+    except ValueError:
+        return JsonResponse({"errors": {"limit": "Limit must be a valid number."}}, status=400)
+
+    memberships = (
+        TeamMembership.objects.active()
+        .filter(team_id__in=search_team_ids, role=TeamRole.PLAYER)
+        .select_related("user", "team")
+    )
+
+    if query:
+        terms = [term.strip() for term in query.split() if term.strip()]
+        for term in terms:
+            memberships = memberships.filter(
+                Q(user__first_name__icontains=term)
+                | Q(user__last_name__icontains=term)
+                | Q(user__email__icontains=term)
+            )
+    else:
+        memberships = memberships.none()
+
+    memberships = memberships.order_by(
+        "user__first_name",
+        "user__last_name",
+        "user__email",
+        "team__name",
+        "user_id",
+    )[:limit]
+    player_ids = [membership.user_id for membership in memberships]
+    profiles_by_user_id = {
+        profile.user_id: profile
+        for profile in PlayerProfile.objects.filter(user_id__in=player_ids)
+    }
+
+    results = []
+    for membership in memberships:
+        user = membership.user
+        profile = profiles_by_user_id.get(user.id)
+        results.append(
+            {
+                "team_id": membership.team_id,
+                "team_name": membership.team.name,
+                "player_id": user.id,
+                "player_name": _format_person_name(user),
+                "email": user.email,
+                "jersey_number": profile.jersey_number if profile else None,
+                "primary_position": (profile.primary_position if profile else "") or "",
+            }
+        )
+
+    return JsonResponse(
+        {
+            "query": query,
+            "count": len(results),
+            "results": results,
+            "scope": {
+                "team_id": search_team_ids[0] if len(search_team_ids) == 1 else None,
+                "all_teams": len(search_team_ids) != 1,
+                "manageable_team_ids": manageable_team_ids,
+            },
+        }
+    )
+
+
 @login_required
 @require_http_methods(["GET", "PUT"])
 @csrf_exempt

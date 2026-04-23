@@ -50,6 +50,7 @@ from .views import (
     register,
     register_verify,
     remind_unconfirmed_training_session,
+    search_coach_players,
     send_team_notification,
     search_team_players,
     set_team_captain,
@@ -250,6 +251,7 @@ urlpatterns = [
     path("register/verify/", register_verify, name="register-verify"),
     path("teams/<int:team_id>/members/", view_team_members, name="view-team-members"),
     path("teams/<int:team_id>/players/search/", search_team_players, name="search-team-players"),
+    path("coach/players/search/", search_coach_players, name="search-coach-players"),
     path("teams/<int:team_id>/schedule/", team_schedule, name="team-schedule"),
     path(
         "teams/<int:team_id>/training-sessions/",
