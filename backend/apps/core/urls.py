@@ -39,6 +39,7 @@ from .views import (
     me,
     member_hub_dashboard,
     parent_child_attendance_history,
+    parent_child_performance_summary,
     player_self_performance_history,
     pending_player_parent_invitation_reviews,
     player_team_attendance_summary,
@@ -98,6 +99,7 @@ urlpatterns = [
     path("auth/me/", me, name="me"),
     path("me/member-dashboard/", member_hub_dashboard, name="member-hub-dashboard"),
     path("me/parent/child-attendance/", parent_child_attendance_history, name="parent-child-attendance"),
+    path("me/parent/child-performance/", parent_child_performance_summary, name="parent-child-performance"),
     path("me/parent-link-request/", request_parent_link_to_player, name="request-parent-link"),
     path(
         "me/player-parent-invitations/",

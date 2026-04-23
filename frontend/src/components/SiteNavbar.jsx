@@ -17,6 +17,7 @@ export function buildWorkspaceTabs({
   showCoachAttendanceTab = false,
   showCoachStatisticsTab = false,
   showParentAttendanceTab = false,
+  showParentStatisticsTab = false,
 }) {
   const tabs = [
     { id: "dashboard", label: "Dashboard", path: "/dashboard" },
@@ -35,6 +36,9 @@ export function buildWorkspaceTabs({
   }
   if (showParentAttendanceTab) {
     tabs.push({ id: "parent-attendance", label: "Family attendance", path: "/parent/attendance" });
+  }
+  if (showParentStatisticsTab) {
+    tabs.push({ id: "parent-statistics", label: "Statistics", path: "/parent/statistics" });
   }
 
   return tabs;

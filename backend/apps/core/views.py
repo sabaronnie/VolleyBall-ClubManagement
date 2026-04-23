@@ -3064,6 +3064,164 @@ def parent_child_attendance_history(request):
     )
 
 
+@login_required
+@require_GET
+def parent_child_performance_summary(request):
+    if _canonical_app_role(request.user) != AssignedAccountRole.PARENT:
+        return JsonResponse(
+            {"errors": {"authorization": "Only accounts with the parent role can view child performance statistics."}},
+            status=403,
+        )
+
+    relations = list(
+        ParentPlayerRelation.objects.approved()
+        .filter(parent=request.user)
+        .select_related("player")
+        .order_by("player__first_name", "player__last_name", "player_id")
+    )
+    child_users = [rel.player for rel in relations]
+    linked_children_payload = [_serialize_basic_user(u) for u in child_users]
+    if not child_users:
+        return JsonResponse(
+            {
+                "linked_children": [],
+                "selected_child": None,
+                "history": [],
+                "summary": None,
+                "message": "No approved parent link to a player account yet.",
+            }
+        )
+
+    raw_child_id = request.GET.get("child_id")
+    selected_child = child_users[0]
+    if raw_child_id not in (None, ""):
+        try:
+            selected_child_id = int(raw_child_id)
+        except (TypeError, ValueError):
+            return JsonResponse({"errors": {"child_id": "A valid child id is required."}}, status=400)
+        selected_match = next((child for child in child_users if child.id == selected_child_id), None)
+        if selected_match is None:
+            return JsonResponse(
+                {"errors": {"authorization": "You cannot view performance for that child."}},
+                status=403,
+            )
+        selected_child = selected_match
+
+    memberships = list(
+        TeamMembership.objects.active()
+        .filter(user=selected_child, role=TeamRole.PLAYER)
+        .select_related("team", "team__club")
+    )
+    if not memberships:
+        return JsonResponse(
+            {
+                "linked_children": linked_children_payload,
+                "selected_child": _serialize_basic_user(selected_child),
+                "history": [],
+                "summary": None,
+                "message": "This child is not on an active player roster yet.",
+            }
+        )
+    team_ids = {membership.team_id for membership in memberships}
+    team_by_id = {membership.team_id: membership.team for membership in memberships}
+
+    stats_rows = list(
+        MatchPlayerStat.objects.filter(player=selected_child)
+        .filter(
+            Q(training_session__team_id__in=team_ids)
+            | Q(
+                training_session__opponent_team_id__in=team_ids,
+                training_session__match_request_status=TrainingSession.MatchRequestStatus.ACCEPTED,
+            )
+        )
+        .filter(training_session__session_type=TrainingSession.SessionType.MATCH)
+        .exclude(training_session__status=TrainingSession.Status.CANCELLED)
+        .select_related("training_session__team__club", "training_session__opponent_team")
+        .order_by(
+            "training_session__scheduled_date",
+            "training_session__start_time",
+            "training_session_id",
+        )
+    )
+
+    history = []
+    totals = {
+        "weighted_score": 0.0,
+        "points": 0,
+        "aces": 0,
+        "blocks": 0,
+        "assists": 0,
+        "digs": 0,
+        "errors": 0,
+    }
+    for stat in stats_rows:
+        session = stat.training_session
+        context_team = team_by_id.get(session.team_id)
+        if context_team is None and session.opponent_team_id in team_by_id:
+            context_team = team_by_id.get(session.opponent_team_id)
+        if context_team is None:
+            context_team = session.team
+
+        stats_payload = {
+            "points_scored": int(stat.points_scored or 0),
+            "aces": int(stat.aces or 0),
+            "blocks": int(stat.blocks or 0),
+            "assists": int(stat.assists or 0),
+            "errors": int(stat.errors or 0),
+            "digs": int(stat.digs or 0),
+        }
+        weighted_score = _match_weighted_score(stats_payload)
+        serve_efficiency = (
+            (stats_payload["aces"] / (stats_payload["aces"] + stats_payload["errors"])) * 100
+            if (stats_payload["aces"] + stats_payload["errors"]) > 0
+            else None
+        )
+        totals["weighted_score"] += float(weighted_score)
+        totals["points"] += stats_payload["points_scored"]
+        totals["aces"] += stats_payload["aces"]
+        totals["blocks"] += stats_payload["blocks"]
+        totals["assists"] += stats_payload["assists"]
+        totals["digs"] += stats_payload["digs"]
+        totals["errors"] += stats_payload["errors"]
+
+        history.append(
+            {
+                "match_id": session.id,
+                "scheduled_date": session.scheduled_date.isoformat(),
+                "start_time": session.start_time.strftime("%H:%M"),
+                "team_name": context_team.name,
+                "opponent": _display_match_opponent(session, context_team),
+                "stats": stats_payload,
+                "weighted_score": round(weighted_score, 2),
+                "serve_efficiency": round(serve_efficiency, 2)
+                if serve_efficiency is not None
+                else None,
+            }
+        )
+
+    summary = {
+        "matches": len(history),
+        "average_weighted_score": round(totals["weighted_score"] / len(history), 2)
+        if history
+        else None,
+        "points": totals["points"],
+        "aces": totals["aces"],
+        "blocks": totals["blocks"],
+        "assists": totals["assists"],
+        "digs": totals["digs"],
+        "errors": totals["errors"],
+    }
+
+    return JsonResponse(
+        {
+            "linked_children": linked_children_payload,
+            "selected_child": _serialize_basic_user(selected_child),
+            "history": history,
+            "summary": summary,
+        }
+    )
+
+
 def _director_managed_club_ids(user):
     return set(
         Club.objects.filter(

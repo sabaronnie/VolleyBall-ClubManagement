@@ -19,6 +19,7 @@ import LoginPage from "./pages/LoginPage";
 import MemberHubPage from "./pages/MemberHubPage";
 import MyFeesPage from "./pages/MyFeesPage";
 import ParentAttendancePage from "./pages/ParentAttendancePage";
+import ParentStatisticsPage from "./pages/ParentStatisticsPage";
 import PlayerAttendancePage from "./pages/PlayerAttendancePage";
 import PlayerStatisticsPage from "./pages/PlayerStatisticsPage";
 import CoachSessionAttendancePage from "./pages/CoachSessionAttendancePage";
@@ -1765,6 +1766,23 @@ function App() {
         showCoachAttendanceTab={showCoachAttendanceTab}
       >
         <ParentAttendancePage />
+      </ClubWorkspaceLayout>
+    );
+  }
+
+  if (pathname === "/parent/statistics" || pathname === "/parent/statistics/") {
+    if (!isAuthenticated) {
+      return <LoginPage />;
+    }
+    return (
+      <ClubWorkspaceLayout
+        activeTab="parent-statistics"
+        viewerAccountRole={viewerAccountRole}
+        {...defaultTeamNavProps}
+        showPlayerSessionsTab={showPlayerSessionsTab}
+        showCoachAttendanceTab={showCoachAttendanceTab}
+      >
+        <ParentStatisticsPage />
       </ClubWorkspaceLayout>
     );
   }

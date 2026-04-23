@@ -3848,6 +3848,65 @@ class ParentChildAttendanceHistoryTests(TestCase):
         self.assertEqual(len(summaries), 1)
         self.assertEqual(summaries[0]["metrics"]["sessions_in_date_range"], 0)
 
+    def test_parent_can_view_linked_child_performance_summary(self):
+        parent, child, team, _club = self._setup_team_with_parent_child()
+        opponent = Team.objects.create(club=team.club, name="Perf Opponent")
+        session = TrainingSession.objects.create(
+            team=team,
+            created_by=parent,
+            title="Match vs Perf Opponent",
+            session_type=TrainingSession.SessionType.MATCH,
+            scheduled_date=timezone.localdate() - timedelta(days=2),
+            start_time=time(18, 0),
+            end_time=time(19, 30),
+            location="Court 1",
+            opponent=opponent.name,
+            opponent_team=opponent,
+            match_type=TrainingSession.MatchType.FRIENDLY,
+            match_request_status=TrainingSession.MatchRequestStatus.ACCEPTED,
+            match_ended_at=timezone.now(),
+        )
+        MatchPlayerStat.objects.create(
+            training_session=session,
+            player=child,
+            points_scored=9,
+            aces=2,
+            blocks=1,
+            assists=3,
+            errors=1,
+            digs=4,
+            updated_by=parent,
+        )
+        token = generate_auth_token(parent)
+        response = self.client.get(
+            reverse("core:parent-child-performance"),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["selected_child"]["id"], child.id)
+        self.assertEqual(len(body["history"]), 1)
+        self.assertEqual(body["history"][0]["stats"]["points_scored"], 9)
+        self.assertEqual(body["summary"]["matches"], 1)
+
+    def test_parent_cannot_access_unlinked_child_performance_summary(self):
+        parent, _child, _team, club = self._setup_team_with_parent_child()
+        other_child = User.objects.create_user(
+            email="perf-other-child@example.com",
+            password="StrongPassword123!",
+            assigned_account_role=AssignedAccountRole.PLAYER,
+        )
+        other_team = Team.objects.create(club=club, name="Perf Other Team")
+        TeamMembership.objects.add_member(user=other_child, team=other_team, role=TeamRole.PLAYER)
+        token = generate_auth_token(parent)
+        response = self.client.get(
+            reverse("core:parent-child-performance"),
+            {"child_id": other_child.id},
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("cannot", response.json()["errors"]["authorization"].lower())
+
 
 class PlayerAttendanceConfirmationTests(TestCase):
     """EP-24: player self-confirm for training sessions unless parent-managed permissions block it."""
@@ -4793,6 +4852,49 @@ class SharedMatchRequestFlowTests(TestCase):
         self.assertEqual(summary_row["attended_sessions"], 1)
         self.assertEqual(summary_row["absent_sessions"], 0)
         self.assertEqual(summary_row["attendance_rate_percent"], 100.0)
+
+    def test_ended_match_without_confirmation_uses_stats_to_mark_present_else_absent(self):
+        fx = self._fixture()
+        teammate = User.objects.create_user(
+            email="ended-match-teammate@example.com",
+            password="StrongPassword123!",
+            assigned_account_role=AssignedAccountRole.PLAYER,
+        )
+        TeamMembership.objects.add_member(user=teammate, team=fx["team_a"], role=TeamRole.PLAYER)
+        session = TrainingSession.objects.create(
+            team=fx["team_a"],
+            created_by=fx["coach_a"],
+            title="Ended Match Attendance Status",
+            session_type=TrainingSession.SessionType.MATCH,
+            scheduled_date=timezone.localdate(),
+            start_time=(timezone.localtime() - timedelta(hours=2)).time().replace(second=0, microsecond=0),
+            end_time=(timezone.localtime() - timedelta(hours=1)).time().replace(second=0, microsecond=0),
+            location="Court 3",
+            opponent="City Team",
+            match_type=TrainingSession.MatchType.FRIENDLY,
+            match_ended_at=timezone.now(),
+        )
+        MatchPlayerStat.objects.create(
+            training_session=session,
+            player=fx["player_a"],
+            updated_by=fx["coach_a"],
+            points_scored=0,
+            aces=1,
+            blocks=0,
+            assists=0,
+            errors=0,
+            digs=0,
+        )
+
+        attendance_response = self.client.get(
+            reverse("core:coach-training-session-attendance", kwargs={"session_id": session.id}),
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_a'])}",
+        )
+        self.assertEqual(attendance_response.status_code, 200)
+        players = attendance_response.json()["session"]["players"]
+        by_id = {row["player_id"]: row for row in players}
+        self.assertEqual(by_id[fx["player_a"].id]["attendance_status"], "present")
+        self.assertEqual(by_id[teammate.id]["attendance_status"], "absent")
 
     def test_end_and_resume_shared_match_updates_summary_and_stat_lock(self):
         fx = self._fixture()
@@ -6332,6 +6434,47 @@ class MemberHubDashboardTests(TestCase):
         body = response.json()
         self.assertFalse(body["progress"]["has_weekly_metrics"])
         self.assertEqual(body["progress"]["weeks"], [])
+
+    def test_progress_falls_back_to_match_stats_when_weekly_rows_missing(self):
+        director = User.objects.create_user(email="md-p3@example.com", password="StrongPassword123!")
+        club = Club.objects.create_club(name="MD Club 3", director=director)
+        team = Team.objects.create(club=club, name="MD Team 3")
+        coach = User.objects.create_user(email="md-coach3@example.com", password="StrongPassword123!")
+        player = User.objects.create_user(email="md-player3@example.com", password="StrongPassword123!")
+        TeamMembership.objects.add_member(user=coach, team=team, role=TeamRole.COACH)
+        TeamMembership.objects.add_member(user=player, team=team, role=TeamRole.PLAYER)
+        session = TrainingSession.objects.create(
+            team=team,
+            created_by=coach,
+            title="Past Match",
+            session_type=TrainingSession.SessionType.MATCH,
+            scheduled_date=timezone.localdate() - timedelta(days=7),
+            start_time=time(18, 0),
+            end_time=time(19, 30),
+            location="Court 7",
+            opponent="Rivals",
+            match_type=TrainingSession.MatchType.FRIENDLY,
+            match_ended_at=timezone.now(),
+        )
+        MatchPlayerStat.objects.create(
+            training_session=session,
+            player=player,
+            updated_by=coach,
+            points_scored=8,
+            aces=2,
+            blocks=1,
+            assists=3,
+            digs=4,
+            errors=1,
+        )
+
+        token = generate_auth_token(player)
+        response = self.client.get(reverse("core:member-hub-dashboard"), HTTP_AUTHORIZATION=f"Bearer {token}")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertTrue(body["progress"]["has_weekly_metrics"])
+        self.assertEqual(len(body["progress"]["weeks"]), 1)
+        self.assertIsNotNone(body["progress"]["summary"]["attack"])
 
 
 @override_settings(

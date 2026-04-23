@@ -239,6 +239,14 @@ export async function fetchParentChildAttendanceHistory() {
   return authenticatedGet("/api/me/parent/child-attendance/");
 }
 
+export async function fetchParentChildPerformanceSummary(childId) {
+  const q =
+    childId != null && String(childId).trim() !== ""
+      ? `?child_id=${encodeURIComponent(String(childId))}`
+      : "";
+  return authenticatedGet(`/api/me/parent/child-performance/${q}`);
+}
+
 export async function fetchMemberDashboard(forPlayerId) {
   const q =
     forPlayerId != null && String(forPlayerId).trim() !== ""
@@ -359,14 +367,14 @@ export async function clearTrainingSession(sessionId) {
   return payload;
 }
 
-export async function confirmTrainingSession(sessionId, playerId) {
+export async function confirmTrainingSession(sessionId, playerId, teamId) {
   const body = playerId != null ? { player_id: playerId } : {};
-  return authenticatedJson(`/api/training-sessions/${sessionId}/confirm/`, "POST", body);
+  return authenticatedJson(appendTeamQuery(`/api/training-sessions/${sessionId}/confirm/`, teamId), "POST", body);
 }
 
-export async function unconfirmTrainingSession(sessionId, playerId) {
+export async function unconfirmTrainingSession(sessionId, playerId, teamId) {
   const body = playerId != null ? { player_id: playerId } : {};
-  return authenticatedJson(`/api/training-sessions/${sessionId}/confirm/`, "DELETE", body);
+  return authenticatedJson(appendTeamQuery(`/api/training-sessions/${sessionId}/confirm/`, teamId), "DELETE", body);
 }
 
 export async function fetchCoachTrainingSessionAttendance(sessionId, teamId) {

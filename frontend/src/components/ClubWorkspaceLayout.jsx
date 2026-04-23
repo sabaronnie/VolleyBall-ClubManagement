@@ -272,6 +272,7 @@ export default function ClubWorkspaceLayout({
     showCoachAttendanceTab,
     showCoachStatisticsTab: showCoachAttendanceTab,
     showParentAttendanceTab: viewerAccountRole === "parent" || showParentAttendanceFromProfile,
+    showParentStatisticsTab: viewerAccountRole === "parent" || showParentAttendanceFromProfile,
   });
 
   const onRespondToPendingMatch = useCallback(async (action) => {
