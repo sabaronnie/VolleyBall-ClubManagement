@@ -380,12 +380,21 @@ export default function ClubWorkspaceLayout({
         <button
           type="button"
           className="live-match-banner"
-          onClick={() => navigate(`/coach/attendance?team=${encodeURIComponent(String(activeTeamId))}&session=${encodeURIComponent(String(liveMatch.id))}`)}
+          onClick={() =>
+            openSessionPath(
+              `/coach/attendance?team=${encodeURIComponent(String(activeTeamId))}&session=${encodeURIComponent(String(liveMatch.id))}`,
+            )
+          }
         >
           <span className="live-match-banner__pulse" aria-hidden="true" />
           <span>
             Live match now: <strong>{liveMatch.title}</strong>
-            {liveMatch.opponent ? ` vs ${liveMatch.opponent}` : ""}
+            {liveMatch.opponent &&
+            !String(liveMatch.title || "")
+              .toLowerCase()
+              .includes(String(liveMatch.opponent).toLowerCase())
+              ? ` vs ${liveMatch.opponent}`
+              : ""}
           </span>
           <span className="live-match-banner__cta">Open match stats</span>
         </button>

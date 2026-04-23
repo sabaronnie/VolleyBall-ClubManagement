@@ -588,16 +588,22 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
   }, []);
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const tr = params.get("team");
-    const sr = params.get("session");
-    if (!teamId || !tr || String(teamId) !== String(Number(tr))) {
-      return;
-    }
-    const sid = sr ? Number(sr) : NaN;
-    if (Number.isFinite(sid) && sid > 0) {
-      setSelectedSessionId(sid);
-    }
+    const syncSessionFromUrl = () => {
+      const params = new URLSearchParams(window.location.search);
+      const tr = params.get("team");
+      const sr = params.get("session");
+      if (!teamId || !tr || String(teamId) !== String(Number(tr))) {
+        return;
+      }
+      const sid = sr ? Number(sr) : NaN;
+      if (Number.isFinite(sid) && sid > 0) {
+        setSelectedSessionId(sid);
+      }
+    };
+
+    syncSessionFromUrl();
+    window.addEventListener("popstate", syncSessionFromUrl);
+    return () => window.removeEventListener("popstate", syncSessionFromUrl);
   }, [teamId]);
 
   const loadAnalytics = useCallback(
@@ -918,8 +924,6 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
         return;
       }
       payload.opponent_final_score = trimmedScore;
-    } else if (String(opponentFinalScoreInput || "").trim() !== "") {
-      payload.opponent_final_score = String(opponentFinalScoreInput).trim();
     }
 
     setEndMatchBusy(true);
@@ -1726,7 +1730,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
                       <p className="vc-modal__muted">
                         {detailMatch?.is_ended
                           ? "This match is closed. Resume it if you want to keep editing player stats."
-                          : "Stats auto-save per player while the match is open."}
+                          : "Stats auto-save per player while the match is open. Record the final result once scores are complete."}
                       </p>
                     </div>
                     <div className="match-stats-summary">
@@ -1743,6 +1747,11 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
                   </div>
                   {detailMatch ? (
                     <div className="match-stats-toolbar">
+                      {detailMatch.is_shared_match && !detailMatch.is_ended ? (
+                        <p className="vc-modal__muted" style={{ margin: 0 }}>
+                          Shared match final score is calculated from both teams' recorded player stats.
+                        </p>
+                      ) : null}
                       {!detailMatch.is_shared_match && !detailMatch.is_ended ? (
                         <label className="match-stat-input match-stat-input--compact">
                           <span>Opponent final score</span>
@@ -1758,7 +1767,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
                       ) : null}
                       {detailMatch.can_end_match ? (
                         <button type="button" className="vc-action-btn" onClick={() => void onEndMatch()} disabled={endMatchBusy}>
-                          {endMatchBusy ? "Ending…" : "End Match"}
+                          {endMatchBusy ? "Saving result…" : "Record Result"}
                         </button>
                       ) : null}
                       {detailMatch.can_resume_match ? (
@@ -1814,7 +1823,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
                       </div>
                       <div className="match-final-summary__cards">
                         <article className="match-summary-card">
-                          <span>WInenr</span>
+                          <span>Winner</span>
                           <strong>
                             {detailMatchSummary.winner_name || "Waiting for final result"}
                           </strong>
