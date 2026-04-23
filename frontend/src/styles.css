@@ -925,10 +925,13 @@ button {
 
 .training-session-list {
   display: grid;
+  align-content: start;
   gap: 0.95rem;
-  /* show ~3 sessions and scroll within this panel without shifting the page */
-  max-height: 24.5rem; /* a bit taller */
+  position: absolute;
+  inset: calc(var(--session-list-header-height, 1.3rem) + 1rem) 0 0 0;
+  min-height: 0;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   -webkit-overflow-scrolling: touch;
   padding-right: 0.6rem; /* room for scrollbar */
   margin-left: -0.4rem; /* shift slightly left so active outline isn't clipped */
@@ -1024,6 +1027,26 @@ button {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
   gap: 1.25rem;
   align-items: start;
+}
+
+.coach-attendance-layout > .team-training-panel {
+  min-height: 0;
+}
+
+.team-training-panel--session-list {
+  position: relative;
+  align-self: stretch;
+  height: var(--session-list-panel-height, auto);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.team-training-panel--session-list.has-no-session-selected {
+  height: 620px;
+}
+
+.team-training-panel--session-detail {
+  align-self: start;
 }
 
 .live-match-banner {
@@ -1685,7 +1708,7 @@ button {
 .schedule-event {
   position: absolute;
   left: 0.3rem;
-  padding: 0.72rem 0.72rem 0.78rem;
+  padding: 0.48rem 0.52rem 0.52rem;
   border-radius: 14px;
   color: #ffffff;
   font-weight: 700;
@@ -1694,7 +1717,8 @@ button {
   transition: transform 140ms ease, box-shadow 140ms ease;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  justify-content: center;
+  gap: 0.16rem;
   min-height: 0;
 }
 
@@ -1708,8 +1732,6 @@ button {
 }
 
 .schedule-event--match {
-  justify-content: center;
-  gap: 0.16rem;
   padding: 0.48rem 0.52rem 0.52rem;
 }
 
@@ -1730,49 +1752,44 @@ button {
 .schedule-event__time {
   display: inline-block;
   align-self: flex-start;
-  margin-bottom: 0.15rem;
+  margin-bottom: 0;
   opacity: 0.95;
-  font-size: 0.8rem;
+  font-size: 0.66rem;
+  line-height: 1.1;
   font-weight: 800;
-  background: rgba(0,0,0,0.12);
-  padding: 0.18rem 0.42rem;
-  border-radius: 6px;
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
   color: #ffffff;
   max-width: 100%;
-  white-space: nowrap;
+  white-space: normal;
   overflow-wrap: normal;
   word-break: normal;
 }
 
 .schedule-event strong {
   display: block;
-  font-size: 1.02rem;
-  line-height: 1.24;
+  font-size: 0.88rem;
+  line-height: 1.08;
   margin-top: 0;
   color: inherit;
   font-weight: 800;
   max-width: 100%;
-  white-space: normal;
+  white-space: nowrap;
+  overflow: hidden;
   overflow-wrap: break-word;
   word-break: normal;
+  text-overflow: ellipsis;
   hyphens: auto;
 }
 
 .schedule-event--match strong {
-  font-size: 0.92rem;
-  line-height: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-size: 0.88rem;
+  line-height: 1.08;
 }
 
 .schedule-event--match .schedule-event__time {
-  margin-bottom: 0;
-  padding: 0;
-  background: transparent;
   font-size: 0.66rem;
-  line-height: 1.1;
-  white-space: normal;
 }
 
 .schedule-event em {

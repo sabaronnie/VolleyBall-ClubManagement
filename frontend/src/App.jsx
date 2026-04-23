@@ -767,16 +767,6 @@ function WeeklyScheduleBoard({ weekStart, entries, onSelectEntry, legendTeams })
                       <span className="schedule-event__time">
                         {formatTimeRange12h(entry.start_time, entry.end_time)}
                       </span>
-                      {entry.isTrainingSession && !entry.isMatchSession ? (
-                        <span style={{ display: "block", fontSize: "0.72rem", opacity: 0.9 }}>
-                          Session
-                          {entry.opponent ? ` vs ${entry.opponent}` : ""}
-                        </span>
-                      ) : null}
-                      {entry.teamName ? (
-                        <span style={{ display: "block", fontSize: "0.72rem", opacity: 0.9 }}>{entry.teamName}</span>
-                      ) : null}
-                      {entry.location ? <em>{entry.location}</em> : null}
                     </article>
                   );
                 })}

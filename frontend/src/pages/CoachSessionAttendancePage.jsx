@@ -266,8 +266,49 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
   const [cancelBusy, setCancelBusy] = useState(false);
   const [cancelMessage, setCancelMessage] = useState("");
   const [cancelError, setCancelError] = useState("");
+  const listLoadSeqRef = useRef(0);
+  const sessionListPanelRef = useRef(null);
+  const sessionDetailPanelRef = useRef(null);
+  const scrollRestoreRef = useRef(null);
+
+  const preserveViewportPosition = useCallback(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const restoreState = {
+      x: window.scrollX,
+      y: window.scrollY,
+      until: Date.now() + 1200,
+    };
+    scrollRestoreRef.current = restoreState;
+
+    const restore = () => {
+      if (scrollRestoreRef.current !== restoreState) {
+        return;
+      }
+      window.scrollTo(restoreState.x, restoreState.y);
+    };
+
+    requestAnimationFrame(() => {
+      restore();
+      requestAnimationFrame(restore);
+    });
+    setTimeout(restore, 100);
+    setTimeout(restore, 300);
+  }, []);
+
+  const handleSelectSession = useCallback(
+    (sessionId) => {
+      preserveViewportPosition();
+      setSelectedSessionId(sessionId);
+    },
+    [preserveViewportPosition],
+  );
 
   const loadList = useCallback(async () => {
+    const requestSeq = listLoadSeqRef.current + 1;
+    listLoadSeqRef.current = requestSeq;
     if (!teamId) {
       setListPayload(null);
       setListLoading(false);
@@ -277,18 +318,92 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
     setListError("");
     try {
       const data = await fetchTeamTrainingSessions(teamId);
+      if (listLoadSeqRef.current !== requestSeq) {
+        return;
+      }
       setListPayload(data);
     } catch (err) {
+      if (listLoadSeqRef.current !== requestSeq) {
+        return;
+      }
       setListPayload(null);
       setListError(err.message || "Could not load sessions.");
     } finally {
-      setListLoading(false);
+      if (listLoadSeqRef.current === requestSeq) {
+        setListLoading(false);
+      }
     }
   }, [teamId]);
 
   useEffect(() => {
     void loadList();
   }, [loadList]);
+
+  useEffect(() => {
+    const source = sessionDetailPanelRef.current;
+    const target = sessionListPanelRef.current;
+    if (!source || !target) {
+      return undefined;
+    }
+
+    let frameId = 0;
+    const syncSessionListHeight = () => {
+      if (frameId) {
+        cancelAnimationFrame(frameId);
+      }
+      frameId = requestAnimationFrame(() => {
+        const detailHeight = Math.ceil(source.getBoundingClientRect().height);
+        const nextHeight = selectedSessionId ? detailHeight : Math.max(detailHeight + 180, 620);
+        if (nextHeight > 0) {
+          target.style.setProperty("--session-list-panel-height", `${nextHeight}px`);
+        }
+      });
+    };
+
+    syncSessionListHeight();
+    window.addEventListener("resize", syncSessionListHeight);
+
+    let observer = null;
+    if (typeof ResizeObserver === "function") {
+      observer = new ResizeObserver(syncSessionListHeight);
+      observer.observe(source);
+    }
+
+    return () => {
+      if (frameId) {
+        cancelAnimationFrame(frameId);
+      }
+      window.removeEventListener("resize", syncSessionListHeight);
+      if (observer) {
+        observer.disconnect();
+      }
+    };
+  }, [teamId, selectedSessionId, detailLoading, detailPayload, matchPayload, expandedMatchPlayerId]);
+
+  useEffect(() => {
+    const restoreState = scrollRestoreRef.current;
+    if (!restoreState || typeof window === "undefined") {
+      return undefined;
+    }
+    if (Date.now() > restoreState.until) {
+      scrollRestoreRef.current = null;
+      return undefined;
+    }
+
+    let frameId = requestAnimationFrame(() => {
+      window.scrollTo(restoreState.x, restoreState.y);
+    });
+    const timerId = setTimeout(() => {
+      if (scrollRestoreRef.current === restoreState) {
+        window.scrollTo(restoreState.x, restoreState.y);
+      }
+    }, 80);
+
+    return () => {
+      cancelAnimationFrame(frameId);
+      clearTimeout(timerId);
+    };
+  }, [selectedSessionId, detailLoading, detailPayload, matchPayload]);
 
   useEffect(() => {
     let cancelled = false;
@@ -548,7 +663,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
           setMatchPayload(data);
         }
       } else {
-        await createTeamTrainingSession(teamId, {
+        const data = await createTeamTrainingSession(teamId, {
           title: newEventType === "fundraiser" ? "Fundraiser" : newSessionTitle.trim(),
           session_type: "training",
           scheduled_date: newSessionDate,
@@ -564,6 +679,22 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
             : "Training added. Check notify options if families should get an in-app alert.",
         );
         setNewSessionTitle("");
+        if (data?.session) {
+          setListPayload((current) => {
+            const currentSessions = current?.sessions || [];
+            const nextSessions = [
+              data.session,
+              ...currentSessions.filter((session) => Number(session.id) !== Number(data.session.id)),
+            ];
+            return {
+              ...(current || {}),
+              team: current?.team || null,
+              can_manage_training: current?.can_manage_training ?? true,
+              sessions: nextSessions,
+            };
+          });
+          setSelectedSessionId(data.session.id);
+        }
       }
 
       setNewSessionLocation("");
@@ -1233,7 +1364,12 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
       ) : null}
 
       <div className="coach-attendance-layout">
-        <div className="team-training-panel">
+        <div
+          className={`team-training-panel team-training-panel--session-list${
+            selectedSessionId ? " has-session-selected" : " has-no-session-selected"
+          }`}
+          ref={sessionListPanelRef}
+        >
           <div className="team-training-panel__header">
             <h2 style={{ fontSize: "1.05rem", margin: 0 }}>Sessions</h2>
           </div>
@@ -1250,7 +1386,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
                   >
                     <button
                       type="button"
-                      onClick={() => setSelectedSessionId(session.id)}
+                      onClick={() => handleSelectSession(session.id)}
                       className="coach-session-select-btn"
                       style={{
                         width: "100%",
@@ -1301,7 +1437,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
           )}
         </div>
 
-        <div className="team-training-panel">
+        <div className="team-training-panel team-training-panel--session-detail" ref={sessionDetailPanelRef}>
           <div className="team-training-panel__header">
             <h2 style={{ fontSize: "1.05rem", margin: 0 }}>Roster &amp; status</h2>
           </div>
