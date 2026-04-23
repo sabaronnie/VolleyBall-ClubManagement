@@ -39,6 +39,7 @@ from .views import (
     me,
     member_hub_dashboard,
     parent_child_attendance_history,
+    player_self_performance_history,
     pending_player_parent_invitation_reviews,
     player_team_attendance_summary,
     request_parent_link_to_player,
@@ -272,6 +273,11 @@ urlpatterns = [
         "teams/<int:team_id>/players/<int:player_id>/attendance/summary/",
         player_team_attendance_summary,
         name="player-team-attendance-summary",
+    ),
+    path(
+        "teams/<int:team_id>/players/me/performance-history/",
+        player_self_performance_history,
+        name="player-self-performance-history",
     ),
     path(
         "teams/<int:team_id>/coach-dashboard/",
