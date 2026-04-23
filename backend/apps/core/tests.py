@@ -4695,6 +4695,86 @@ class SharedMatchRequestFlowTests(TestCase):
         self.assertEqual(invalid_manual_score.status_code, 400)
         self.assertIn("derived", invalid_manual_score.json()["errors"]["opponent_final_score"].lower())
 
+    def test_standings_update_automatically_after_match_result_entry(self):
+        fx = self._fixture()
+        session = TrainingSession.objects.create(
+            team=fx["team_a"],
+            created_by=fx["coach_a"],
+            title="Match vs Club Rivals",
+            session_type=TrainingSession.SessionType.MATCH,
+            scheduled_date=timezone.localdate(),
+            start_time=(timezone.localtime() - timedelta(minutes=65)).time().replace(second=0, microsecond=0),
+            end_time=(timezone.localtime() + timedelta(minutes=15)).time().replace(second=0, microsecond=0),
+            location="Main Arena",
+            opponent="Club Rivals",
+            match_type=TrainingSession.MatchType.FRIENDLY,
+        )
+        MatchPlayerStat.objects.create(
+            training_session=session,
+            player=fx["player_a"],
+            points_scored=18,
+            blocks=2,
+            updated_by=fx["coach_a"],
+        )
+
+        standings_before = self.client.get(
+            reverse("core:team-standings", kwargs={"team_id": fx["team_a"].id}),
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_a'])}",
+        )
+        self.assertEqual(standings_before.status_code, 200)
+        self.assertEqual(standings_before.json()["standings"]["matches_played"], 0)
+
+        end_response = self.client.post(
+            reverse("core:end-match", kwargs={"match_id": session.id}),
+            data=json.dumps({"opponent_final_score": 16}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_a'])}",
+        )
+        self.assertEqual(end_response.status_code, 200)
+
+        standings_after_end = self.client.get(
+            reverse("core:team-standings", kwargs={"team_id": fx["team_a"].id}),
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_a'])}",
+        )
+        self.assertEqual(standings_after_end.status_code, 200)
+        self.assertEqual(standings_after_end.json()["standings"]["matches_played"], 1)
+        self.assertEqual(standings_after_end.json()["standings"]["wins"], 1)
+        self.assertEqual(standings_after_end.json()["standings"]["losses"], 0)
+
+        duplicate_end = self.client.post(
+            reverse("core:end-match", kwargs={"match_id": session.id}),
+            data=json.dumps({"opponent_final_score": 16}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_a'])}",
+        )
+        self.assertEqual(duplicate_end.status_code, 400)
+
+        standings_after_duplicate_end = self.client.get(
+            reverse("core:team-standings", kwargs={"team_id": fx["team_a"].id}),
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_a'])}",
+        )
+        self.assertEqual(standings_after_duplicate_end.status_code, 200)
+        self.assertEqual(standings_after_duplicate_end.json()["standings"]["matches_played"], 1)
+        self.assertEqual(standings_after_duplicate_end.json()["standings"]["wins"], 1)
+        self.assertEqual(standings_after_duplicate_end.json()["standings"]["losses"], 0)
+
+        resume_response = self.client.post(
+            reverse("core:resume-match", kwargs={"match_id": session.id}),
+            data=json.dumps({}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_a'])}",
+        )
+        self.assertEqual(resume_response.status_code, 200)
+
+        standings_after_resume = self.client.get(
+            reverse("core:team-standings", kwargs={"team_id": fx["team_a"].id}),
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_a'])}",
+        )
+        self.assertEqual(standings_after_resume.status_code, 200)
+        self.assertEqual(standings_after_resume.json()["standings"]["matches_played"], 0)
+        self.assertEqual(standings_after_resume.json()["standings"]["wins"], 0)
+        self.assertEqual(standings_after_resume.json()["standings"]["losses"], 0)
+
 
 class TeamStandingsApiTests(TestCase):
     def setUp(self):
