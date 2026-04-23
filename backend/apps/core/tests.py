@@ -4640,6 +4640,66 @@ class SharedMatchRequestFlowTests(TestCase):
         self.assertIn("scheduled_date", response.json()["errors"])
         self.assertIn("past", str(response.json()["errors"]["scheduled_date"]).lower())
 
+    def test_player_can_view_own_performance_history(self):
+        fx = self._fixture()
+        session = TrainingSession.objects.create(
+            team=fx["team_a"],
+            created_by=fx["coach_a"],
+            title="Match vs Shared Team B",
+            session_type=TrainingSession.SessionType.MATCH,
+            scheduled_date=timezone.localdate() - timedelta(days=1),
+            start_time=time(18, 0),
+            end_time=time(19, 30),
+            location="Court 1",
+            opponent=fx["team_b"].name,
+            opponent_team=fx["team_b"],
+            match_type=TrainingSession.MatchType.FRIENDLY,
+            match_request_status=TrainingSession.MatchRequestStatus.ACCEPTED,
+            match_ended_at=timezone.now(),
+        )
+        MatchPlayerStat.objects.create(
+            training_session=session,
+            player=fx["player_a"],
+            points_scored=8,
+            aces=2,
+            blocks=1,
+            assists=3,
+            errors=1,
+            digs=4,
+            updated_by=fx["coach_a"],
+        )
+        MatchPlayerStat.objects.create(
+            training_session=session,
+            player=fx["player_b"],
+            points_scored=11,
+            aces=1,
+            blocks=0,
+            assists=2,
+            errors=2,
+            digs=5,
+            updated_by=fx["coach_b"],
+        )
+
+        response = self.client.get(
+            reverse("core:player-self-performance-history", kwargs={"team_id": fx["team_a"].id}),
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['player_a'])}",
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["player"]["id"], fx["player_a"].id)
+        self.assertEqual(body["count"], 1)
+        self.assertEqual(body["history"][0]["stats"]["points_scored"], 8)
+        self.assertEqual(body["history"][0]["opponent"], fx["team_b"].name)
+
+    def test_non_player_cannot_view_player_self_performance_history(self):
+        fx = self._fixture()
+        response = self.client.get(
+            reverse("core:player-self-performance-history", kwargs={"team_id": fx["team_a"].id}),
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_a'])}",
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("players", response.json()["errors"]["authorization"].lower())
+
     def test_opponent_player_can_confirm_shared_match_after_acceptance(self):
         fx = self._fixture()
         session = TrainingSession.objects.create(
