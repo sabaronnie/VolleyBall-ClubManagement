@@ -17,6 +17,17 @@ const METRIC_OPTIONS = [
   { key: "errors", label: "Errors" },
   { key: "serveEfficiency", label: "Serve Efficiency" },
 ];
+const MAX_COMPARE_MATCHES = 4;
+const MATCH_METRIC_KEYS = [
+  "weightedScore",
+  "points",
+  "aces",
+  "blocks",
+  "assists",
+  "digs",
+  "errors",
+  "serveEfficiency",
+];
 
 function dateTimeValue(session) {
   if (!session?.scheduled_date) return Number.NaN;
@@ -47,6 +58,7 @@ export default function CoachPlayerSearchPage({ activeTeam }) {
   const [urlTeamId, setUrlTeamId] = useState(null);
   const [selectedPlayerId, setSelectedPlayerId] = useState(null);
   const [selectedMetricKey, setSelectedMetricKey] = useState("weightedScore");
+  const [selectedComparisonMatchIds, setSelectedComparisonMatchIds] = useState([]);
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState("");
   const [profilePayload, setProfilePayload] = useState(null);
@@ -350,6 +362,74 @@ export default function CoachPlayerSearchPage({ activeTeam }) {
   const selectedMetricAverage = selectedMetricValues.length
     ? (selectedMetricValues.reduce((sum, value) => sum + value, 0) / selectedMetricValues.length).toFixed(1)
     : null;
+  const performanceRowsById = useMemo(
+    () => new Map(performanceRows.map((row) => [Number(row.matchId), row])),
+    [performanceRows],
+  );
+  const selectedComparisonRows = useMemo(
+    () =>
+      selectedComparisonMatchIds
+        .map((id) => performanceRowsById.get(Number(id)))
+        .filter(Boolean),
+    [performanceRowsById, selectedComparisonMatchIds],
+  );
+  const selectedComparisonRowsByDate = useMemo(
+    () =>
+      [...selectedComparisonRows].sort((left, right) => {
+        const leftMs = dateTimeValue({ scheduled_date: left.scheduledDate });
+        const rightMs = dateTimeValue({ scheduled_date: right.scheduledDate });
+        if (leftMs !== rightMs) {
+          return leftMs - rightMs;
+        }
+        return Number(left.matchId) - Number(right.matchId);
+      }),
+    [selectedComparisonRows],
+  );
+  const comparisonTrend = useMemo(() => {
+    if (selectedComparisonRowsByDate.length < 2) {
+      return null;
+    }
+    const first = selectedComparisonRowsByDate[0];
+    const last = selectedComparisonRowsByDate[selectedComparisonRowsByDate.length - 1];
+    const firstValue = Number(first?.[selectedMetric.key] || 0);
+    const lastValue = Number(last?.[selectedMetric.key] || 0);
+    const delta = lastValue - firstValue;
+    const almostEqual = Math.abs(delta) < 0.001;
+    const isLowerBetter = selectedMetric.key === "errors";
+    if (almostEqual) {
+      return {
+        label: "Consistent",
+        color: "#4b5563",
+        deltaText: formatMetricValue(selectedMetric.key, 0),
+      };
+    }
+    const improved = isLowerBetter ? delta < 0 : delta > 0;
+    return {
+      label: improved ? "Improved" : "Regressed",
+      color: improved ? "#0f9f6e" : "#b42318",
+      deltaText: `${delta > 0 ? "+" : ""}${formatMetricValue(selectedMetric.key, delta)}`,
+    };
+  }, [selectedComparisonRowsByDate, selectedMetric]);
+
+  useEffect(() => {
+    const validIds = new Set(performanceRows.map((row) => Number(row.matchId)));
+    setSelectedComparisonMatchIds((current) =>
+      current.filter((id) => validIds.has(Number(id))),
+    );
+  }, [performanceRows]);
+
+  const toggleComparisonMatch = (matchId) => {
+    const normalizedId = Number(matchId);
+    setSelectedComparisonMatchIds((current) => {
+      if (current.includes(normalizedId)) {
+        return current.filter((id) => id !== normalizedId);
+      }
+      if (current.length >= MAX_COMPARE_MATCHES) {
+        return current;
+      }
+      return [...current, normalizedId];
+    });
+  };
 
   return (
     <section className="teams-page-shell">
@@ -530,9 +610,13 @@ export default function CoachPlayerSearchPage({ activeTeam }) {
             )}
             {performanceRows.length ? (
               <div style={{ overflowX: "auto", marginTop: "0.35rem" }}>
+                <div className="vc-modal__muted" style={{ marginBottom: "0.55rem" }}>
+                  Select matches to compare ({selectedComparisonRows.length}/{MAX_COMPARE_MATCHES} selected)
+                </div>
                 <table className="vc-table" style={{ fontSize: "0.88rem", width: "100%" }}>
                   <thead>
                     <tr>
+                      <th>Compare</th>
                       <th>Date</th>
                       <th>Opponent</th>
                       <th style={selectedMetricKey === "weightedScore" ? { background: "#eef4ff" } : undefined}>Score</th>
@@ -548,6 +632,18 @@ export default function CoachPlayerSearchPage({ activeTeam }) {
                   <tbody>
                     {[...performanceRows].reverse().map((row) => (
                       <tr key={row.matchId}>
+                        <td>
+                          <input
+                            type="checkbox"
+                            aria-label={`Compare match ${row.scheduledDate} vs ${row.opponent}`}
+                            checked={selectedComparisonMatchIds.includes(Number(row.matchId))}
+                            onChange={() => toggleComparisonMatch(row.matchId)}
+                            disabled={
+                              !selectedComparisonMatchIds.includes(Number(row.matchId)) &&
+                              selectedComparisonMatchIds.length >= MAX_COMPARE_MATCHES
+                            }
+                          />
+                        </td>
                         <td>{row.scheduledDate}</td>
                         <td>{row.opponent}</td>
                         <td style={selectedMetricKey === "weightedScore" ? { background: "#f5f8ff", fontWeight: 700 } : undefined}>
@@ -567,6 +663,115 @@ export default function CoachPlayerSearchPage({ activeTeam }) {
                   </tbody>
                 </table>
               </div>
+            ) : null}
+            {selectedComparisonRows.length >= 2 ? (
+              <section
+                style={{
+                  marginTop: "0.75rem",
+                  border: "1px solid #e6e9ef",
+                  borderRadius: "10px",
+                  padding: "0.8rem",
+                  background: "#fcfdff",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", alignItems: "center", flexWrap: "wrap" }}>
+                  <h3 style={{ margin: 0, fontSize: "0.94rem" }}>Match comparison</h3>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.7rem", flexWrap: "wrap" }}>
+                    {comparisonTrend ? (
+                      <span className="vc-modal__muted">
+                        {selectedMetric.label} trend:{" "}
+                        <strong style={{ color: comparisonTrend.color }}>
+                          {comparisonTrend.label} ({comparisonTrend.deltaText})
+                        </strong>
+                      </span>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="team-card__button team-card__button--ghost"
+                      style={{ padding: "0.45rem 0.75rem", fontSize: "0.82rem" }}
+                      onClick={() => setSelectedComparisonMatchIds([])}
+                    >
+                      Clear selection
+                    </button>
+                  </div>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem", marginTop: "0.6rem" }}>
+                  {METRIC_OPTIONS.map((option) => (
+                    <button
+                      key={`metric-quick-${option.key}`}
+                      type="button"
+                      onClick={() => setSelectedMetricKey(option.key)}
+                      style={{
+                        border: "1px solid #d8dee8",
+                        borderRadius: "999px",
+                        padding: "0.3rem 0.65rem",
+                        fontSize: "0.78rem",
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        color: selectedMetricKey === option.key ? "#1d4ed8" : "#374151",
+                        background: selectedMetricKey === option.key ? "#eef4ff" : "#ffffff",
+                      }}
+                      aria-pressed={selectedMetricKey === option.key}
+                      title={`Set trend metric to ${option.label}`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ overflowX: "auto", marginTop: "0.55rem" }}>
+                  <table className="vc-table" style={{ fontSize: "0.86rem" }}>
+                    <thead>
+                      <tr>
+                        <th>Metric</th>
+                        {selectedComparisonRowsByDate.map((row, index) => (
+                          <th key={`cmp-head-${row.matchId}`}>
+                            {formatMatchDate(row.scheduledDate)} · {row.opponent || "Opponent"} #{index + 1}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {MATCH_METRIC_KEYS.map((metricKey) => {
+                        const metricMeta = METRIC_OPTIONS.find((option) => option.key === metricKey);
+                        return (
+                          <tr key={`cmp-row-${metricKey}`}>
+                            <td style={metricKey === selectedMetricKey ? { background: "#f5f8ff", fontWeight: 700 } : undefined}>
+                              <button
+                                type="button"
+                                onClick={() => setSelectedMetricKey(metricKey)}
+                                style={{
+                                  border: "none",
+                                  background: "none",
+                                  padding: 0,
+                                  font: "inherit",
+                                  fontWeight: "inherit",
+                                  color: "inherit",
+                                  cursor: "pointer",
+                                }}
+                                title={`Compare trend by ${metricMeta?.label || metricKey}`}
+                              >
+                                {metricMeta?.label || metricKey}
+                              </button>
+                            </td>
+                            {selectedComparisonRowsByDate.map((row) => (
+                              <td
+                                key={`cmp-cell-${metricKey}-${row.matchId}`}
+                                style={metricKey === selectedMetricKey ? { background: "#f5f8ff", fontWeight: 700 } : undefined}
+                              >
+                                {formatMetricValue(metricKey, row?.[metricKey])}
+                              </td>
+                            ))}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            ) : selectedComparisonRows.length === 1 ? (
+              <p className="vc-modal__muted" style={{ margin: "0.7rem 0 0" }}>
+                Select at least one more match to compare this player&apos;s performance.
+              </p>
             ) : null}
           </div>
         ) : (
