@@ -83,6 +83,8 @@ class TrainingSession(models.Model):
         blank=True,
         related_name="opponent_training_sessions",
     )
+    match_ended_at = models.DateTimeField(null=True, blank=True)
+    opponent_final_score = models.PositiveIntegerField(null=True, blank=True)
     match_type = models.CharField(
         max_length=20,
         choices=MatchType.choices,

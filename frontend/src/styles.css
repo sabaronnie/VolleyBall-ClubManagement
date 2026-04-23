@@ -1318,6 +1318,188 @@ button {
   font-weight: 800;
 }
 
+.match-stats-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-end;
+  margin-bottom: 0.95rem;
+}
+
+.match-stat-input--compact {
+  min-width: 180px;
+  max-width: 220px;
+}
+
+.match-secondary-btn {
+  border: 1px solid #cdd5df;
+  border-radius: 999px;
+  background: #fff;
+  color: #24315b;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 800;
+  padding: 0.7rem 1rem;
+}
+
+.match-secondary-btn:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.match-final-summary {
+  margin-bottom: 1rem;
+  padding: 1rem;
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at top right, rgba(37, 99, 235, 0.12), transparent 30%),
+    linear-gradient(180deg, #f9fbff, #eef6ff);
+  border: 1px solid #d8e5fb;
+}
+
+.match-final-summary__hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+}
+
+.match-final-summary__eyebrow {
+  margin: 0 0 0.35rem;
+  color: #2563eb;
+  font-size: 0.76rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.match-final-summary__hero h5 {
+  margin: 0;
+  color: #101828;
+  font-size: 1.35rem;
+  line-height: 1.1;
+}
+
+.match-final-summary__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.75rem;
+}
+
+.match-final-summary__cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.match-summary-card {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.8rem 0.9rem;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(191, 219, 254, 0.9);
+}
+
+.match-summary-card span {
+  color: #2563eb;
+  font-size: 0.76rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.match-summary-card strong {
+  color: #101828;
+  font-size: 0.98rem;
+  line-height: 1.35;
+}
+
+.match-score-rings {
+  display: flex;
+  gap: 0.9rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.match-score-rings__item {
+  display: grid;
+  gap: 0.45rem;
+  justify-items: center;
+  text-align: center;
+  min-width: 88px;
+}
+
+.match-score-rings__item span {
+  color: #475467;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.match-score-rings__disc {
+  --match-ring-fill: 30%;
+  width: 88px;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(circle at center, #fff 0 56%, transparent 57%),
+    conic-gradient(#98a2b3 var(--match-ring-fill), rgba(152, 162, 179, 0.18) 0);
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.12);
+}
+
+.match-score-rings__disc--context {
+  background:
+    radial-gradient(circle at center, #fff 0 56%, transparent 57%),
+    conic-gradient(#2563eb var(--match-ring-fill), rgba(37, 99, 235, 0.14) 0);
+}
+
+.match-score-rings__disc strong {
+  color: #101828;
+  font-size: 1.45rem;
+  line-height: 1;
+}
+
+.match-score-bars {
+  display: grid;
+  gap: 0.7rem;
+  margin-top: 1rem;
+}
+
+.match-score-bars__row {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.match-score-bars__label {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  color: #344054;
+  font-size: 0.88rem;
+}
+
+.match-score-bars__track {
+  height: 12px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.14);
+  overflow: hidden;
+}
+
+.match-score-bars__fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #98a2b3, #cbd5e1);
+}
+
+.match-score-bars__fill.is-context {
+  background: linear-gradient(90deg, #2563eb, #22c55e);
+}
+
 .match-player-stat-list {
   display: grid;
   gap: 0.6rem;
@@ -1391,10 +1573,20 @@ button {
 
   .match-create-panel__head,
   .match-stats-panel__head,
+  .match-final-summary__hero,
   .match-player-stat-card__trigger,
   .live-match-banner,
   .workspace-match-request-banner {
     align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .match-final-summary__cards {
+    grid-template-columns: 1fr;
+  }
+
+  .match-stats-toolbar {
+    align-items: stretch;
     flex-direction: column;
   }
 
@@ -1434,6 +1626,11 @@ button {
 .training-status-badge--cancelled {
   background: rgba(190, 46, 46, 0.1);
   color: #a12828;
+}
+
+.training-status-badge--ended {
+  background: rgba(37, 99, 235, 0.1);
+  color: #1d4ed8;
 }
 
 .training-session-card__location,

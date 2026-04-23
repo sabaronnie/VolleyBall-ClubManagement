@@ -504,6 +504,12 @@ def _serialize_training_session(session, viewer, team, player_memberships):
         "notify_parents": session.notify_parents,
         "status": session.status,
         "status_label": session.get_status_display(),
+        "is_ended": bool(session.match_ended_at) if session.session_type == TrainingSession.SessionType.MATCH else False,
+        "ended_at": (
+            session.match_ended_at.isoformat()
+            if session.session_type == TrainingSession.SessionType.MATCH and session.match_ended_at
+            else None
+        ),
         "can_edit": viewer_can_manage and team.id == session.team_id,
         "can_cancel": viewer_can_manage and team.id == session.team_id and session.status != TrainingSession.Status.CANCELLED,
         "confirmed_count": confirmed_count,
@@ -584,6 +590,12 @@ def _serialize_coach_training_session_attendance(session, team, player_membershi
         "notes": session.notes,
         "status": session.status,
         "status_label": session.get_status_display(),
+        "is_ended": bool(session.match_ended_at) if session.session_type == TrainingSession.SessionType.MATCH else False,
+        "ended_at": (
+            session.match_ended_at.isoformat()
+            if session.session_type == TrainingSession.SessionType.MATCH and session.match_ended_at
+            else None
+        ),
         "team": _serialize_team(team),
         "players": players_out,
         "summary": session_roster_summary(session, player_memberships, conf_pairs),
@@ -614,6 +626,126 @@ def _empty_match_stats():
     return {field: 0 for field in MATCH_STAT_FIELDS}
 
 
+def _parse_non_negative_int(raw_value, field_name):
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError({field_name: "Use a whole number."}) from exc
+    if value < 0:
+        raise ValidationError({field_name: "Use zero or a positive number."})
+    return value
+
+
+def _match_start_datetime(session):
+    start_dt = datetime.combine(session.scheduled_date, session.start_time)
+    if timezone.is_naive(start_dt):
+        return timezone.make_aware(start_dt, timezone.get_current_timezone())
+    return start_dt
+
+
+def _format_duration_label(duration_minutes):
+    if duration_minutes is None:
+        return ""
+    hours, minutes = divmod(max(int(duration_minutes), 0), 60)
+    if hours and minutes:
+        return f"{hours}h {minutes}m"
+    if hours:
+        return f"{hours}h"
+    return f"{minutes}m"
+
+
+def _build_match_score_summary(session, team, team_points):
+    context_score = team_points.get(team.id, 0)
+    counterparty = _session_counterparty_team(session, team) if _match_is_shared(session) else None
+    opponent_name = counterparty.name if counterparty is not None else (_display_match_opponent(session, team) or "Opponent")
+    opponent_score = (
+        team_points.get(counterparty.id, 0)
+        if counterparty is not None
+        else session.opponent_final_score
+    )
+
+    score_rows = [
+        {
+            "team_id": team.id,
+            "team_name": team.name,
+            "score": context_score,
+            "is_context_team": True,
+        }
+    ]
+    if counterparty is not None:
+        score_rows.append(
+            {
+                "team_id": counterparty.id,
+                "team_name": counterparty.name,
+                "score": opponent_score if opponent_score is not None else 0,
+                "is_context_team": False,
+            }
+        )
+    elif opponent_name:
+        score_rows.append(
+            {
+                "team_id": None,
+                "team_name": opponent_name,
+                "score": opponent_score,
+                "is_context_team": False,
+            }
+        )
+
+    result = "pending"
+    winner_name = None
+    loser_name = None
+    result_label = "Opponent score needed"
+    if opponent_score is not None:
+        if context_score > opponent_score:
+            result = "win"
+            winner_name = team.name
+            loser_name = opponent_name
+            result_label = f"{team.name} won"
+        elif context_score < opponent_score:
+            result = "loss"
+            winner_name = opponent_name
+            loser_name = team.name
+            result_label = f"{team.name} lost"
+        else:
+            result = "draw"
+            result_label = "Draw"
+
+    duration_minutes = None
+    duration_label = ""
+    if session.match_ended_at:
+        duration_minutes = max(
+            int((session.match_ended_at - _match_start_datetime(session)).total_seconds() // 60),
+            0,
+        )
+        duration_label = _format_duration_label(duration_minutes)
+
+    tournament_label = (
+        "Tournament"
+        if session.match_type == TrainingSession.MatchType.TOURNAMENT
+        else "Friendly"
+    )
+
+    return {
+        "score_rows": score_rows,
+        "final_score_label": (
+            f"{team.name} {context_score} - {opponent_score} {opponent_name}"
+            if opponent_score is not None
+            else f"{team.name} {context_score} - ? {opponent_name}"
+        ),
+        "your_team_name": team.name,
+        "your_team_score": context_score,
+        "opponent_name": opponent_name,
+        "opponent_score": opponent_score,
+        "winner_name": winner_name,
+        "loser_name": loser_name,
+        "result": result,
+        "result_label": result_label,
+        "duration_minutes": duration_minutes,
+        "duration_label": duration_label,
+        "tournament_label": tournament_label,
+    }
+
+
 def _serialize_match_detail(session, team, player_memberships, viewer):
     stats_by_player_id = {
         row.player_id: row
@@ -629,6 +761,8 @@ def _serialize_match_detail(session, team, player_memberships, viewer):
     team_points = defaultdict(int)
     mvp = None
     has_recorded_stats = False
+    viewer_can_manage_match = _can_manage_match_stats(viewer, session)
+    is_match_ended = bool(session.match_ended_at)
 
     for membership in player_memberships:
         player = membership.user
@@ -672,6 +806,8 @@ def _serialize_match_detail(session, team, player_memberships, viewer):
                 "weighted_score": round(weighted_score, 2),
             }
 
+    score_summary = _build_match_score_summary(session, team, team_points)
+
     return {
         "id": session.id,
         "team": _serialize_team(team),
@@ -685,7 +821,23 @@ def _serialize_match_detail(session, team, player_memberships, viewer):
         "opponent_team_id": session.opponent_team_id,
         "status": session.status,
         "status_label": session.get_status_display(),
-        "can_manage_stats": _can_manage_match_stats(viewer, session),
+        "is_ended": is_match_ended,
+        "ended_at": session.match_ended_at.isoformat() if session.match_ended_at else None,
+        "can_manage_stats": (
+            viewer_can_manage_match
+            and session.status != TrainingSession.Status.CANCELLED
+            and not is_match_ended
+        ),
+        "can_end_match": (
+            viewer_can_manage_match
+            and session.status != TrainingSession.Status.CANCELLED
+            and not is_match_ended
+        ),
+        "can_resume_match": (
+            viewer_can_manage_match
+            and session.status != TrainingSession.Status.CANCELLED
+            and is_match_ended
+        ),
         "is_shared_match": _match_is_shared(session),
         **_serialize_match_request_flags(session, viewer, team),
         "summary": {
@@ -693,6 +845,7 @@ def _serialize_match_detail(session, team, player_memberships, viewer):
             "mvp_suggestion": mvp if has_recorded_stats else None,
             "player_count": len(players),
             "confirmed_count": len([row for row in players if row["is_confirmed"]]),
+            "final_score": score_summary,
             "team_totals": [
                 {
                     "team_id": candidate.id,
@@ -3791,6 +3944,19 @@ def match_detail(request, match_id):
     )
 
 
+def _match_management_context(request, match_id):
+    session = _get_match_session_or_404(match_id)
+    team = _resolve_session_context_team(request, session)
+    if team is None or not _can_manage_match_stats(request.user, session):
+        return None, None, JsonResponse(
+            {"errors": {"team": "Only coaches or directors can manage this match."}},
+            status=403,
+        )
+    if session.status == TrainingSession.Status.CANCELLED:
+        return None, None, JsonResponse({"errors": {"match": "Cancelled matches cannot be updated."}}, status=400)
+    return session, team, None
+
+
 def _ensure_match_stat_player(session, player_id):
     try:
         player_id = int(player_id)
@@ -3819,6 +3985,8 @@ def create_match_stats(request, match_id):
             {"errors": {"team": "Only coaches or directors can edit match stats."}},
             status=403,
         )
+    if session.match_ended_at:
+        return JsonResponse({"errors": {"match": "Resume the match to edit stats."}}, status=400)
 
     payload = _parse_json_request(request)
     if payload is None:
@@ -3870,6 +4038,8 @@ def update_match_player_stats(request, match_id, player_id):
             {"errors": {"team": "Only coaches or directors can edit match stats."}},
             status=403,
         )
+    if session.match_ended_at:
+        return JsonResponse({"errors": {"match": "Resume the match to edit stats."}}, status=400)
 
     player = _ensure_match_stat_player(session, player_id)
     if player is None:
@@ -3898,6 +4068,93 @@ def update_match_player_stats(request, match_id, player_id):
     return JsonResponse(
         {
             "message": "Player stats saved.",
+            "match": _serialize_match_detail(session, team, _build_match_player_memberships(session, team), request.user),
+        }
+    )
+
+
+@login_required
+@require_POST
+@csrf_exempt
+def end_match(request, match_id):
+    session, team, error = _match_management_context(request, match_id)
+    if error is not None:
+        return error
+    if session.match_ended_at:
+        return JsonResponse({"errors": {"match": "This match has already ended."}}, status=400)
+
+    payload = _parse_json_request(request)
+    if payload is None:
+        payload = {}
+    if not isinstance(payload, dict):
+        return JsonResponse({"errors": {"body": "Invalid JSON."}}, status=400)
+
+    raw_opponent_score = payload.get("opponent_final_score")
+    if _match_is_shared(session):
+        opponent_final_score = None
+        if raw_opponent_score not in (None, ""):
+            try:
+                opponent_final_score = _parse_non_negative_int(raw_opponent_score, "opponent_final_score")
+            except ValidationError as exc:
+                return JsonResponse({"errors": exc.message_dict}, status=400)
+    else:
+        if raw_opponent_score in (None, ""):
+            return JsonResponse(
+                {"errors": {"opponent_final_score": "Enter the opponent's final score before ending the match."}},
+                status=400,
+            )
+        try:
+            opponent_final_score = _parse_non_negative_int(raw_opponent_score, "opponent_final_score")
+        except ValidationError as exc:
+            return JsonResponse({"errors": exc.message_dict}, status=400)
+
+    with transaction.atomic():
+        locked_session = (
+            TrainingSession.objects.select_for_update()
+            .select_related("team__club", "opponent_team__club")
+            .get(pk=session.pk)
+        )
+        if locked_session.match_ended_at:
+            return JsonResponse({"errors": {"match": "This match has already ended."}}, status=400)
+        locked_session.match_ended_at = timezone.now()
+        locked_session.opponent_final_score = opponent_final_score
+        locked_session.save(update_fields=["match_ended_at", "opponent_final_score", "updated_at"])
+
+    session = _get_match_session_or_404(match_id)
+    return JsonResponse(
+        {
+            "message": "Match ended. Final summary is now available.",
+            "match": _serialize_match_detail(session, team, _build_match_player_memberships(session, team), request.user),
+        }
+    )
+
+
+@login_required
+@require_POST
+@csrf_exempt
+def resume_match(request, match_id):
+    session, team, error = _match_management_context(request, match_id)
+    if error is not None:
+        return error
+    if not session.match_ended_at:
+        return JsonResponse({"errors": {"match": "This match is already live."}}, status=400)
+
+    with transaction.atomic():
+        locked_session = (
+            TrainingSession.objects.select_for_update()
+            .select_related("team__club", "opponent_team__club")
+            .get(pk=session.pk)
+        )
+        if not locked_session.match_ended_at:
+            return JsonResponse({"errors": {"match": "This match is already live."}}, status=400)
+        locked_session.match_ended_at = None
+        locked_session.opponent_final_score = None
+        locked_session.save(update_fields=["match_ended_at", "opponent_final_score", "updated_at"])
+
+    session = _get_match_session_or_404(match_id)
+    return JsonResponse(
+        {
+            "message": "Match resumed. You can keep updating stats.",
             "match": _serialize_match_detail(session, team, _build_match_player_memberships(session, team), request.user),
         }
     )

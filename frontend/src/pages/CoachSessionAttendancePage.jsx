@@ -3,12 +3,14 @@ import {
   cancelTrainingSession,
   createMatch,
   createTeamTrainingSession,
+  endMatch,
   fetchCoachTrainingSessionAttendance,
   fetchCurrentUser,
   fetchMatch,
   fetchTeamAttendanceAnalytics,
   fetchTeamTrainingSessions,
   remindUnconfirmedTrainingSession,
+  resumeMatch,
   updateMatchPlayerStats,
 } from "../api";
 import InlineDropdown from "../components/InlineDropdown";
@@ -27,6 +29,13 @@ function statusBadgeClass(status) {
   if (status === "absent") return "vc-status-overdue";
   if (status === "cancelled") return "vc-modal__muted";
   return "";
+}
+
+function matchResultBadgeClass(result) {
+  if (result === "win") return "vc-status-paid";
+  if (result === "loss") return "vc-status-overdue";
+  if (result === "draw") return "vc-status-pending";
+  return "vc-modal__muted";
 }
 
 function engagementBadgeClass(flag) {
@@ -55,6 +64,18 @@ function sessionHasStarted(session) {
   const startTime = typeof session.start_time === "string" && session.start_time ? session.start_time.slice(0, 5) : "00:00";
   const dt = new Date(`${session.scheduled_date}T${startTime}:00`);
   return Number.isFinite(dt.getTime()) ? dt.getTime() <= Date.now() : false;
+}
+
+function formatDateTimeLabel(isoString) {
+  if (!isoString) return "";
+  const dt = new Date(isoString);
+  if (!Number.isFinite(dt.getTime())) return "";
+  return dt.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 const MATCH_STAT_FIELDS = [
@@ -270,6 +291,10 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
   const [expandedMatchPlayerId, setExpandedMatchPlayerId] = useState(null);
   const [savingStatsByPlayerId, setSavingStatsByPlayerId] = useState({});
   const [statsSaveError, setStatsSaveError] = useState("");
+  const [endMatchBusy, setEndMatchBusy] = useState(false);
+  const [endMatchError, setEndMatchError] = useState("");
+  const [endMatchMessage, setEndMatchMessage] = useState("");
+  const [opponentFinalScoreInput, setOpponentFinalScoreInput] = useState("");
   const statsSaveTimersRef = useRef({});
   const [remindBusy, setRemindBusy] = useState(false);
   const [remindMessage, setRemindMessage] = useState("");
@@ -463,6 +488,9 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
     setExpandedMatchPlayerId(null);
     setSavingStatsByPlayerId({});
     setStatsSaveError("");
+    setEndMatchError("");
+    setEndMatchMessage("");
+    setOpponentFinalScoreInput("");
     setRemindMessage("");
     setRemindError("");
     setCancelMessage("");
@@ -571,6 +599,8 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
     setRemindError("");
     setCancelMessage("");
     setCancelError("");
+    setEndMatchError("");
+    setEndMatchMessage("");
     void loadDetail(selectedSessionId);
   }, [selectedSessionId, loadDetail]);
 
@@ -596,10 +626,16 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
     if (detailPayload?.session?.session_type !== "match") {
       setMatchPayload(null);
       setExpandedMatchPlayerId(null);
+      setOpponentFinalScoreInput("");
       return;
     }
     void loadMatchDetail(detailPayload.session.id);
   }, [detailPayload, loadMatchDetail]);
+
+  useEffect(() => {
+    const score = matchPayload?.match?.summary?.final_score?.opponent_score;
+    setOpponentFinalScoreInput(score == null ? "" : String(score));
+  }, [matchPayload?.match?.id, matchPayload?.match?.summary?.final_score?.opponent_score]);
 
   const canManageTraining = Boolean(listPayload?.can_manage_training);
 
@@ -795,6 +831,63 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
     }
   }, [teamId, detailPayload, loadList, loadDetail, analyticsExpanded, loadAnalytics]);
 
+  const onEndMatch = useCallback(async () => {
+    const match = matchPayload?.match;
+    const sess = detailPayload?.session;
+    if (!teamId || !match?.id || !sess || !match.can_end_match) {
+      return;
+    }
+
+    const payload = {};
+    if (!match.is_shared_match) {
+      const trimmedScore = String(opponentFinalScoreInput || "").trim();
+      if (!trimmedScore) {
+        setEndMatchError("Enter the opponent's final score before ending the match.");
+        return;
+      }
+      payload.opponent_final_score = trimmedScore;
+    } else if (String(opponentFinalScoreInput || "").trim() !== "") {
+      payload.opponent_final_score = String(opponentFinalScoreInput).trim();
+    }
+
+    setEndMatchBusy(true);
+    setEndMatchError("");
+    setEndMatchMessage("");
+    try {
+      const data = await endMatch(match.id, payload, teamId);
+      setMatchPayload(data);
+      setEndMatchMessage(data?.message || "Match ended.");
+      await loadList();
+      await loadDetail(sess.id);
+    } catch (err) {
+      setEndMatchError(err.message || "Could not end the match.");
+    } finally {
+      setEndMatchBusy(false);
+    }
+  }, [teamId, detailPayload, matchPayload, opponentFinalScoreInput, loadList, loadDetail]);
+
+  const onResumeMatch = useCallback(async () => {
+    const match = matchPayload?.match;
+    const sess = detailPayload?.session;
+    if (!teamId || !match?.id || !sess || !match.can_resume_match) {
+      return;
+    }
+    setEndMatchBusy(true);
+    setEndMatchError("");
+    setEndMatchMessage("");
+    try {
+      const data = await resumeMatch(match.id, teamId);
+      setMatchPayload(data);
+      setEndMatchMessage(data?.message || "Match resumed.");
+      await loadList();
+      await loadDetail(sess.id);
+    } catch (err) {
+      setEndMatchError(err.message || "Could not resume the match.");
+    } finally {
+      setEndMatchBusy(false);
+    }
+  }, [teamId, detailPayload, matchPayload, loadList, loadDetail]);
+
   const schedulePlayerStatSave = useCallback((playerId, nextStats) => {
     const matchId = detailPayload?.session?.id;
     if (!matchId || !playerId) return;
@@ -944,6 +1037,8 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
   }
 
   const detailSession = detailPayload?.session;
+  const detailMatch = matchPayload?.match;
+  const detailMatchSummary = detailMatch?.summary?.final_score || null;
   const canCancelDetailSession =
     Boolean(canManageTraining && detailSession && detailSession.status !== "cancelled" && !sessionHasStarted(detailSession));
 
@@ -1421,6 +1516,8 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
                             <span>{session.session_type_label || session.session_type}</span>
                             {session.status === "cancelled" ? (
                               <span className="training-status-badge training-status-badge--cancelled">Cancelled</span>
+                            ) : session.session_type === "match" && session.is_ended ? (
+                              <span className="training-status-badge training-status-badge--ended">Ended</span>
                             ) : isPast ? (
                               <span className="vc-modal__muted" style={{ fontSize: "0.78rem" }}>
                                 Past
@@ -1500,6 +1597,11 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
                   <span className="vc-status-paid">Present {detailSession.summary?.present_count ?? 0}</span>
                   <span className="vc-status-pending">Pending {detailSession.summary?.pending_count ?? 0}</span>
                   <span className="vc-status-overdue">Absent {detailSession.summary?.absent_count ?? 0}</span>
+                  {detailSession.session_type === "match" && detailMatch?.is_ended ? (
+                    <span className="training-status-badge training-status-badge--ended">
+                      Ended {formatDateTimeLabel(detailMatch.ended_at)}
+                    </span>
+                  ) : null}
                   {detailSession.summary?.cancelled_count ? (
                     <span className="vc-modal__muted">Cancelled {detailSession.summary.cancelled_count}</span>
                   ) : null}
@@ -1511,26 +1613,144 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
                   <div className="match-stats-panel__head">
                     <div>
                       <h4 id="match-stats-heading">Match performance tracking</h4>
-                      <p className="vc-modal__muted">Stats auto-save per player while the match is open.</p>
+                      <p className="vc-modal__muted">
+                        {detailMatch?.is_ended
+                          ? "This match is closed. Resume it if you want to keep editing player stats."
+                          : "Stats auto-save per player while the match is open."}
+                      </p>
                     </div>
                     <div className="match-stats-summary">
-                      <span>Total points: {matchPayload?.match?.summary?.total_team_points ?? 0}</span>
+                      <span>Total points: {detailMatch?.summary?.total_team_points ?? 0}</span>
                       <span>
-                        MVP: {matchPayload?.match?.summary?.mvp_suggestion?.player_name || "No stats yet"}
+                        MVP: {detailMatch?.summary?.mvp_suggestion?.player_name || "No stats yet"}
                       </span>
-                      {(matchPayload?.match?.summary?.team_totals || []).map((row) => (
+                      {(detailMatch?.summary?.team_totals || []).map((row) => (
                         <span key={row.team_id}>
                           {row.team_name}: {row.total_points}
                         </span>
                       ))}
                     </div>
                   </div>
+                  {detailMatch ? (
+                    <div className="match-stats-toolbar">
+                      {!detailMatch.is_shared_match && !detailMatch.is_ended ? (
+                        <label className="match-stat-input match-stat-input--compact">
+                          <span>Opponent final score</span>
+                          <input
+                            type="number"
+                            min="0"
+                            value={opponentFinalScoreInput}
+                            onChange={(event) => setOpponentFinalScoreInput(event.target.value)}
+                            disabled={endMatchBusy}
+                            placeholder="0"
+                          />
+                        </label>
+                      ) : null}
+                      {detailMatch.can_end_match ? (
+                        <button type="button" className="vc-action-btn" onClick={() => void onEndMatch()} disabled={endMatchBusy}>
+                          {endMatchBusy ? "Ending…" : "End Match"}
+                        </button>
+                      ) : null}
+                      {detailMatch.can_resume_match ? (
+                        <button
+                          type="button"
+                          className="match-secondary-btn"
+                          onClick={() => void onResumeMatch()}
+                          disabled={endMatchBusy}
+                        >
+                          {endMatchBusy ? "Resuming…" : "Resume Match"}
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {detailMatch?.is_ended && detailMatchSummary ? (
+                    <div className="match-final-summary">
+                      <div className="match-final-summary__hero">
+                        <div>
+                          <p className="match-final-summary__eyebrow">Final score</p>
+                          <h5>{detailMatchSummary.final_score_label}</h5>
+                          <div className="match-final-summary__chips">
+                            <span className={matchResultBadgeClass(detailMatchSummary.result)}>
+                              {detailMatchSummary.result_label}
+                            </span>
+                            {detailMatch.ended_at ? (
+                              <span className="vc-modal__muted">Closed {formatDateTimeLabel(detailMatch.ended_at)}</span>
+                            ) : null}
+                          </div>
+                        </div>
+                        <div className="match-score-rings" aria-hidden="true">
+                          {(detailMatchSummary.score_rows || []).map((row) => {
+                            const maxScore = Math.max(
+                              ...((detailMatchSummary.score_rows || []).map((item) => Number(item.score) || 0)),
+                              1,
+                            );
+                            const score = Number(row.score) || 0;
+                            const fill = `${Math.max(14, Math.round((score / maxScore) * 100))}%`;
+                            return (
+                              <div key={`${row.team_id || row.team_name}-ring`} className="match-score-rings__item">
+                                <div
+                                  className={`match-score-rings__disc${
+                                    row.is_context_team ? " match-score-rings__disc--context" : ""
+                                  }`}
+                                  style={{ "--match-ring-fill": fill }}
+                                >
+                                  <strong>{row.score ?? "?"}</strong>
+                                </div>
+                                <span>{row.team_name}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <div className="match-final-summary__cards">
+                        <article className="match-summary-card">
+                          <span>WInenr</span>
+                          <strong>
+                            {detailMatchSummary.winner_name || "Waiting for final result"}
+                          </strong>
+                        </article>
+                        <article className="match-summary-card">
+                          <span>Match duration</span>
+                          <strong>{detailMatchSummary.duration_label || "In progress"}</strong>
+                        </article>
+                        <article className="match-summary-card">
+                          <span>Tournament</span>
+                          <strong>{detailMatchSummary.tournament_label || "Friendly"}</strong>
+                        </article>
+                      </div>
+                      <div className="match-score-bars">
+                        {(detailMatchSummary.score_rows || []).map((row) => {
+                          const maxScore = Math.max(
+                            ...((detailMatchSummary.score_rows || []).map((item) => Number(item.score) || 0)),
+                            1,
+                          );
+                          const score = Number(row.score) || 0;
+                          return (
+                            <div key={`${row.team_id || row.team_name}-bar`} className="match-score-bars__row">
+                              <div className="match-score-bars__label">
+                                <strong>{row.team_name}</strong>
+                                <span>{row.score ?? "?"}</span>
+                              </div>
+                              <div className="match-score-bars__track">
+                                <div
+                                  className={`match-score-bars__fill${row.is_context_team ? " is-context" : ""}`}
+                                  style={{ width: `${Math.max(8, Math.round((score / maxScore) * 100))}%` }}
+                                />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
                   {matchLoading && !matchPayload ? <p className="vc-modal__muted">Loading match stats…</p> : null}
                   {matchError ? <p className="schedule-feedback schedule-feedback--error">{matchError}</p> : null}
+                  {endMatchMessage ? <p className="vc-director-success">{endMatchMessage}</p> : null}
+                  {endMatchError ? <p className="schedule-feedback schedule-feedback--error">{endMatchError}</p> : null}
                   {statsSaveError ? <p className="schedule-feedback schedule-feedback--error">{statsSaveError}</p> : null}
-                  {matchPayload?.match?.players?.length ? (
+                  {detailMatch?.players?.length ? (
                     <div className="match-player-stat-list">
-                      {matchPayload.match.players.map((player) => {
+                      {detailMatch.players.map((player) => {
                         const isOpen = Number(expandedMatchPlayerId) === Number(player.player_id);
                         const saving = Boolean(savingStatsByPlayerId[player.player_id]);
                         return (
@@ -1563,7 +1783,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
                                         type="number"
                                         min="0"
                                         value={player.stats?.[field.key] ?? 0}
-                                        disabled={!matchPayload.match.can_manage_stats}
+                                        disabled={!detailMatch.can_manage_stats}
                                         onChange={(e) => onChangePlayerStat(player.player_id, field.key, e.target.value)}
                                       />
                                     </label>

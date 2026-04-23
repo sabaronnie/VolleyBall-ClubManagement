@@ -275,8 +275,16 @@ export async function fetchMatch(matchId, teamId) {
   return authenticatedGet(appendTeamQuery(`/api/matches/${matchId}/`, teamId));
 }
 
+export async function endMatch(matchId, payload, teamId) {
+  return authenticatedJson(appendTeamQuery(`/api/matches/${matchId}/end/`, teamId), "POST", payload || {});
+}
+
 export async function respondToMatchRequest(matchId, action) {
   return authenticatedJson(`/api/matches/${matchId}/respond/`, "POST", { action });
+}
+
+export async function resumeMatch(matchId, teamId) {
+  return authenticatedJson(appendTeamQuery(`/api/matches/${matchId}/resume/`, teamId), "POST", {});
 }
 
 export async function saveMatchStats(matchId, payload, teamId) {

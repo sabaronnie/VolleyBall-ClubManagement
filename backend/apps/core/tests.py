@@ -24,6 +24,7 @@ from .models import (
     ClubRole,
     DirectorPaymentAuditLog,
     FeePaymentLedgerEntry,
+    MatchPlayerStat,
     Notification,
     ParentLinkApprovalStatus,
     ParentPlayerRelation,
@@ -4508,6 +4509,126 @@ class SharedMatchRequestFlowTests(TestCase):
                 player=fx["player_b"],
             ).exists()
         )
+
+    def test_end_and_resume_shared_match_updates_summary_and_stat_lock(self):
+        fx = self._fixture()
+        session = TrainingSession.objects.create(
+            team=fx["team_a"],
+            created_by=fx["coach_a"],
+            title="Match vs Shared Team B",
+            session_type=TrainingSession.SessionType.MATCH,
+            scheduled_date=timezone.localdate(),
+            start_time=(timezone.localtime() - timedelta(minutes=95)).time().replace(second=0, microsecond=0),
+            end_time=(timezone.localtime() + timedelta(minutes=10)).time().replace(second=0, microsecond=0),
+            location="Court 1",
+            opponent=fx["team_b"].name,
+            opponent_team=fx["team_b"],
+            match_type=TrainingSession.MatchType.TOURNAMENT,
+            match_request_status=TrainingSession.MatchRequestStatus.ACCEPTED,
+        )
+        MatchPlayerStat.objects.create(
+            training_session=session,
+            player=fx["player_a"],
+            points_scored=25,
+            aces=2,
+            digs=4,
+            updated_by=fx["coach_a"],
+        )
+        MatchPlayerStat.objects.create(
+            training_session=session,
+            player=fx["player_b"],
+            points_scored=21,
+            aces=1,
+            assists=3,
+            updated_by=fx["coach_b"],
+        )
+
+        end_response = self.client.post(
+            reverse("core:end-match", kwargs={"match_id": session.id}) + f"?team_id={fx['team_b'].id}",
+            data=json.dumps({}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_b'])}",
+        )
+        self.assertEqual(end_response.status_code, 200)
+        end_body = end_response.json()["match"]
+        self.assertTrue(end_body["is_ended"])
+        self.assertFalse(end_body["can_manage_stats"])
+        self.assertTrue(end_body["can_resume_match"])
+        self.assertEqual(end_body["summary"]["final_score"]["your_team_score"], 21)
+        self.assertEqual(end_body["summary"]["final_score"]["opponent_score"], 25)
+        self.assertEqual(end_body["summary"]["final_score"]["winner_name"], fx["team_a"].name)
+        self.assertEqual(end_body["summary"]["final_score"]["loser_name"], fx["team_b"].name)
+        self.assertEqual(end_body["summary"]["final_score"]["result"], "loss")
+        self.assertEqual(end_body["summary"]["final_score"]["tournament_label"], "Tournament")
+        self.assertTrue(end_body["summary"]["final_score"]["duration_minutes"] >= 0)
+
+        locked_update = self.client.put(
+            reverse(
+                "core:update-match-player-stats",
+                kwargs={"match_id": session.id, "player_id": fx["player_b"].id},
+            )
+            + f"?team_id={fx['team_b'].id}",
+            data=json.dumps({"points_scored": 22, "aces": 1, "blocks": 0, "assists": 3, "errors": 0, "digs": 2}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_b'])}",
+        )
+        self.assertEqual(locked_update.status_code, 400)
+        self.assertIn("Resume the match", locked_update.json()["errors"]["match"])
+
+        resume_response = self.client.post(
+            reverse("core:resume-match", kwargs={"match_id": session.id}) + f"?team_id={fx['team_b'].id}",
+            data=json.dumps({}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_b'])}",
+        )
+        self.assertEqual(resume_response.status_code, 200)
+        self.assertFalse(resume_response.json()["match"]["is_ended"])
+        self.assertTrue(resume_response.json()["match"]["can_manage_stats"])
+
+    def test_external_match_requires_opponent_score_to_end(self):
+        fx = self._fixture()
+        session = TrainingSession.objects.create(
+            team=fx["team_a"],
+            created_by=fx["coach_a"],
+            title="Match vs Club Rivals",
+            session_type=TrainingSession.SessionType.MATCH,
+            scheduled_date=timezone.localdate(),
+            start_time=(timezone.localtime() - timedelta(minutes=65)).time().replace(second=0, microsecond=0),
+            end_time=(timezone.localtime() + timedelta(minutes=15)).time().replace(second=0, microsecond=0),
+            location="Main Arena",
+            opponent="Club Rivals",
+            match_type=TrainingSession.MatchType.FRIENDLY,
+        )
+        MatchPlayerStat.objects.create(
+            training_session=session,
+            player=fx["player_a"],
+            points_scored=18,
+            blocks=2,
+            updated_by=fx["coach_a"],
+        )
+
+        missing_score = self.client.post(
+            reverse("core:end-match", kwargs={"match_id": session.id}),
+            data=json.dumps({}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_a'])}",
+        )
+        self.assertEqual(missing_score.status_code, 400)
+        self.assertIn("opponent", missing_score.json()["errors"]["opponent_final_score"].lower())
+
+        end_response = self.client.post(
+            reverse("core:end-match", kwargs={"match_id": session.id}),
+            data=json.dumps({"opponent_final_score": 16}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_a'])}",
+        )
+        self.assertEqual(end_response.status_code, 200)
+        final_score = end_response.json()["match"]["summary"]["final_score"]
+        self.assertEqual(final_score["your_team_score"], 18)
+        self.assertEqual(final_score["opponent_score"], 16)
+        self.assertEqual(final_score["winner_name"], fx["team_a"].name)
+        self.assertEqual(final_score["loser_name"], "Club Rivals")
+        self.assertEqual(final_score["tournament_label"], "Friendly")
 
 
 class RemindUnconfirmedAttendanceTests(TestCase):

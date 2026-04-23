@@ -74,7 +74,7 @@ function buildTeamAssignmentLines(me) {
 }
 
 function isLiveMatchSession(session) {
-  if (!session || session.session_type !== "match" || session.status === "cancelled") {
+  if (!session || session.session_type !== "match" || session.status === "cancelled" || session.is_ended) {
     return false;
   }
   const date = session.scheduled_date;
