@@ -15,6 +15,7 @@ from django.utils import timezone
 from .attendance_summary import format_person_name
 from .coach_dashboard import _format_time_12h
 from .models import (
+    MatchPlayerStat,
     Notification,
     ParentPlayerRelation,
     PlayerAccessPolicy,
@@ -185,11 +186,87 @@ def _progress_payload(focus: User, progress_team_id: Optional[int]) -> dict[str,
             "defense": float(last.defense),
             "serve": float(last.serve),
         }
+        return {
+            "team_id": progress_team_id,
+            "weeks": weeks_out,
+            "summary": summary,
+            "has_weekly_metrics": True,
+        }
+
+    # Fallback: build simple development trend from recorded match stats when
+    # explicit weekly coach metrics are not entered yet.
+    stat_rows = list(
+        MatchPlayerStat.objects.filter(player=focus)
+        .filter(
+            Q(training_session__team_id=progress_team_id)
+            | Q(
+                training_session__opponent_team_id=progress_team_id,
+                training_session__match_request_status=TrainingSession.MatchRequestStatus.ACCEPTED,
+            )
+        )
+        .filter(training_session__session_type=TrainingSession.SessionType.MATCH)
+        .exclude(training_session__status=TrainingSession.Status.CANCELLED)
+        .filter(training_session__scheduled_date__gte=horizon_start)
+        .select_related("training_session")
+        .order_by("training_session__scheduled_date", "training_session__id")
+    )
+
+    if not stat_rows:
+        return {
+            "team_id": progress_team_id,
+            "weeks": [],
+            "summary": summary,
+            "has_weekly_metrics": False,
+        }
+
+    weekly_buckets: dict[date, dict[str, float]] = {}
+    for row in stat_rows:
+        session_date = row.training_session.scheduled_date
+        week_start = session_date - timedelta(days=session_date.weekday())
+        bucket = weekly_buckets.setdefault(
+            week_start,
+            {
+                "attack_raw": 0.0,
+                "defense_raw": 0.0,
+                "aces": 0.0,
+                "errors": 0.0,
+            },
+        )
+        points = float(row.points_scored or 0)
+        aces = float(row.aces or 0)
+        blocks = float(row.blocks or 0)
+        digs = float(row.digs or 0)
+        errors = float(row.errors or 0)
+        bucket["attack_raw"] += points + (2.0 * aces) + (2.0 * blocks)
+        bucket["defense_raw"] += digs + blocks
+        bucket["aces"] += aces
+        bucket["errors"] += errors
+
+    weeks_out = []
+    for week_start in sorted(weekly_buckets.keys()):
+        bucket = weekly_buckets[week_start]
+        serve_attempts = bucket["aces"] + bucket["errors"]
+        serve_score = (bucket["aces"] / serve_attempts * 100.0) if serve_attempts > 0 else 0.0
+        weeks_out.append(
+            {
+                "week_start": week_start.isoformat(),
+                "week_label": week_start.strftime("%b %d"),
+                "attack": min(100.0, bucket["attack_raw"] * 5.0),
+                "defense": min(100.0, bucket["defense_raw"] * 8.0),
+                "serve": max(0.0, min(100.0, serve_score)),
+            }
+        )
+
+    last = weeks_out[-1]
     return {
         "team_id": progress_team_id,
         "weeks": weeks_out,
-        "summary": summary,
-        "has_weekly_metrics": bool(rows),
+        "summary": {
+            "attack": float(last["attack"]),
+            "defense": float(last["defense"]),
+            "serve": float(last["serve"]),
+        },
+        "has_weekly_metrics": True,
     }
 
 

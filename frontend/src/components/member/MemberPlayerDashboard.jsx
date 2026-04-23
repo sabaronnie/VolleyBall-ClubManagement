@@ -139,6 +139,9 @@ function MemberProgressChart({ weeks }) {
     const serve = weeks.map((row, i) => [padL + xs[i], padT + scaleY(row.serve)]);
     const toPoints = (pts) => pts.map((p) => p.join(",")).join(" ");
     return {
+      attackPoints: attack,
+      defensePoints: defense,
+      servePoints: serve,
       attack: toPoints(attack),
       defense: toPoints(defense),
       serve: toPoints(serve),
@@ -151,8 +154,8 @@ function MemberProgressChart({ weeks }) {
     return (
       <div className="vc-member-progress__empty">
         <p className="vc-modal__muted" style={{ margin: 0 }}>
-          No attendance or progress data available yet. Weekly skill scores will appear here when your coach
-          records them.
+          No progress data available yet for this player. Development trends will appear here once match
+          performance is recorded.
         </p>
       </div>
     );
@@ -175,6 +178,15 @@ function MemberProgressChart({ weeks }) {
         <polyline fill="none" stroke="#e74c3c" strokeWidth="2.5" points={series.attack} />
         <polyline fill="none" stroke="#2980b9" strokeWidth="2.5" points={series.defense} />
         <polyline fill="none" stroke="#27ae60" strokeWidth="2.5" points={series.serve} />
+        {series.attackPoints.map((point, index) => (
+          <circle key={`attack-${index}`} cx={point[0]} cy={point[1]} r="3.2" fill="#e74c3c" />
+        ))}
+        {series.defensePoints.map((point, index) => (
+          <circle key={`defense-${index}`} cx={point[0]} cy={point[1]} r="3.2" fill="#2980b9" />
+        ))}
+        {series.servePoints.map((point, index) => (
+          <circle key={`serve-${index}`} cx={point[0]} cy={point[1]} r="3.2" fill="#27ae60" />
+        ))}
       </svg>
       <div className="vc-member-progress-chart__xlabels">
         {series.labels.map((lb) => (
@@ -198,7 +210,7 @@ function MemberProgressChart({ weeks }) {
   );
 }
 
-function PlayerProgressPanel({ progress, focusName, teamName }) {
+function PlayerProgressPanel({ progress, focusName }) {
   return (
     <div className="vc-player-dash-chart">
       <div className="vc-dashboard-panel-head vc-player-dash-panel__head">
@@ -207,7 +219,7 @@ function PlayerProgressPanel({ progress, focusName, teamName }) {
           <h2 className="vc-panel-title">Development Progress</h2>
           <p className="vc-player-dash-panel__sub">
             {focusName
-              ? `Recent coach-recorded skill trends${teamName ? ` for ${teamName}` : ""}.`
+              ? `Recent development trends for ${focusName}.`
               : "Progress trends appear here once a player is linked to your account."}
           </p>
         </div>
@@ -962,7 +974,6 @@ export default function MemberPlayerDashboard({ activeTeamId = "" }) {
               <PlayerProgressPanel
                 progress={progress}
                 focusName={focusDisplayName}
-                teamName={profile?.team?.name || club?.team_name || ""}
               />
             </div>
             <div className="vc-panel vc-panel--dashboard vc-panel--director-white">

@@ -52,6 +52,11 @@ def attendance_status(
     ):
         return "present", "Present"
     today = timezone.localdate()
+    if (
+        session.session_type == TrainingSession.SessionType.MATCH
+        and session.match_ended_at is not None
+    ):
+        return "absent", "Absent"
     if session.scheduled_date >= today:
         return "pending", "Pending"
     return "absent", "Absent"
