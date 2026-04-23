@@ -616,6 +616,18 @@ export async function searchTeamPlayers(teamId, query, options = {}) {
   return authenticatedGet(`/api/teams/${teamId}/players/search/?${params.toString()}`);
 }
 
+export async function searchCoachPlayers(query, options = {}) {
+  const params = new URLSearchParams();
+  params.set("q", String(query || ""));
+  if (options.limit != null && options.limit !== "") {
+    params.set("limit", String(options.limit));
+  }
+  if (options.teamId != null && options.teamId !== "" && options.teamId !== "__all__") {
+    params.set("team_id", String(options.teamId));
+  }
+  return authenticatedGet(`/api/coach/players/search/?${params.toString()}`);
+}
+
 export async function fetchCoachTeamDashboard(teamId) {
   return authenticatedGet(`/api/teams/${teamId}/coach-dashboard/`);
 }

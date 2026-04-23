@@ -21,6 +21,7 @@ import MyFeesPage from "./pages/MyFeesPage";
 import ParentAttendancePage from "./pages/ParentAttendancePage";
 import PlayerAttendancePage from "./pages/PlayerAttendancePage";
 import CoachSessionAttendancePage from "./pages/CoachSessionAttendancePage";
+import CoachStatisticsPage from "./pages/CoachStatisticsPage";
 import CoachPlayerSearchPage from "./pages/CoachPlayerSearchPage";
 import TeamRosterPage from "./pages/TeamRosterPage";
 import { ForgotPasswordPage, ResetPasswordPage } from "./pages/PasswordResetPages";
@@ -981,6 +982,7 @@ function App() {
 
   const coachAttendanceTeams = useMemo(() => teams.filter((t) => t.canManageTraining), [teams]);
   const showCoachAttendanceTab = coachAttendanceTeams.length > 0;
+  const coachStatisticsTeams = coachAttendanceTeams;
 
   const activeTeam = useMemo(() => {
     if (String(activeTeamId) === "__all__" && teams.length > 0) {
@@ -1233,6 +1235,31 @@ function App() {
   }, [pathname, isAuthenticated, coachAttendanceTeams, activeTeamId]);
 
   useEffect(() => {
+    if (pathname !== "/coach/statistics" && pathname !== "/coach/statistics/") {
+      return undefined;
+    }
+    if (!isAuthenticated || !coachStatisticsTeams.length) {
+      return undefined;
+    }
+    const hasMatchingCoachTeam = coachStatisticsTeams.some((t) => String(t.id) === String(activeTeamId));
+    if (String(activeTeamId) === "__all__") {
+      if (coachStatisticsTeams.length > 1) {
+        return undefined;
+      }
+      const nextId = String(coachStatisticsTeams[0].id);
+      setActiveTeamId(nextId);
+      localStorage.setItem(ACTIVE_TEAM_KEY, nextId);
+      return undefined;
+    }
+    if (!hasMatchingCoachTeam) {
+      const nextId = coachStatisticsTeams.length > 1 ? "__all__" : String(coachStatisticsTeams[0].id);
+      setActiveTeamId(nextId);
+      localStorage.setItem(ACTIVE_TEAM_KEY, nextId);
+    }
+    return undefined;
+  }, [pathname, isAuthenticated, coachStatisticsTeams, activeTeamId]);
+
+  useEffect(() => {
     if (!teams.length) {
       setSelectedChildIdByTeam({});
       return;
@@ -1431,10 +1458,11 @@ function App() {
     onChangeTeam: handleSelectTeam,
   };
 
-  const coachAttendanceNavProps = {
-    teamOptions: teams,
+  const coachWorkspaceNavProps = {
+    teamOptions: coachStatisticsTeams,
     activeTeamId,
     onChangeTeam: handleSelectTeam,
+    includeAllTeamsOption: coachStatisticsTeams.length > 1,
   };
 
   const openTeamSchedule = (team) => {
@@ -1761,11 +1789,49 @@ function App() {
       <ClubWorkspaceLayout
         activeTab="coach-attendance"
         viewerAccountRole={viewerAccountRole}
-        {...coachAttendanceNavProps}
+        {...coachWorkspaceNavProps}
         showPlayerSessionsTab={showPlayerSessionsTab}
         showCoachAttendanceTab={showCoachAttendanceTab}
       >
         <CoachSessionAttendancePage activeTeam={activeTeam} />
+      </ClubWorkspaceLayout>
+    );
+  }
+
+  if (pathname === "/coach/statistics" || pathname === "/coach/statistics/") {
+    if (!isAuthenticated) {
+      return <LoginPage />;
+    }
+    if (!showCoachAttendanceTab) {
+      return (
+        <ClubWorkspaceLayout
+          activeTab=""
+          viewerAccountRole={viewerAccountRole}
+          {...defaultTeamNavProps}
+          showPlayerSessionsTab={showPlayerSessionsTab}
+          showCoachAttendanceTab={showCoachAttendanceTab}
+        >
+          <section className="teams-page-shell" style={{ padding: "1.5rem" }}>
+            <h1 style={{ fontSize: "1.2rem" }}>Statistics</h1>
+            <p className="vc-modal__muted" style={{ marginTop: "0.75rem" }}>
+              Only coaches and club directors with training access can search player statistics.
+            </p>
+          </section>
+        </ClubWorkspaceLayout>
+      );
+    }
+    return (
+      <ClubWorkspaceLayout
+        activeTab="coach-statistics"
+        viewerAccountRole={viewerAccountRole}
+        {...coachWorkspaceNavProps}
+        showPlayerSessionsTab={showPlayerSessionsTab}
+        showCoachAttendanceTab={showCoachAttendanceTab}
+      >
+        <CoachStatisticsPage
+          coachedTeams={coachStatisticsTeams}
+          activeTeamId={activeTeamId}
+        />
       </ClubWorkspaceLayout>
     );
   }
@@ -1794,9 +1860,9 @@ function App() {
     }
     return (
       <ClubWorkspaceLayout
-        activeTab="coach-attendance"
+        activeTab="coach-statistics"
         viewerAccountRole={viewerAccountRole}
-        {...coachAttendanceNavProps}
+        {...coachWorkspaceNavProps}
         showPlayerSessionsTab={showPlayerSessionsTab}
         showCoachAttendanceTab={showCoachAttendanceTab}
       >
