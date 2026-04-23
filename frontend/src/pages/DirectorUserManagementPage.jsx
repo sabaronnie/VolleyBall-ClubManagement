@@ -462,24 +462,6 @@ export default function DirectorUserManagementPage({
     }
   };
 
-  const onViewPlayerPerformance = (row) => {
-    const rowTeams = Array.isArray(row?.teams) ? row.teams : [];
-    const targetTeamId =
-      focusedTeamId != null && focusedTeamId !== ""
-        ? Number(focusedTeamId)
-        : rowTeams.length === 1
-          ? Number(rowTeams[0]?.id)
-          : null;
-
-    if (!targetTeamId) {
-      setError("Pick a single team scope before opening performance for a player on multiple teams.");
-      return;
-    }
-
-    const nextPath = `/coach/player-search?team=${encodeURIComponent(String(targetTeamId))}&player=${encodeURIComponent(String(row.id))}`;
-    navigate(nextPath);
-  };
-
   const cardContent = (
     <div className={`vc-director-card${embedded ? " vc-director-card--embedded" : ""}`}>
       {!embedded ? (
@@ -864,25 +846,6 @@ export default function DirectorUserManagementPage({
                                     {saveBusy ? "…" : "Save"}
                                   </button>
                                 ) : null}
-                                <button
-                                  type="button"
-                                  className="vc-du-action"
-                                  disabled={
-                                    currentRole !== "player" ||
-                                    busy ||
-                                    !Array.isArray(u.teams) ||
-                                    u.teams.length === 0 ||
-                                    (focusedTeamId == null && u.teams.length !== 1)
-                                  }
-                                  title={
-                                    focusedTeamId == null && Array.isArray(u.teams) && u.teams.length > 1
-                                      ? "Filter to a single team before opening this player's profile."
-                                      : "Open player profile"
-                                  }
-                                  onClick={() => onViewPlayerPerformance(u)}
-                                >
-                                  View Performance
-                                </button>
                                 <button
                                   type="button"
                                   className="vc-du-action vc-du-action--danger"
