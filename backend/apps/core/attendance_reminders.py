@@ -12,6 +12,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
+from django.db.models import Q
 from django.utils import timezone
 
 from .attendance_summary import (
@@ -20,7 +21,14 @@ from .attendance_summary import (
     session_attendance_incomplete_for_coach_reminder,
     training_session_has_ended,
 )
-from .models import Notification, TeamMembership, TeamRole, TrainingSession, TrainingSessionConfirmation
+from .models import (
+    MatchPlayerStat,
+    Notification,
+    TeamMembership,
+    TeamRole,
+    TrainingSession,
+    TrainingSessionConfirmation,
+)
 
 
 def coach_attendance_action_path(team_id: int, session_id: int) -> str:
@@ -38,6 +46,29 @@ def confirmed_player_ids_for_session(session_id: int) -> set[int]:
             flat=True,
         )
     )
+
+
+def _match_stat_activity_filter() -> Q:
+    return (
+        Q(points_scored__gt=0)
+        | Q(aces__gt=0)
+        | Q(blocks__gt=0)
+        | Q(assists__gt=0)
+        | Q(errors__gt=0)
+        | Q(digs__gt=0)
+    )
+
+
+def covered_player_ids_for_session(session: TrainingSession) -> set[int]:
+    covered = confirmed_player_ids_for_session(session.id)
+    if session.session_type != TrainingSession.SessionType.MATCH:
+        return covered
+    covered |= set(
+        MatchPlayerStat.objects.filter(training_session_id=session.id)
+        .filter(_match_stat_activity_filter())
+        .values_list("player_id", flat=True)
+    )
+    return covered
 
 
 def coach_users_for_team(team):
@@ -71,7 +102,7 @@ def sync_incomplete_attendance_notifications_for_session(
     now = now if now is not None else timezone.now()
     team = session.team
     roster_ids = roster_player_ids_for_team(team)
-    confirmed = confirmed_player_ids_for_session(session.id)
+    covered_player_ids = covered_player_ids_for_session(session)
 
     eligible = (
         session.status != TrainingSession.Status.CANCELLED
@@ -81,14 +112,14 @@ def sync_incomplete_attendance_notifications_for_session(
     incomplete = eligible and session_attendance_incomplete_for_coach_reminder(
         session,
         roster_ids,
-        confirmed,
+        covered_player_ids,
     )
 
     if not incomplete:
         dismiss_incomplete_attendance_notifications_for_session(session.id)
         return
 
-    missing_count = sum(1 for pid in roster_ids if pid not in confirmed)
+    missing_count = sum(1 for pid in roster_ids if pid not in covered_player_ids)
     title = f"Incomplete attendance — {team.name}"
     path = coach_attendance_action_path(team.id, session.id)
     message = (
@@ -147,14 +178,16 @@ def sweep_incomplete_attendance_reminders(*, now: Optional[datetime] = None) -> 
     incomplete_count = 0
     for session in qs.iterator(chunk_size=200):
         roster_ids = roster_player_ids_for_team(session.team)
-        confirmed = confirmed_player_ids_for_session(session.id)
+        covered_player_ids = covered_player_ids_for_session(session)
         eligible = (
             training_session_has_ended(session, now=now)
             and bool(roster_ids)
         )
         incomplete = (
             eligible
-            and session_attendance_incomplete_for_coach_reminder(session, roster_ids, confirmed)
+            and session_attendance_incomplete_for_coach_reminder(
+                session, roster_ids, covered_player_ids
+            )
         )
         if incomplete:
             sync_incomplete_attendance_notifications_for_session(session, now=now)

@@ -13,10 +13,12 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
+from django.db.models import Q
 from django.utils import timezone
 
 from .models import (
     Club,
+    MatchPlayerStat,
     Team,
     TeamMembership,
     TeamRole,
@@ -27,20 +29,27 @@ from .models import (
 # Human-readable rules for API consumers (keep in sync with attendance_status + build logic).
 CALCULATION_SUMMARY_TEXT = (
     "Cancelled sessions are excluded from every statistic. "
-    "Attendance percentage uses only sessions with scheduled_date strictly before today "
-    "in the viewer's local timezone: a confirmation counts as present; no confirmation "
-    "counts as absent. Sessions on today or in the future are excluded from the "
+    "Attendance percentage uses closed sessions only: sessions with scheduled_date strictly before today, "
+    "plus match sessions that have been explicitly ended. For closed sessions, a confirmation "
+    "(or recorded match stats on a match session) counts as present; otherwise it counts as absent. "
+    "Open sessions on today or in the future are excluded from the "
     "percentage denominator; unconfirmed future/today sessions count as pending. "
     "Confirmed future/today sessions appear as upcoming confirmed but still do not "
     "affect the closed-session rate."
 )
 
 
-def attendance_status(session: TrainingSession, is_confirmed: bool) -> tuple[str, str]:
+def attendance_status(
+    session: TrainingSession,
+    is_confirmed: bool,
+    has_match_activity: bool = False,
+) -> tuple[str, str]:
     """Map session + confirmation to a stable status code and label."""
     if session.status == TrainingSession.Status.CANCELLED:
         return "cancelled", "Cancelled"
-    if is_confirmed:
+    if is_confirmed or (
+        session.session_type == TrainingSession.SessionType.MATCH and has_match_activity
+    ):
         return "present", "Present"
     today = timezone.localdate()
     if session.scheduled_date >= today:
@@ -82,7 +91,30 @@ class TeamAttendanceScope:
     sessions_for_players: list[TrainingSession]
     closed_session_ids: set[int]
     conf_pairs: set[tuple[int, int]]
+    match_activity_pairs: set[tuple[int, int]]
     player_memberships: list[TeamMembership]
+
+
+def _match_stat_activity_filter() -> Q:
+    return (
+        Q(points_scored__gt=0)
+        | Q(aces__gt=0)
+        | Q(blocks__gt=0)
+        | Q(assists__gt=0)
+        | Q(errors__gt=0)
+        | Q(digs__gt=0)
+    )
+
+
+def session_counts_as_closed_for_attendance(session: TrainingSession, today: date) -> bool:
+    if session.status == TrainingSession.Status.CANCELLED:
+        return False
+    if session.scheduled_date < today:
+        return True
+    return (
+        session.session_type == TrainingSession.SessionType.MATCH
+        and session.match_ended_at is not None
+    )
 
 
 def prepare_team_attendance_scope(
@@ -95,7 +127,14 @@ def prepare_team_attendance_scope(
     today = timezone.localdate()
 
     sessions_qs = (
-        TrainingSession.objects.filter(team=team)
+        TrainingSession.objects.filter(
+            Q(team=team)
+            | Q(
+                session_type=TrainingSession.SessionType.MATCH,
+                opponent_team=team,
+                match_request_status=TrainingSession.MatchRequestStatus.ACCEPTED,
+            )
+        )
         .exclude(status=TrainingSession.Status.CANCELLED)
         .filter(scheduled_date__gte=start_date, scheduled_date__lte=end_date)
         .order_by("scheduled_date", "start_time", "id")
@@ -118,8 +157,15 @@ def prepare_team_attendance_scope(
                 "player_id",
             )
         )
+    match_activity_pairs: set[tuple[int, int]] = set()
+    if session_ids:
+        match_activity_pairs = set(
+            MatchPlayerStat.objects.filter(training_session_id__in=session_ids)
+            .filter(_match_stat_activity_filter())
+            .values_list("training_session_id", "player_id")
+        )
 
-    closed_sessions = [s for s in sessions if s.scheduled_date < today]
+    closed_sessions = [s for s in sessions if session_counts_as_closed_for_attendance(s, today)]
     if last_n_sessions is not None and last_n_sessions > 0:
         closed_sessions = sorted(
             closed_sessions,
@@ -145,19 +191,22 @@ def prepare_team_attendance_scope(
         sessions_for_players=sessions_for_players,
         closed_session_ids=closed_session_ids,
         conf_pairs=conf_pairs,
+        match_activity_pairs=match_activity_pairs,
         player_memberships=player_memberships,
     )
 
 
 def classify_scope(scope: TeamAttendanceScope, session: TrainingSession, player_id: int) -> str:
     is_confirmed = (session.id, player_id) in scope.conf_pairs
-    return attendance_status(session, is_confirmed)[0]
+    has_match_activity = (session.id, player_id) in scope.match_activity_pairs
+    return attendance_status(session, is_confirmed, has_match_activity)[0]
 
 
 def session_roster_summary(
     session: TrainingSession,
     player_memberships: list[TeamMembership],
     conf_pairs: Optional[set[tuple[int, int]]] = None,
+    match_activity_pairs: Optional[set[tuple[int, int]]] = None,
 ) -> dict[str, int]:
     """Per-session counts for coach/director roster (EP-25); excludes cancelled from rate-relevant slots."""
     if conf_pairs is None:
@@ -167,12 +216,21 @@ def session_roster_summary(
                 "player_id",
             )
         )
+    if match_activity_pairs is None and session.session_type == TrainingSession.SessionType.MATCH:
+        match_activity_pairs = set(
+            MatchPlayerStat.objects.filter(training_session_id=session.id)
+            .filter(_match_stat_activity_filter())
+            .values_list("training_session_id", "player_id")
+        )
+    if match_activity_pairs is None:
+        match_activity_pairs = set()
 
     def _count(code: str) -> int:
         n = 0
         for m in player_memberships:
             is_confirmed = (session.id, m.user_id) in conf_pairs
-            if attendance_status(session, is_confirmed)[0] == code:
+            has_match_activity = (session.id, m.user_id) in match_activity_pairs
+            if attendance_status(session, is_confirmed, has_match_activity)[0] == code:
                 n += 1
         return n
 
@@ -210,7 +268,8 @@ def build_player_row(scope: TeamAttendanceScope, membership: TeamMembership) -> 
             continue
         sessions_non_cancelled += 1
         code = classify_scope(scope, session, player.id)
-        if session.scheduled_date < scope.today:
+        is_closed_for_rate = session_counts_as_closed_for_attendance(session, scope.today)
+        if is_closed_for_rate:
             if code == "present":
                 attended += 1
             elif code == "absent":
@@ -488,19 +547,18 @@ def club_attendance_daily_series(
     while d <= end_date:
         attended = 0
         closed = 0
-        if d < today:
-            for team in Team.objects.filter(club=club):
-                scope = prepare_team_attendance_scope(team, start_date=d, end_date=d, last_n_sessions=None)
-                for session in scope.closed_sessions:
-                    if session.scheduled_date != d:
-                        continue
-                    for membership in scope.player_memberships:
-                        code = classify_scope(scope, session, membership.user_id)
-                        if code == "present":
-                            attended += 1
-                            closed += 1
-                        elif code == "absent":
-                            closed += 1
+        for team in Team.objects.filter(club=club):
+            scope = prepare_team_attendance_scope(team, start_date=d, end_date=d, last_n_sessions=None)
+            for session in scope.closed_sessions:
+                if session.scheduled_date != d:
+                    continue
+                for membership in scope.player_memberships:
+                    code = classify_scope(scope, session, membership.user_id)
+                    if code == "present":
+                        attended += 1
+                        closed += 1
+                    elif code == "absent":
+                        closed += 1
         rate = (round(100.0 * attended / closed, 2) if closed else None)
         out.append(
             {
@@ -533,18 +591,17 @@ def team_attendance_daily_series(
     while d <= end_date:
         attended = 0
         closed = 0
-        if d < today:
-            scope = prepare_team_attendance_scope(team, start_date=d, end_date=d, last_n_sessions=None)
-            for session in scope.closed_sessions:
-                if session.scheduled_date != d:
-                    continue
-                for membership in scope.player_memberships:
-                    code = classify_scope(scope, session, membership.user_id)
-                    if code == "present":
-                        attended += 1
-                        closed += 1
-                    elif code == "absent":
-                        closed += 1
+        scope = prepare_team_attendance_scope(team, start_date=d, end_date=d, last_n_sessions=None)
+        for session in scope.closed_sessions:
+            if session.scheduled_date != d:
+                continue
+            for membership in scope.player_memberships:
+                code = classify_scope(scope, session, membership.user_id)
+                if code == "present":
+                    attended += 1
+                    closed += 1
+                elif code == "absent":
+                    closed += 1
         rate = (round(100.0 * attended / closed, 2) if closed else None)
         out.append(
             {

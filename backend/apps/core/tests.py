@@ -4351,6 +4351,46 @@ class SharedMatchRequestFlowTests(TestCase):
             "player_b": player_b,
         }
 
+    def test_coach_can_search_team_players_by_partial_name(self):
+        fx = self._fixture()
+        PlayerProfile.objects.create(user=fx["player_a"], jersey_number=7, primary_position="Setter")
+        extra_player = User.objects.create_user(
+            email="sm-player-alt@example.com",
+            password="StrongPassword123!",
+            first_name="Nadine",
+            last_name="Saad",
+            date_of_birth=date(2009, 4, 12),
+        )
+        TeamMembership.objects.add_member(user=extra_player, team=fx["team_a"], role=TeamRole.PLAYER)
+        PlayerProfile.objects.create(user=extra_player, jersey_number=11, primary_position="Libero")
+
+        response = self.client.get(
+            reverse("core:search-team-players", kwargs={"team_id": fx["team_a"].id}),
+            {"q": "nad"},
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_a'])}",
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["query"], "nad")
+        self.assertEqual(body["count"], 1)
+        self.assertEqual(body["results"][0]["player_id"], extra_player.id)
+        self.assertEqual(body["results"][0]["jersey_number"], 11)
+        self.assertEqual(body["results"][0]["primary_position"], "Libero")
+
+    def test_player_search_requires_coach_or_director_access(self):
+        fx = self._fixture()
+        outsider = User.objects.create_user(
+            email="search-outsider@example.com",
+            password="StrongPassword123!",
+        )
+        response = self.client.get(
+            reverse("core:search-team-players", kwargs={"team_id": fx["team_a"].id}),
+            {"q": "player"},
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(outsider)}",
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("coaches", response.json()["errors"]["authorization"].lower())
+
     def test_existing_team_match_request_acceptance_creates_shared_match(self):
         fx = self._fixture()
         create_response = self.client.post(
@@ -4509,6 +4549,69 @@ class SharedMatchRequestFlowTests(TestCase):
                 player=fx["player_b"],
             ).exists()
         )
+
+    def test_match_stats_without_confirmation_count_as_present_for_attendance(self):
+        fx = self._fixture()
+        session = TrainingSession.objects.create(
+            team=fx["team_a"],
+            created_by=fx["coach_a"],
+            title="Past Match Presence",
+            session_type=TrainingSession.SessionType.MATCH,
+            scheduled_date=timezone.localdate() - timedelta(days=1),
+            start_time=time(18, 0),
+            end_time=time(19, 30),
+            location="Court 1",
+            opponent="External Team",
+            match_type=TrainingSession.MatchType.FRIENDLY,
+            status=TrainingSession.Status.SCHEDULED,
+        )
+        MatchPlayerStat.objects.create(
+            training_session=session,
+            player=fx["player_a"],
+            updated_by=fx["coach_a"],
+            points_scored=8,
+            aces=2,
+            blocks=1,
+            assists=0,
+            errors=0,
+            digs=3,
+        )
+
+        attendance_response = self.client.get(
+            reverse("core:coach-training-session-attendance", kwargs={"session_id": session.id}),
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_a'])}",
+        )
+        self.assertEqual(attendance_response.status_code, 200)
+        players = attendance_response.json()["session"]["players"]
+        row = next(player for player in players if player["player_id"] == fx["player_a"].id)
+        self.assertEqual(row["attendance_label"], "Present")
+        self.assertTrue(row["is_confirmed"])
+
+        detail_response = self.client.get(
+            reverse("core:match-detail", kwargs={"match_id": session.id}),
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_a'])}",
+        )
+        self.assertEqual(detail_response.status_code, 200)
+        detail_players = detail_response.json()["match"]["players"]
+        detail_row = next(player for player in detail_players if player["player_id"] == fx["player_a"].id)
+        self.assertTrue(detail_row["is_confirmed"])
+
+        summary_response = self.client.get(
+            reverse(
+                "core:player-team-attendance-summary",
+                kwargs={"team_id": fx["team_a"].id, "player_id": fx["player_a"].id},
+            ),
+            {
+                "start_date": (timezone.localdate() - timedelta(days=30)).isoformat(),
+                "end_date": timezone.localdate().isoformat(),
+            },
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_a'])}",
+        )
+        self.assertEqual(summary_response.status_code, 200)
+        summary_row = summary_response.json()["player"]
+        self.assertEqual(summary_row["attended_sessions"], 1)
+        self.assertEqual(summary_row["absent_sessions"], 0)
+        self.assertEqual(summary_row["attendance_rate_percent"], 100.0)
 
     def test_end_and_resume_shared_match_updates_summary_and_stat_lock(self):
         fx = self._fixture()
@@ -5434,6 +5537,49 @@ class AttendanceSummaryEndpointTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["player"]["attendance_rate_percent"], 100.0)
 
+    def test_player_summary_counts_ended_match_today(self):
+        _, _, team, coach, player, _, _ = self._base()
+        session = TrainingSession.objects.create(
+            team=team,
+            created_by=coach,
+            title="Today Match",
+            session_type=TrainingSession.SessionType.MATCH,
+            scheduled_date=timezone.localdate(),
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+            location="Main Court",
+            opponent="Opponent",
+            match_type=TrainingSession.MatchType.FRIENDLY,
+            match_ended_at=timezone.now(),
+        )
+        MatchPlayerStat.objects.create(
+            training_session=session,
+            player=player,
+            updated_by=coach,
+            points_scored=5,
+            aces=1,
+            blocks=1,
+            assists=0,
+            errors=0,
+            digs=2,
+        )
+        token = generate_auth_token(coach)
+        url = reverse("core:player-team-attendance-summary", kwargs={"team_id": team.id, "player_id": player.id})
+        response = self.client.get(
+            url,
+            {
+                "start_date": (timezone.localdate() - timedelta(days=7)).isoformat(),
+                "end_date": timezone.localdate().isoformat(),
+            },
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        row = response.json()["player"]
+        self.assertEqual(row["sessions_counted_for_rate"], 1)
+        self.assertEqual(row["attended_sessions"], 1)
+        self.assertEqual(row["absent_sessions"], 0)
+        self.assertEqual(row["attendance_rate_percent"], 100.0)
+
     def test_player_summary_parent_of_player(self):
         _, _, team, _, player, _, parent = self._base()
         today = timezone.localdate()
@@ -5451,6 +5597,59 @@ class AttendanceSummaryEndpointTests(TestCase):
         response = self.client.get(url, HTTP_AUTHORIZATION=f"Bearer {token}")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["player"]["attendance_rate_percent"], 100.0)
+
+    def test_player_summary_includes_accepted_shared_match_when_team_is_opponent(self):
+        _, club, team, coach, player, _, _ = self._base()
+        opponent_team = Team.objects.create(club=club, name="EP27 Opponent Team")
+        opponent_coach = User.objects.create_user(
+            email="ep27-opponent-coach@example.com",
+            password="StrongPassword123!",
+            assigned_account_role=AssignedAccountRole.COACH,
+        )
+        TeamMembership.objects.add_member(user=opponent_coach, team=opponent_team, role=TeamRole.COACH)
+
+        session = TrainingSession.objects.create(
+            team=opponent_team,
+            created_by=opponent_coach,
+            title="Shared Match",
+            session_type=TrainingSession.SessionType.MATCH,
+            scheduled_date=timezone.localdate() - timedelta(days=1),
+            start_time=time(18, 0),
+            end_time=time(19, 30),
+            location="Court B",
+            opponent=team.name,
+            opponent_team=team,
+            match_type=TrainingSession.MatchType.FRIENDLY,
+            match_request_status=TrainingSession.MatchRequestStatus.ACCEPTED,
+        )
+        MatchPlayerStat.objects.create(
+            training_session=session,
+            player=player,
+            updated_by=coach,
+            points_scored=6,
+            aces=1,
+            blocks=1,
+            assists=0,
+            errors=0,
+            digs=2,
+        )
+
+        token = generate_auth_token(coach)
+        url = reverse("core:player-team-attendance-summary", kwargs={"team_id": team.id, "player_id": player.id})
+        response = self.client.get(
+            url,
+            {
+                "start_date": (timezone.localdate() - timedelta(days=14)).isoformat(),
+                "end_date": timezone.localdate().isoformat(),
+            },
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        row = response.json()["player"]
+        self.assertEqual(row["sessions_counted_for_rate"], 1)
+        self.assertEqual(row["attended_sessions"], 1)
+        self.assertEqual(row["absent_sessions"], 0)
+        self.assertEqual(row["attendance_rate_percent"], 100.0)
 
     def test_player_summary_wrong_player_forbidden(self):
         _, _, team, _, player, other_player, _ = self._base()

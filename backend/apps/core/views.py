@@ -456,6 +456,7 @@ def _serialize_training_session(session, viewer, team, player_memberships):
         confirmation.player_id: confirmation
         for confirmation in session.confirmations.select_related("confirmed_by", "player")
     }
+    match_activity_player_ids = _match_activity_player_ids(session)
     viewer_can_manage = can_manage_team(viewer, team)
 
     player_confirmations = []
@@ -530,6 +531,7 @@ def _serialize_coach_training_session_attendance(session, team, player_membershi
         confirmation.player_id: confirmation
         for confirmation in session.confirmations.select_related("confirmed_by", "player")
     }
+    match_activity_player_ids = _match_activity_player_ids(session)
     user_ids = [membership.user_id for membership in player_memberships]
     profile_by_user_id = {
         profile.user_id: profile
@@ -539,8 +541,13 @@ def _serialize_coach_training_session_attendance(session, team, player_membershi
     for membership in player_memberships:
         player = membership.user
         confirmation = confirmations_by_player_id.get(player.id)
-        is_confirmed = confirmation is not None
-        status_code, status_label = attendance_status(session, is_confirmed)
+        has_match_activity = player.id in match_activity_player_ids
+        is_present = confirmation is not None or has_match_activity
+        status_code, status_label = attendance_status(
+            session,
+            confirmation is not None,
+            has_match_activity,
+        )
         profile = profile_by_user_id.get(player.id)
         players_out.append(
             {
@@ -548,7 +555,7 @@ def _serialize_coach_training_session_attendance(session, team, player_membershi
                 "player_name": _format_person_name(player),
                 "attendance_status": status_code,
                 "attendance_label": status_label,
-                "is_confirmed": is_confirmed,
+                "is_confirmed": is_present,
                 "confirmed_at": (
                     confirmation.confirmed_at.isoformat() if confirmation else None
                 ),
@@ -565,8 +572,10 @@ def _serialize_coach_training_session_attendance(session, team, player_membershi
         )
 
     conf_pairs = {(session.id, pid) for pid in confirmations_by_player_id}
+    match_activity_pairs = {(session.id, pid) for pid in match_activity_player_ids}
+    covered_player_ids = set(confirmations_by_player_id.keys()) | match_activity_player_ids
     unconfirmed_roster_count = sum(
-        1 for membership in player_memberships if membership.user_id not in confirmations_by_player_id
+        1 for membership in player_memberships if membership.user_id not in covered_player_ids
     )
     remind_parents_allowed = session.status != TrainingSession.Status.CANCELLED and not training_session_has_ended(
         session
@@ -599,7 +608,12 @@ def _serialize_coach_training_session_attendance(session, team, player_membershi
         ),
         "team": _serialize_team(team),
         "players": players_out,
-        "summary": session_roster_summary(session, player_memberships, conf_pairs),
+        "summary": session_roster_summary(
+            session,
+            player_memberships,
+            conf_pairs,
+            match_activity_pairs,
+        ),
         "unconfirmed_roster_count": unconfirmed_roster_count,
         "remind_parents_allowed": remind_parents_allowed and can_manage_context_team and team.id == session.team_id,
         "can_send_reminders": can_manage_context_team and team.id == session.team_id,
@@ -610,6 +624,27 @@ def _serialize_coach_training_session_attendance(session, team, player_membershi
 
 
 MATCH_STAT_FIELDS = ("points_scored", "aces", "blocks", "assists", "errors", "digs")
+
+
+def _match_stat_activity_filter():
+    return (
+        Q(points_scored__gt=0)
+        | Q(aces__gt=0)
+        | Q(blocks__gt=0)
+        | Q(assists__gt=0)
+        | Q(errors__gt=0)
+        | Q(digs__gt=0)
+    )
+
+
+def _match_activity_player_ids(session):
+    if session.session_type != TrainingSession.SessionType.MATCH:
+        return set()
+    return set(
+        MatchPlayerStat.objects.filter(training_session=session)
+        .filter(_match_stat_activity_filter())
+        .values_list("player_id", flat=True)
+    )
 
 
 def _match_weighted_score(stats):
@@ -924,15 +959,23 @@ def _serialize_match_detail(session, team, player_memberships, viewer):
         weighted_score = _match_weighted_score(stats)
         total_team_points += stats["points_scored"]
         team_points[membership.team_id] += stats["points_scored"]
-        if any(stats.values()):
+        has_match_activity = any(stats.values())
+        if has_match_activity:
             has_recorded_stats = True
         confirmation = confirmations_by_player_id.get(player.id)
+        status_code, status_label = attendance_status(
+            session,
+            confirmation is not None,
+            has_match_activity,
+        )
         player_payload = {
             "player_id": player.id,
             "player_name": _format_person_name(player),
             "team_id": membership.team_id,
             "team_name": membership.team.name,
-            "is_confirmed": confirmation is not None,
+            "is_confirmed": status_code == "present",
+            "attendance_status": status_code,
+            "attendance_label": status_label,
             "confirmed_at": confirmation.confirmed_at.isoformat() if confirmation else None,
             "confirmed_by_name": (
                 _format_person_name(confirmation.confirmed_by)
@@ -1753,7 +1796,9 @@ def _unconfirmed_roster_player_ids(session, team):
     confirmed_ids = set(
         TrainingSessionConfirmation.objects.filter(training_session=session).values_list("player_id", flat=True)
     )
-    return [pid for pid in roster_ids if pid not in confirmed_ids]
+    covered_ids = set(confirmed_ids)
+    covered_ids |= _match_activity_player_ids(session)
+    return [pid for pid in roster_ids if pid not in covered_ids]
 
 
 def _parent_user_ids_for_players(player_ids):
@@ -2926,6 +2971,16 @@ def parent_child_attendance_history(request):
             player_id__in=child_ids,
         ).select_related("confirmed_by"):
             confirmation_map[(conf.training_session_id, conf.player_id)] = conf
+    match_activity_pairs = set()
+    if session_ids:
+        match_activity_pairs = set(
+            MatchPlayerStat.objects.filter(
+                training_session_id__in=session_ids,
+                player_id__in=child_ids,
+            )
+            .filter(_match_stat_activity_filter())
+            .values_list("training_session_id", "player_id")
+        )
 
     records = []
     for session in session_list:
@@ -2933,7 +2988,12 @@ def parent_child_attendance_history(request):
             if session.team_id not in teams_by_child[child.id]:
                 continue
             conf = confirmation_map.get((session.id, child.id))
-            status_code, status_label = attendance_status(session, conf is not None)
+            has_match_activity = (session.id, child.id) in match_activity_pairs
+            status_code, status_label = attendance_status(
+                session,
+                conf is not None,
+                has_match_activity,
+            )
             records.append(
                 {
                     "session_id": session.id,
@@ -3520,6 +3580,70 @@ def view_team_members(request, team_id):
             "can_add_player": can_add_team_member(request.user, team, TeamRole.PLAYER),
             "can_add_coach": can_add_team_member(request.user, team, TeamRole.COACH),
             "can_manage_team": can_manage_team(request.user, team),
+        }
+    )
+
+
+@login_required
+@require_GET
+def search_team_players(request, team_id):
+    team = get_object_or_404(Team.objects.select_related("club"), pk=team_id)
+    if not can_manage_team(request.user, team):
+        return JsonResponse(
+            {"errors": {"authorization": "Only coaches or directors can search team players."}},
+            status=403,
+        )
+
+    query = (request.GET.get("q") or "").strip()
+    try:
+        limit = min(max(int(request.GET.get("limit", "25")), 1), 100)
+    except ValueError:
+        return JsonResponse({"errors": {"limit": "Limit must be a valid number."}}, status=400)
+
+    memberships = (
+        TeamMembership.objects.active()
+        .filter(team=team, role=TeamRole.PLAYER)
+        .select_related("user")
+    )
+
+    if query:
+        terms = [term.strip() for term in query.split() if term.strip()]
+        for term in terms:
+            memberships = memberships.filter(
+                Q(user__first_name__icontains=term)
+                | Q(user__last_name__icontains=term)
+                | Q(user__email__icontains=term)
+            )
+    else:
+        memberships = memberships.none()
+
+    memberships = memberships.order_by("user__first_name", "user__last_name", "user__email", "user_id")[:limit]
+    player_ids = [membership.user_id for membership in memberships]
+    profiles_by_user_id = {
+        profile.user_id: profile
+        for profile in PlayerProfile.objects.filter(user_id__in=player_ids)
+    }
+
+    results = []
+    for membership in memberships:
+        user = membership.user
+        profile = profiles_by_user_id.get(user.id)
+        results.append(
+            {
+                "player_id": user.id,
+                "player_name": _format_person_name(user),
+                "email": user.email,
+                "jersey_number": profile.jersey_number if profile else None,
+                "primary_position": (profile.primary_position if profile else "") or "",
+            }
+        )
+
+    return JsonResponse(
+        {
+            "team": _serialize_team(team),
+            "query": query,
+            "count": len(results),
+            "results": results,
         }
     )
 
