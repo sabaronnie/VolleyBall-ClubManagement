@@ -4857,6 +4857,89 @@ def player_team_attendance_summary(request, team_id, player_id):
 
 @login_required
 @require_GET
+def player_self_performance_history(request, team_id):
+    team = get_object_or_404(Team.objects.select_related("club"), pk=team_id)
+    if not TeamMembership.objects.active().filter(
+        team=team,
+        user=request.user,
+        role=TeamRole.PLAYER,
+    ).exists():
+        return JsonResponse(
+            {
+                "errors": {
+                    "authorization": (
+                        "Only players on this team can view this performance history."
+                    )
+                }
+            },
+            status=403,
+        )
+
+    sessions = (
+        _team_sessions_queryset(team, request.user)
+        .filter(session_type=TrainingSession.SessionType.MATCH)
+        .exclude(status=TrainingSession.Status.CANCELLED)
+    )
+    stats_rows = (
+        MatchPlayerStat.objects.filter(
+            player=request.user,
+            training_session_id__in=sessions.values_list("id", flat=True),
+        )
+        .select_related("training_session__team", "training_session__opponent_team")
+        .order_by(
+            "training_session__scheduled_date",
+            "training_session__start_time",
+            "training_session_id",
+        )
+    )
+
+    history = []
+    for stat in stats_rows:
+        session = stat.training_session
+        stats_payload = {
+            "points_scored": int(stat.points_scored or 0),
+            "aces": int(stat.aces or 0),
+            "blocks": int(stat.blocks or 0),
+            "assists": int(stat.assists or 0),
+            "errors": int(stat.errors or 0),
+            "digs": int(stat.digs or 0),
+        }
+        weighted_score = _match_weighted_score(stats_payload)
+        serve_efficiency = (
+            (stats_payload["aces"] / (stats_payload["aces"] + stats_payload["errors"])) * 100
+            if (stats_payload["aces"] + stats_payload["errors"]) > 0
+            else None
+        )
+        history.append(
+            {
+                "match_id": session.id,
+                "scheduled_date": session.scheduled_date.isoformat(),
+                "start_time": session.start_time.strftime("%H:%M"),
+                "opponent": _display_match_opponent(session, team),
+                "stats": stats_payload,
+                "weighted_score": round(weighted_score, 2),
+                "serve_efficiency": round(serve_efficiency, 2)
+                if serve_efficiency is not None
+                else None,
+            }
+        )
+
+    return JsonResponse(
+        {
+            "team": _serialize_team(team),
+            "player": {
+                "id": request.user.id,
+                "name": _format_person_name(request.user),
+                "email": request.user.email,
+            },
+            "count": len(history),
+            "history": history,
+        }
+    )
+
+
+@login_required
+@require_GET
 def coach_team_dashboard(request, team_id):
     """Aggregated coach dashboard KPIs, chart metrics, roster stats, and feedback (DB-backed)."""
     from .coach_dashboard import build_coach_team_dashboard
