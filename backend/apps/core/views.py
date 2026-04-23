@@ -1113,6 +1113,8 @@ def _parse_training_session_payload(payload):
         scheduled_date = date.fromisoformat(scheduled_date_value)
     except (TypeError, ValueError) as exc:
         raise ValidationError({"scheduled_date": "Use YYYY-MM-DD format."}) from exc
+    if scheduled_date < timezone.localdate():
+        raise ValidationError({"scheduled_date": "Session date cannot be in the past."})
 
     try:
         start_time = datetime.strptime(payload.get("start_time"), "%H:%M").time()
@@ -4065,6 +4067,8 @@ def _parse_match_create_payload(payload, team):
         scheduled_date = date.fromisoformat(scheduled_date_value)
     except (TypeError, ValueError) as exc:
         raise ValidationError({"scheduled_date": "Use YYYY-MM-DD format."}) from exc
+    if scheduled_date < timezone.localdate():
+        raise ValidationError({"scheduled_date": "Match date cannot be in the past."})
 
     start_value = payload.get("start_time") or "18:00"
     end_value = payload.get("end_time") or "20:00"

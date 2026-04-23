@@ -316,6 +316,7 @@ function GameOpponentDropdown({
 
 export default function CoachSessionAttendancePage({ activeTeam }) {
   const teamId = activeTeam?.id && activeTeam.id !== "__all__" ? activeTeam.id : null;
+  const todayIso = useMemo(() => isoDateLocal(new Date()), []);
   const defaultRange = useMemo(() => {
     const end = new Date();
     const start = new Date();
@@ -757,6 +758,10 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
       setCreateSessionError("Enter the external opponent name.");
       return;
     }
+    if (newSessionDate < todayIso) {
+      setCreateSessionError("Event date cannot be in the past.");
+      return;
+    }
 
     setCreateSessionBusy(true);
     setCreateSessionError("");
@@ -847,6 +852,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
     useExternalOpponent,
     selectedOpponentTeamId,
     externalOpponentName,
+    todayIso,
     loadList,
   ]);
 
@@ -1240,6 +1246,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
                 className="vc-dash-team-select"
                 value={newSessionDate}
                 onChange={(e) => setNewSessionDate(e.target.value)}
+                min={todayIso}
               />
             </label>
             <label className="match-form-field">

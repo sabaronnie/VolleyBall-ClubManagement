@@ -250,6 +250,145 @@ function mergeCoachWorkspaceOverview(primaryOverview, fallbackOverview) {
   };
 }
 
+function buildAllTeamsCoachWorkspaceFallback(teamPayloads = []) {
+  const rows = Array.isArray(teamPayloads) ? teamPayloads : [];
+  if (!rows.length) {
+    return null;
+  }
+
+  let totalPlayerCount = 0;
+  let totalMonthlyRevenue = 0;
+  let totalClosedSlots = 0;
+  let totalAttendedSlots = 0;
+  let currency = "USD";
+  let calculationSummary = "";
+  let bestParticipation = null;
+  let lowParticipation = null;
+  const allFeeRows = [];
+  const trendByDate = new Map();
+
+  rows.forEach((entry) => {
+    const team = entry?.team || null;
+    const membersPayload = entry?.membersPayload || null;
+    const paymentRowsPayload = entry?.paymentRowsPayload || null;
+    const attendanceSummaryPayload = entry?.attendanceSummaryPayload || null;
+    const attendanceAnalyticsPayload = entry?.attendanceAnalyticsPayload || null;
+
+    const rosterPlayers = Array.isArray(membersPayload?.members)
+      ? membersPayload.members.filter((member) => member.membership?.role === "player")
+      : [];
+    totalPlayerCount += rosterPlayers.length;
+
+    const feeRows = Array.isArray(paymentRowsPayload?.fee_rows) ? paymentRowsPayload.fee_rows : [];
+    allFeeRows.push(...feeRows);
+    const perTeamFamilyRows = aggregateCoachPaymentRows(feeRows);
+    totalMonthlyRevenue += perTeamFamilyRows.reduce((sum, row) => sum + Number(row.total_paid || 0), 0);
+    if (currency === "USD") {
+      const teamCurrency =
+        perTeamFamilyRows.find((row) => row.currency)?.currency ||
+        feeRows.find((row) => row.currency)?.currency;
+      if (teamCurrency) {
+        currency = teamCurrency;
+      }
+    }
+
+    const ratePercent = attendanceSummaryPayload?.team_average_attendance_rate_percent;
+    const closedSlots = Number(attendanceSummaryPayload?.closed_roster_slots_total || 0);
+    const presentSlotsRaw = Number(attendanceSummaryPayload?.present_roster_slots_total);
+    const attendedSlots = Number.isFinite(presentSlotsRaw)
+      ? presentSlotsRaw
+      : ratePercent != null
+        ? (Number(ratePercent) / 100) * closedSlots
+        : 0;
+    totalClosedSlots += closedSlots;
+    totalAttendedSlots += attendedSlots;
+
+    if (!calculationSummary && attendanceSummaryPayload?.calculation_summary) {
+      calculationSummary = attendanceSummaryPayload.calculation_summary;
+    }
+
+    if (team && ratePercent != null && closedSlots > 0) {
+      const numericRate = Number(ratePercent);
+      if (!bestParticipation || numericRate > bestParticipation.rate_percent) {
+        bestParticipation = {
+          team_id: team.id,
+          team_name: team.name,
+          rate_percent: numericRate,
+        };
+      }
+      if (numericRate < LOW_PARTICIPATION_THRESHOLD_PERCENT && closedSlots >= MIN_CLOSED_SLOTS_FOR_TEAM_ALERT) {
+        const candidate = {
+          team_id: team.id,
+          team_name: team.name,
+          rate_percent: numericRate,
+          message: `${team.name} is below ${LOW_PARTICIPATION_THRESHOLD_PERCENT}% attendance in the last 30 days (${numericRate.toFixed(1)}%).`,
+        };
+        if (!lowParticipation || candidate.rate_percent < lowParticipation.rate_percent) {
+          lowParticipation = candidate;
+        }
+      }
+    }
+
+    const trendPoints = Array.isArray(attendanceAnalyticsPayload?.trend)
+      ? attendanceAnalyticsPayload.trend
+      : [];
+    trendPoints.forEach((point) => {
+      const dateKey = point?.period_start;
+      if (!dateKey) {
+        return;
+      }
+      const presentSlots = Number(point?.present_slots || 0);
+      const absentSlots = Number(point?.absent_slots || 0);
+      const closed = presentSlots + absentSlots;
+      const row = trendByDate.get(dateKey) || {
+        date: dateKey,
+        attended_slots: 0,
+        closed_slots: 0,
+      };
+      row.attended_slots += presentSlots;
+      row.closed_slots += closed;
+      trendByDate.set(dateKey, row);
+    });
+  });
+
+  const aggregateAttendanceRate =
+    totalClosedSlots > 0 ? (totalAttendedSlots / totalClosedSlots) * 100 : null;
+  const familySummaries = aggregateCoachPaymentRows(allFeeRows);
+  const trendPoints = Array.from(trendByDate.values())
+    .sort((left, right) => String(left.date).localeCompare(String(right.date)))
+    .map((point) => ({
+      date: point.date,
+      attended_slots: point.attended_slots,
+      closed_slots: point.closed_slots,
+      rate_percent: point.closed_slots > 0 ? (point.attended_slots / point.closed_slots) * 100 : null,
+    }));
+
+  const monthlyRevenueRounded = Number(totalMonthlyRevenue.toFixed(2));
+  return {
+    kpis: {
+      registration_player_count: totalPlayerCount,
+      monthly_revenue: monthlyRevenueRounded,
+      monthly_revenue_currency: currency,
+      attendance_rate: aggregateAttendanceRate,
+      outstanding_payer_count: familySummaries.filter((row) => Number(row.total_remaining || 0) > 0).length,
+    },
+    attendance_trend_30d: {
+      calculation_summary:
+        calculationSummary || "Attendance rate uses closed roster slots from your selected period.",
+      points: trendPoints,
+    },
+    payments_overview: familySummaries.slice(0, 8),
+    family_summaries: familySummaries,
+    team_summary: {
+      average_attendance_percent: aggregateAttendanceRate,
+      best_participating_team: bestParticipation,
+      low_participation: lowParticipation,
+      monthly_profit: monthlyRevenueRounded,
+      monthly_profit_currency: currency,
+    },
+  };
+}
+
 function CreateClubFieldLabel({ htmlFor, children, optional = false }) {
   return (
     <label className="vc-director-modal__label" htmlFor={htmlFor}>
@@ -470,14 +609,27 @@ export default function DashboardPage({
     ownedClubs.find((club) => club.id === clubId) ||
     ownedClubs[0] ||
     null;
-  const activeCoachTeam =
-    coachedTeams.find((team) => String(team.id) === String(activeTeamId)) ||
-    coachedTeams[0] ||
-    null;
+  const isAllTeamsSelected = String(activeTeamId) === "__all__";
+  const activeCoachTeam = isAllTeamsSelected
+    ? null
+    : coachedTeams.find((team) => String(team.id) === String(activeTeamId)) ||
+      coachedTeams[0] ||
+      null;
   const isCoachWorkspace = !isDirectorOrStaff && coachedTeams.length > 0;
 
   useEffect(() => {
-    if (!isCoachWorkspace || !activeCoachTeam?.id) {
+    if (!isCoachWorkspace) {
+      setCoachOverview(null);
+      setCoachOverviewError("");
+      setCoachOverviewLoading(false);
+      return;
+    }
+    const teamsToLoad = isAllTeamsSelected
+      ? coachedTeams
+      : activeCoachTeam?.id
+        ? [activeCoachTeam]
+        : [];
+    if (!teamsToLoad.length) {
       setCoachOverview(null);
       setCoachOverviewError("");
       setCoachOverviewLoading(false);
@@ -493,6 +645,60 @@ export default function DashboardPage({
       startDate: formatDateInputValue(startDate),
       endDate: formatDateInputValue(today),
     };
+
+    if (isAllTeamsSelected) {
+      void Promise.all(
+        teamsToLoad.map(async (team) => {
+          const [membersResult, paymentsResult, summaryResult, analyticsResult] = await Promise.allSettled([
+            fetchTeamMembers(team.id),
+            fetchTeamPlayerPayments(team.id),
+            fetchTeamAttendanceSummary(team.id, attendanceParams),
+            fetchTeamAttendanceAnalytics(team.id, {
+              ...attendanceParams,
+              grouping: "session",
+            }),
+          ]);
+          return {
+            team,
+            membersPayload: membersResult.status === "fulfilled" ? membersResult.value : null,
+            paymentRowsPayload: paymentsResult.status === "fulfilled" ? paymentsResult.value : null,
+            attendanceSummaryPayload: summaryResult.status === "fulfilled" ? summaryResult.value : null,
+            attendanceAnalyticsPayload: analyticsResult.status === "fulfilled" ? analyticsResult.value : null,
+          };
+        }),
+      )
+        .then((teamPayloads) => {
+          if (cancelled) {
+            return;
+          }
+          const aggregateOverview = buildAllTeamsCoachWorkspaceFallback(teamPayloads);
+          if (aggregateOverview) {
+            setCoachOverview({
+              team: { id: "__all__", name: "All coached teams" },
+              workspace_overview: aggregateOverview,
+            });
+            setCoachOverviewError("");
+          } else {
+            setCoachOverview(null);
+            setCoachOverviewError("Could not load all-teams overview.");
+          }
+        })
+        .catch((err) => {
+          if (!cancelled) {
+            setCoachOverview(null);
+            setCoachOverviewError(err?.message || "Could not load all-teams overview.");
+          }
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setCoachOverviewLoading(false);
+          }
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+
     void Promise.allSettled([
       fetchCoachTeamDashboard(activeCoachTeam.id),
       fetchTeamMembers(activeCoachTeam.id),
@@ -560,7 +766,7 @@ export default function DashboardPage({
     return () => {
       cancelled = true;
     };
-  }, [activeCoachTeam?.id, isCoachWorkspace]);
+  }, [activeCoachTeam?.id, coachedTeams, isAllTeamsSelected, isCoachWorkspace]);
 
   const paymentRows = Array.isArray(overview?.payments_overview)
     ? overview.payments_overview
@@ -620,10 +826,14 @@ export default function DashboardPage({
   const showNoClubOnboarding = !profileLoading && !hasAnyClubAffiliation;
   const showWorkspace = !profileLoading && hasAnyClubAffiliation;
   const dashboardTitle = isCoachWorkspace
-    ? activeCoachTeam?.name || "Coaching workspace"
+    ? isAllTeamsSelected
+      ? "All coached teams"
+      : activeCoachTeam?.name || "Coaching workspace"
     : activeClub?.name || "Club dashboard";
   const dashboardSummary = isCoachWorkspace
-    ? "Roster updates, player invitations, balances, and attendance tools in one coaching workspace."
+    ? isAllTeamsSelected
+      ? "Viewing aggregate coaching workspace cards across all teams you manage."
+      : "Roster updates, player invitations, balances, and attendance tools in one coaching workspace."
     : loading
       ? "Pulling together your latest club numbers."
       : !clubId

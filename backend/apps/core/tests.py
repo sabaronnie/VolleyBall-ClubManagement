@@ -4598,6 +4598,48 @@ class SharedMatchRequestFlowTests(TestCase):
         self.assertEqual(stats_by_player[fx["player_a"].id].points_scored, 9)
         self.assertEqual(stats_by_player[fx["player_b"].id].assists, 3)
 
+    def test_coach_cannot_create_match_in_the_past(self):
+        fx = self._fixture()
+        response = self.client.post(
+            reverse("core:create-match"),
+            data=json.dumps(
+                {
+                    "team_id": fx["team_a"].id,
+                    "scheduled_date": (timezone.localdate() - timedelta(days=1)).isoformat(),
+                    "start_time": "18:00",
+                    "end_time": "19:30",
+                    "location": "Main Court",
+                    "external_opponent": "External Team",
+                }
+            ),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_a'])}",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("scheduled_date", response.json()["errors"])
+        self.assertIn("past", str(response.json()["errors"]["scheduled_date"]).lower())
+
+    def test_coach_cannot_create_training_session_in_the_past(self):
+        fx = self._fixture()
+        response = self.client.post(
+            reverse("core:team-training-sessions", kwargs={"team_id": fx["team_a"].id}),
+            data=json.dumps(
+                {
+                    "title": "Past Training",
+                    "session_type": "training",
+                    "scheduled_date": (timezone.localdate() - timedelta(days=1)).isoformat(),
+                    "start_time": "18:00",
+                    "end_time": "19:30",
+                    "location": "Main Court",
+                }
+            ),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_a'])}",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("scheduled_date", response.json()["errors"])
+        self.assertIn("past", str(response.json()["errors"]["scheduled_date"]).lower())
+
     def test_opponent_player_can_confirm_shared_match_after_acceptance(self):
         fx = self._fixture()
         session = TrainingSession.objects.create(
