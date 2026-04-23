@@ -4391,6 +4391,85 @@ class SharedMatchRequestFlowTests(TestCase):
         self.assertEqual(response.status_code, 403)
         self.assertIn("coaches", response.json()["errors"]["authorization"].lower())
 
+    def test_coach_statistics_search_all_teams_scope(self):
+        fx = self._fixture()
+        team_c = Team.objects.create(club=fx["club"], name="Shared Team C")
+        TeamMembership.objects.add_member(user=fx["coach_a"], team=team_c, role=TeamRole.COACH)
+        cross_team_player = User.objects.create_user(
+            email="sam-a@example.com",
+            password="StrongPassword123!",
+            first_name="Samira",
+            last_name="Coachscope",
+            date_of_birth=date(2009, 6, 18),
+        )
+        TeamMembership.objects.add_member(user=cross_team_player, team=team_c, role=TeamRole.PLAYER)
+        TeamMembership.objects.add_member(
+            user=User.objects.create_user(
+                email="sam-b@example.com",
+                password="StrongPassword123!",
+                first_name="Sam",
+                last_name="Outscope",
+                date_of_birth=date(2009, 7, 18),
+            ),
+            team=fx["team_b"],
+            role=TeamRole.PLAYER,
+        )
+
+        response = self.client.get(
+            reverse("core:search-coach-players"),
+            {"q": "sam"},
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_a'])}",
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertTrue(body["scope"]["all_teams"])
+        self.assertIn(fx["team_a"].id, body["scope"]["manageable_team_ids"])
+        self.assertIn(team_c.id, body["scope"]["manageable_team_ids"])
+        team_ids = {row["team_id"] for row in body["results"]}
+        self.assertIn(team_c.id, team_ids)
+        self.assertNotIn(fx["team_b"].id, team_ids)
+
+    def test_coach_statistics_search_specific_team_scope(self):
+        fx = self._fixture()
+        team_c = Team.objects.create(club=fx["club"], name="Shared Team C")
+        TeamMembership.objects.add_member(user=fx["coach_a"], team=team_c, role=TeamRole.COACH)
+        User.objects.filter(pk=fx["player_a"].id).update(first_name="Nour")
+        player_c = User.objects.create_user(
+            email="nour-c@example.com",
+            password="StrongPassword123!",
+            first_name="Nour",
+            last_name="Teamc",
+            date_of_birth=date(2009, 8, 12),
+        )
+        TeamMembership.objects.add_member(user=player_c, team=team_c, role=TeamRole.PLAYER)
+
+        response = self.client.get(
+            reverse("core:search-coach-players"),
+            {"q": "nour", "team_id": str(team_c.id)},
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_a'])}",
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertFalse(body["scope"]["all_teams"])
+        self.assertEqual(body["scope"]["team_id"], team_c.id)
+        self.assertEqual(body["count"], 1)
+        self.assertEqual(body["results"][0]["team_id"], team_c.id)
+        self.assertEqual(body["results"][0]["player_id"], player_c.id)
+
+    def test_coach_statistics_search_excludes_uncoached_players_even_if_director(self):
+        fx = self._fixture()
+        ClubMembership.objects.assign_director(user=fx["coach_a"], club=fx["club"])
+
+        response = self.client.get(
+            reverse("core:search-coach-players"),
+            {"q": "sm-player-b"},
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_a'])}",
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["count"], 0)
+        self.assertEqual(body["results"], [])
+
     def test_existing_team_match_request_acceptance_creates_shared_match(self):
         fx = self._fixture()
         create_response = self.client.post(
