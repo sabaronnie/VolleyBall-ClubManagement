@@ -4630,6 +4630,71 @@ class SharedMatchRequestFlowTests(TestCase):
         self.assertEqual(final_score["loser_name"], "Club Rivals")
         self.assertEqual(final_score["tournament_label"], "Friendly")
 
+    def test_external_match_requires_team_score_before_end(self):
+        fx = self._fixture()
+        session = TrainingSession.objects.create(
+            team=fx["team_a"],
+            created_by=fx["coach_a"],
+            title="Match vs Club Rivals",
+            session_type=TrainingSession.SessionType.MATCH,
+            scheduled_date=timezone.localdate(),
+            start_time=(timezone.localtime() - timedelta(minutes=65)).time().replace(second=0, microsecond=0),
+            end_time=(timezone.localtime() + timedelta(minutes=15)).time().replace(second=0, microsecond=0),
+            location="Main Arena",
+            opponent="Club Rivals",
+            match_type=TrainingSession.MatchType.FRIENDLY,
+        )
+
+        response = self.client.post(
+            reverse("core:end-match", kwargs={"match_id": session.id}),
+            data=json.dumps({"opponent_final_score": 16}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_a'])}",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("team", response.json()["errors"]["result"].lower())
+
+    def test_shared_match_requires_both_teams_score_before_end(self):
+        fx = self._fixture()
+        session = TrainingSession.objects.create(
+            team=fx["team_a"],
+            created_by=fx["coach_a"],
+            title="Match vs Shared Team B",
+            session_type=TrainingSession.SessionType.MATCH,
+            scheduled_date=timezone.localdate(),
+            start_time=(timezone.localtime() - timedelta(minutes=65)).time().replace(second=0, microsecond=0),
+            end_time=(timezone.localtime() + timedelta(minutes=15)).time().replace(second=0, microsecond=0),
+            location="Court 1",
+            opponent=fx["team_b"].name,
+            opponent_team=fx["team_b"],
+            match_type=TrainingSession.MatchType.LEAGUE,
+            match_request_status=TrainingSession.MatchRequestStatus.ACCEPTED,
+        )
+        MatchPlayerStat.objects.create(
+            training_session=session,
+            player=fx["player_a"],
+            points_scored=25,
+            updated_by=fx["coach_a"],
+        )
+
+        missing_counterparty_score = self.client.post(
+            reverse("core:end-match", kwargs={"match_id": session.id}),
+            data=json.dumps({}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_a'])}",
+        )
+        self.assertEqual(missing_counterparty_score.status_code, 400)
+        self.assertIn("both", missing_counterparty_score.json()["errors"]["result"].lower())
+
+        invalid_manual_score = self.client.post(
+            reverse("core:end-match", kwargs={"match_id": session.id}),
+            data=json.dumps({"opponent_final_score": 10}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_a'])}",
+        )
+        self.assertEqual(invalid_manual_score.status_code, 400)
+        self.assertIn("derived", invalid_manual_score.json()["errors"]["opponent_final_score"].lower())
+
 
 class TeamStandingsApiTests(TestCase):
     def setUp(self):

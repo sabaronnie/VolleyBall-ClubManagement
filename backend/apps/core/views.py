@@ -4241,12 +4241,16 @@ def end_match(request, match_id):
 
     raw_opponent_score = payload.get("opponent_final_score")
     if _match_is_shared(session):
-        opponent_final_score = None
         if raw_opponent_score not in (None, ""):
-            try:
-                opponent_final_score = _parse_non_negative_int(raw_opponent_score, "opponent_final_score")
-            except ValidationError as exc:
-                return JsonResponse({"errors": exc.message_dict}, status=400)
+            return JsonResponse(
+                {
+                    "errors": {
+                        "opponent_final_score": "Shared match score is derived from recorded player stats."
+                    }
+                },
+                status=400,
+            )
+        opponent_final_score = None
     else:
         if raw_opponent_score in (None, ""):
             return JsonResponse(
@@ -4266,6 +4270,23 @@ def end_match(request, match_id):
         )
         if locked_session.match_ended_at:
             return JsonResponse({"errors": {"match": "This match has already ended."}}, status=400)
+        score_totals = _match_stat_totals_by_team(locked_session)
+        if team.id not in score_totals:
+            return JsonResponse(
+                {"errors": {"result": "Record your team's score before ending the match."}},
+                status=400,
+            )
+        if _match_is_shared(locked_session):
+            counterparty = _session_counterparty_team(locked_session, team)
+            if counterparty is None or counterparty.id not in score_totals:
+                return JsonResponse(
+                    {
+                        "errors": {
+                            "result": "Record both teams' scores before ending this shared match."
+                        }
+                    },
+                    status=400,
+                )
         locked_session.match_ended_at = timezone.now()
         locked_session.opponent_final_score = opponent_final_score
         locked_session.save(update_fields=["match_ended_at", "opponent_final_score", "updated_at"])
