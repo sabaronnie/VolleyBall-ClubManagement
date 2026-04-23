@@ -21,6 +21,7 @@ import MyFeesPage from "./pages/MyFeesPage";
 import ParentAttendancePage from "./pages/ParentAttendancePage";
 import PlayerAttendancePage from "./pages/PlayerAttendancePage";
 import CoachSessionAttendancePage from "./pages/CoachSessionAttendancePage";
+import CoachPlayerSearchPage from "./pages/CoachPlayerSearchPage";
 import TeamRosterPage from "./pages/TeamRosterPage";
 import { ForgotPasswordPage, ResetPasswordPage } from "./pages/PasswordResetPages";
 import RegisterPage from "./pages/RegisterPage";
@@ -1760,6 +1761,41 @@ function App() {
         showCoachAttendanceTab={showCoachAttendanceTab}
       >
         <CoachSessionAttendancePage activeTeam={activeTeam} />
+      </ClubWorkspaceLayout>
+    );
+  }
+
+  if (pathname === "/coach/player-search" || pathname === "/coach/player-search/") {
+    if (!isAuthenticated) {
+      return <LoginPage />;
+    }
+    if (!showCoachAttendanceTab) {
+      return (
+        <ClubWorkspaceLayout
+          activeTab=""
+          viewerAccountRole={viewerAccountRole}
+          {...defaultTeamNavProps}
+          showPlayerSessionsTab={showPlayerSessionsTab}
+          showCoachAttendanceTab={showCoachAttendanceTab}
+        >
+          <section className="teams-page-shell" style={{ padding: "1.5rem" }}>
+            <h1 style={{ fontSize: "1.2rem" }}>Player search</h1>
+            <p className="vc-modal__muted" style={{ marginTop: "0.75rem" }}>
+              Only coaches and club directors with training access can search player profiles.
+            </p>
+          </section>
+        </ClubWorkspaceLayout>
+      );
+    }
+    return (
+      <ClubWorkspaceLayout
+        activeTab="coach-attendance"
+        viewerAccountRole={viewerAccountRole}
+        {...coachAttendanceNavProps}
+        showPlayerSessionsTab={showPlayerSessionsTab}
+        showCoachAttendanceTab={showCoachAttendanceTab}
+      >
+        <CoachPlayerSearchPage activeTeam={activeTeam} />
       </ClubWorkspaceLayout>
     );
   }

@@ -607,6 +607,15 @@ export async function fetchTeamMembers(teamId) {
   return authenticatedGet(`/api/teams/${teamId}/members/`);
 }
 
+export async function searchTeamPlayers(teamId, query, options = {}) {
+  const params = new URLSearchParams();
+  params.set("q", String(query || ""));
+  if (options.limit != null && options.limit !== "") {
+    params.set("limit", String(options.limit));
+  }
+  return authenticatedGet(`/api/teams/${teamId}/players/search/?${params.toString()}`);
+}
+
 export async function fetchCoachTeamDashboard(teamId) {
   return authenticatedGet(`/api/teams/${teamId}/coach-dashboard/`);
 }

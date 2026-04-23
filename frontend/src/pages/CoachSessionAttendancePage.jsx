@@ -935,6 +935,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
       setEndMatchMessage(data?.message || "Match ended.");
       try {
         window.dispatchEvent(new Event("netup-standings-changed"));
+        window.dispatchEvent(new Event("netup-player-performance-changed"));
       } catch (e) {
         // ignore if dispatch fails in some environments
       }
@@ -962,6 +963,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
       setEndMatchMessage(data?.message || "Match resumed.");
       try {
         window.dispatchEvent(new Event("netup-standings-changed"));
+        window.dispatchEvent(new Event("netup-player-performance-changed"));
       } catch (e) {
         // ignore if dispatch fails in some environments
       }
@@ -986,6 +988,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
       try {
         const data = await updateMatchPlayerStats(matchId, playerId, nextStats, teamId);
         setMatchPayload(data);
+        window.dispatchEvent(new Event("netup-player-performance-changed"));
       } catch (err) {
         setStatsSaveError(err.message || "Could not auto-save player stats.");
       } finally {
@@ -1147,6 +1150,9 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
   const detailSession = detailPayload?.session;
   const detailMatch = matchPayload?.match;
   const detailMatchSummary = detailMatch?.summary?.final_score || null;
+  const editableMatchPlayers = (detailMatch?.players || []).filter(
+    (player) => player?.attendance_status !== "absent",
+  );
   const canCancelDetailSession =
     Boolean(canManageTraining && detailSession && detailSession.status !== "cancelled" && !sessionHasStarted(detailSession));
 
@@ -1877,9 +1883,9 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
                   {endMatchMessage ? <p className="vc-director-success">{endMatchMessage}</p> : null}
                   {endMatchError ? <p className="schedule-feedback schedule-feedback--error">{endMatchError}</p> : null}
                   {statsSaveError ? <p className="schedule-feedback schedule-feedback--error">{statsSaveError}</p> : null}
-                  {detailMatch?.players?.length ? (
+                  {editableMatchPlayers.length ? (
                     <div className="match-player-stat-list">
-                      {detailMatch.players.map((player) => {
+                      {editableMatchPlayers.map((player) => {
                         const isOpen = Number(expandedMatchPlayerId) === Number(player.player_id);
                         const saving = Boolean(savingStatsByPlayerId[player.player_id]);
                         return (
@@ -1929,7 +1935,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
                       })}
                     </div>
                   ) : !matchLoading ? (
-                    <p className="vc-modal__muted">No roster players available for this match.</p>
+                    <p className="vc-modal__muted">No present/pending players available for this match.</p>
                   ) : null}
                 </section>
               ) : null}
