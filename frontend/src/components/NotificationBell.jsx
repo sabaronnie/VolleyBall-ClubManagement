@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchNotifications, markNotificationsRead } from "../api";
+import { fetchNotifications, markNotificationsRead, respondToMatchRequest } from "../api";
 import { BellIcon } from "./AppIcons";
 import { navigate } from "../navigation";
 
@@ -29,6 +29,7 @@ export default function NotificationBell({ teamId = null }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [markBusy, setMarkBusy] = useState(false);
+  const [actionBusyId, setActionBusyId] = useState(null);
 
   const load = useCallback(async () => {
     if (!localStorage.getItem(AUTH_TOKEN_KEY)) {
@@ -51,8 +52,13 @@ export default function NotificationBell({ teamId = null }) {
   useEffect(() => {
     void load();
     const onAuth = () => void load();
+    const onNotificationsChanged = () => void load();
     window.addEventListener("auth-state-changed", onAuth);
-    return () => window.removeEventListener("auth-state-changed", onAuth);
+    window.addEventListener("netup-notifications-changed", onNotificationsChanged);
+    return () => {
+      window.removeEventListener("auth-state-changed", onAuth);
+      window.removeEventListener("netup-notifications-changed", onNotificationsChanged);
+    };
   }, [load]);
 
   useEffect(() => {
@@ -91,6 +97,29 @@ export default function NotificationBell({ teamId = null }) {
       setError(err.message || "Could not mark notifications read.");
     } finally {
       setMarkBusy(false);
+    }
+  };
+
+  const onRespondToMatchRequest = async (item, action) => {
+    if (!item?.training_session_id) {
+      return;
+    }
+    setActionBusyId(`${item.id}-${action}`);
+    setError("");
+    try {
+      await respondToMatchRequest(item.training_session_id, action);
+      window.dispatchEvent(new Event("netup-notifications-changed"));
+      window.dispatchEvent(new Event("netup-schedule-changed"));
+      if (action === "accept" && item.session_path) {
+        followCoachAttendancePath(item.session_path);
+        setOpen(false);
+      } else {
+        await load();
+      }
+    } catch (err) {
+      setError(err.message || `Could not ${action} match request.`);
+    } finally {
+      setActionBusyId(null);
     }
   };
 
@@ -179,6 +208,28 @@ export default function NotificationBell({ teamId = null }) {
                   <p>{item.message}</p>
                   {item.team_name ? (
                     <span className="notification-item__meta">{item.team_name}</span>
+                  ) : null}
+                  {item.category === "match_request" && item.can_respond_to_match_request ? (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", marginTop: "0.65rem" }}>
+                      <button
+                        type="button"
+                        className="vc-action-btn"
+                        style={{ fontSize: "0.88rem", padding: "0.45rem 0.85rem" }}
+                        disabled={actionBusyId === `${item.id}-accept`}
+                        onClick={() => void onRespondToMatchRequest(item, "accept")}
+                      >
+                        {actionBusyId === `${item.id}-accept` ? "Accepting..." : "Accept"}
+                      </button>
+                      <button
+                        type="button"
+                        className="vc-dash-icon-btn"
+                        style={{ width: "auto", padding: "0.45rem 0.85rem", borderRadius: "10px" }}
+                        disabled={actionBusyId === `${item.id}-decline`}
+                        onClick={() => void onRespondToMatchRequest(item, "decline")}
+                      >
+                        {actionBusyId === `${item.id}-decline` ? "Declining..." : "Decline"}
+                      </button>
+                    </div>
                   ) : null}
                   {item.category === "attendance_incomplete" && item.coach_attendance_path ? (
                     <div style={{ marginTop: "0.65rem" }}>

@@ -1065,6 +1065,33 @@ button {
   font-weight: 700;
 }
 
+.workspace-match-request-banner {
+  width: 100%;
+  border-top: 1px solid rgba(12, 74, 110, 0.14);
+  border-bottom: 1px solid rgba(12, 74, 110, 0.14);
+  background: #f2fbff;
+  color: #0f3951;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem 1rem;
+}
+
+.workspace-match-request-banner p {
+  margin: 0.3rem 0 0;
+  font-size: 0.92rem;
+  font-weight: 500;
+  color: #33566a;
+}
+
+.workspace-match-request-banner__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-shrink: 0;
+}
+
 .live-match-banner__pulse {
   width: 0.65rem;
   height: 0.65rem;
@@ -1365,9 +1392,15 @@ button {
   .match-create-panel__head,
   .match-stats-panel__head,
   .match-player-stat-card__trigger,
-  .live-match-banner {
+  .live-match-banner,
+  .workspace-match-request-banner {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .workspace-match-request-banner__actions {
+    width: 100%;
+    flex-wrap: wrap;
   }
 }
 

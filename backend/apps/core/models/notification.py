@@ -7,6 +7,7 @@ class Notification(models.Model):
         SESSION = "session", "Session"
         SCHEDULE = "schedule", "Schedule"
         MANUAL = "manual", "Manual"
+        MATCH_REQUEST = "match_request", "Match request"
         ATTENDANCE_INCOMPLETE = "attendance_incomplete", "Attendance incomplete"
 
     recipient = models.ForeignKey(

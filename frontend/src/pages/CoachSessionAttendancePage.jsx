@@ -78,6 +78,17 @@ function normalizeStatValue(value) {
   return Math.floor(n);
 }
 
+function clientMatchWeightedScore(stats) {
+  return (
+    normalizeStatValue(stats?.points_scored) +
+    normalizeStatValue(stats?.aces) * 2 +
+    normalizeStatValue(stats?.blocks) * 2 +
+    normalizeStatValue(stats?.assists) * 1.5 +
+    normalizeStatValue(stats?.digs) -
+    normalizeStatValue(stats?.errors)
+  );
+}
+
 function collectVisibleTeams(me) {
   const map = new Map();
   const addTeam = (team) => {
@@ -540,7 +551,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
     setDetailLoading(true);
     setDetailError("");
     try {
-      const data = await fetchCoachTrainingSessionAttendance(sessionId);
+      const data = await fetchCoachTrainingSessionAttendance(sessionId, teamId);
       setDetailPayload(data);
     } catch (err) {
       setDetailPayload(null);
@@ -548,7 +559,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
     } finally {
       setDetailLoading(false);
     }
-  }, []);
+  }, [teamId]);
 
   useEffect(() => {
     if (!selectedSessionId) {
@@ -571,7 +582,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
     setMatchLoading(true);
     setMatchError("");
     try {
-      const data = await fetchMatch(matchId);
+      const data = await fetchMatch(matchId, teamId);
       setMatchPayload(data);
     } catch (err) {
       setMatchPayload(null);
@@ -579,7 +590,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
     } finally {
       setMatchLoading(false);
     }
-  }, []);
+  }, [teamId]);
 
   useEffect(() => {
     if (detailPayload?.session?.session_type !== "match") {
@@ -653,7 +664,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
           notify_parents: newSessionNotifyParents,
         });
         const match = data?.match;
-        setCreateSessionSuccess("Game added. Players and parents can confirm attendance like any other event.");
+        setCreateSessionSuccess(data?.message || "Game added.");
         setOpponentSearch("");
         setSelectedOpponentTeamId("");
         setUseExternalOpponent(false);
@@ -735,7 +746,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
       setRemindError("");
       setRemindMessage("");
       try {
-        const res = await remindUnconfirmedTrainingSession(sess.id, audience);
+        const res = await remindUnconfirmedTrainingSession(sess.id, audience, teamId);
         const n = res.recipient_count ?? 0;
         const np = res.player_recipient_count ?? 0;
         const npar = res.parent_recipient_count ?? 0;
@@ -794,7 +805,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
       setSavingStatsByPlayerId((prev) => ({ ...prev, [playerId]: true }));
       setStatsSaveError("");
       try {
-        const data = await updateMatchPlayerStats(matchId, playerId, nextStats);
+        const data = await updateMatchPlayerStats(matchId, playerId, nextStats, teamId);
         setMatchPayload(data);
       } catch (err) {
         setStatsSaveError(err.message || "Could not auto-save player stats.");
@@ -802,22 +813,29 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
         setSavingStatsByPlayerId((prev) => ({ ...prev, [playerId]: false }));
       }
     }, 450);
-  }, [detailPayload]);
+  }, [detailPayload, teamId]);
 
   const onChangePlayerStat = useCallback((playerId, field, value) => {
     const normalizedValue = normalizeStatValue(value);
-    let nextStats = null;
+    const currentPlayer = matchPayload?.match?.players?.find(
+      (player) => Number(player.player_id) === Number(playerId),
+    );
+    if (!currentPlayer) {
+      return;
+    }
+    const nextStats = {
+      ...(currentPlayer.stats || {}),
+      [field]: normalizedValue,
+    };
+
     setMatchPayload((prev) => {
       if (!prev?.match) return prev;
       const players = (prev.match.players || []).map((player) => {
         if (Number(player.player_id) !== Number(playerId)) return player;
-        nextStats = {
-          ...(player.stats || {}),
-          [field]: normalizedValue,
-        };
         return {
           ...player,
           stats: nextStats,
+          weighted_score: Math.round(clientMatchWeightedScore(nextStats) * 100) / 100,
         };
       });
       const totalTeamPoints = players.reduce((sum, player) => sum + normalizeStatValue(player.stats?.points_scored), 0);
@@ -855,10 +873,8 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
         },
       };
     });
-    if (nextStats) {
-      schedulePlayerStatSave(playerId, nextStats);
-    }
-  }, [schedulePlayerStatSave]);
+    schedulePlayerStatSave(playerId, nextStats);
+  }, [matchPayload, schedulePlayerStatSave]);
 
   const today = useMemo(() => {
     const t = new Date();
@@ -1419,6 +1435,11 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
                           {session.session_type === "match" && session.opponent ? (
                             <p className="training-session-card__match-meta">vs {session.opponent}</p>
                           ) : null}
+                          {session.session_type === "match" && session.match_request_status !== "none" ? (
+                            <p className="vc-modal__muted" style={{ fontSize: "0.8rem", marginTop: "0.3rem" }}>
+                              {session.match_request_status_label}
+                            </p>
+                          ) : null}
                           <p className="vc-modal__muted" style={{ fontSize: "0.82rem", marginTop: "0.35rem" }}>
                             Confirmed {session.confirmed_count ?? 0} · Pending {session.pending_count ?? 0}
                           </p>
@@ -1462,6 +1483,12 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
                   <br />
                   {detailSession.session_type_label}
                   {detailSession.session_type === "match" && detailSession.opponent ? ` · vs ${detailSession.opponent}` : ""}
+                  {detailSession.session_type === "match" && detailSession.match_request_status !== "none" ? (
+                    <>
+                      <br />
+                      <span style={{ color: "#4b5563" }}>{detailSession.match_request_status_label}</span>
+                    </>
+                  ) : null}
                   {detailSession.description ? (
                     <>
                       <br />
@@ -1491,6 +1518,11 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
                       <span>
                         MVP: {matchPayload?.match?.summary?.mvp_suggestion?.player_name || "No stats yet"}
                       </span>
+                      {(matchPayload?.match?.summary?.team_totals || []).map((row) => (
+                        <span key={row.team_id}>
+                          {row.team_name}: {row.total_points}
+                        </span>
+                      ))}
                     </div>
                   </div>
                   {matchLoading && !matchPayload ? <p className="vc-modal__muted">Loading match stats…</p> : null}
@@ -1511,7 +1543,11 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
                             >
                               <span>
                                 <strong>{player.player_name}</strong>
-                                <small>{player.is_confirmed ? "Confirmed" : "Pending attendance"}</small>
+                                <small>
+                                  {player.team_name}
+                                  {" · "}
+                                  {player.is_confirmed ? "Confirmed" : "Pending attendance"}
+                                </small>
                               </span>
                               <span className="match-player-stat-card__score">
                                 {saving ? "Saving…" : `Score ${player.weighted_score ?? 0}`}
@@ -1548,7 +1584,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
                   ) : null}
                 </section>
               ) : null}
-              {canManageTraining && detailSession.status !== "cancelled" ? (
+              {canManageTraining && detailSession.status !== "cancelled" && detailSession.can_send_reminders !== false ? (
                 <section
                   style={{
                     marginBottom: "1rem",
@@ -1643,7 +1679,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
                       This session has been cancelled. It should no longer appear in the weekly schedule, and cancelled
                       sessions are excluded from attendance-rate calculations.
                     </p>
-                  ) : canCancelDetailSession ? (
+                  ) : canCancelDetailSession && detailSession.can_cancel !== false ? (
                     <>
                       <p className="vc-modal__muted" style={{ margin: "0 0 0.65rem", fontSize: "0.84rem", lineHeight: 1.5 }}>
                         This session has not started yet. You can cancel it here to remove it from the schedule and
@@ -1667,7 +1703,9 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
                     </>
                   ) : (
                     <p className="vc-modal__muted" style={{ margin: 0, fontSize: "0.84rem", lineHeight: 1.5 }}>
-                      Only sessions that have not started yet can be cancelled here.
+                      {detailSession.can_cancel === false
+                        ? "Only the team that created this session can cancel it here."
+                        : "Only sessions that have not started yet can be cancelled here."}
                     </p>
                   )}
                 </section>
@@ -1678,6 +1716,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
                     <thead>
                       <tr>
                         <th>Player</th>
+                        {detailSession.is_shared_match ? <th>Team</th> : null}
                         <th>#</th>
                         <th>Position</th>
                         <th>Status</th>
@@ -1689,6 +1728,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
                       {detailSession.players.map((row) => (
                         <tr key={row.player_id}>
                           <td>{row.player_name}</td>
+                          {detailSession.is_shared_match ? <td>{row.team_name}</td> : null}
                           <td>{row.jersey_number != null ? row.jersey_number : "—"}</td>
                           <td>{row.primary_position || "—"}</td>
                           <td>

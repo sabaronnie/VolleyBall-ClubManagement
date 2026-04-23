@@ -44,6 +44,12 @@ class TrainingSession(models.Model):
         TRAINING = "training", "Training"
         MATCH = "match", "Match"
 
+    class MatchRequestStatus(models.TextChoices):
+        NONE = "none", "No approval needed"
+        PENDING = "pending", "Pending opponent approval"
+        ACCEPTED = "accepted", "Accepted"
+        DECLINED = "declined", "Declined"
+
     class MatchType(models.TextChoices):
         FRIENDLY = "friendly", "Friendly"
         LEAGUE = "league", "League"
@@ -70,11 +76,31 @@ class TrainingSession(models.Model):
     end_time = models.TimeField()
     location = models.CharField(max_length=255, blank=True)
     opponent = models.CharField(max_length=255, blank=True)
+    opponent_team = models.ForeignKey(
+        "core.Team",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="opponent_training_sessions",
+    )
     match_type = models.CharField(
         max_length=20,
         choices=MatchType.choices,
         blank=True,
     )
+    match_request_status = models.CharField(
+        max_length=20,
+        choices=MatchRequestStatus.choices,
+        default=MatchRequestStatus.NONE,
+    )
+    opponent_responded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="responded_training_session_requests",
+    )
+    opponent_responded_at = models.DateTimeField(null=True, blank=True)
     notes = models.TextField(blank=True)
     notify_players = models.BooleanField(default=True)
     notify_parents = models.BooleanField(default=False)

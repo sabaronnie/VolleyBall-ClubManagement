@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { fetchCurrentUser, fetchTeamTrainingSessions } from "../api";
+import { fetchCurrentUser, fetchNotifications, fetchTeamTrainingSessions, respondToMatchRequest } from "../api";
 import { ChevronDownIcon, UserCircleIcon } from "./AppIcons";
 import NotificationBell from "./NotificationBell";
 import SiteNavbar, { buildWorkspaceTabs } from "./SiteNavbar";
@@ -24,6 +24,23 @@ function logout() {
   localStorage.removeItem(ACTIVE_TEAM_KEY);
   window.dispatchEvent(new Event("auth-state-changed"));
   navigate("/");
+}
+
+function openSessionPath(fullPath) {
+  if (!fullPath || typeof fullPath !== "string") {
+    return;
+  }
+  const qIndex = fullPath.indexOf("?");
+  const search = qIndex >= 0 ? fullPath.slice(qIndex + 1) : "";
+  const params = new URLSearchParams(search);
+  const team = params.get("team");
+  if (team) {
+    const tid = Number(team);
+    if (Number.isFinite(tid) && tid > 0) {
+      window.dispatchEvent(new CustomEvent("netup-set-active-team", { detail: { teamId: tid } }));
+    }
+  }
+  navigate(fullPath.startsWith("/") ? fullPath : `/${fullPath}`);
 }
 
 function formatVerificationStatus(value) {
@@ -94,6 +111,9 @@ export default function ClubWorkspaceLayout({
   const [profileError, setProfileError] = useState("");
   const [showParentAttendanceFromProfile, setShowParentAttendanceFromProfile] = useState(false);
   const [liveMatch, setLiveMatch] = useState(null);
+  const [pendingMatchRequest, setPendingMatchRequest] = useState(null);
+  const [pendingMatchBusyAction, setPendingMatchBusyAction] = useState("");
+  const [pendingMatchError, setPendingMatchError] = useState("");
 
   useEffect(() => {
     if (!localStorage.getItem(AUTH_TOKEN_KEY)) {
@@ -118,6 +138,44 @@ export default function ClubWorkspaceLayout({
       });
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!localStorage.getItem(AUTH_TOKEN_KEY)) {
+      setPendingMatchRequest(null);
+      setPendingMatchError("");
+      return undefined;
+    }
+
+    let cancelled = false;
+    const loadPendingMatchRequest = async () => {
+      try {
+        const data = await fetchNotifications();
+        if (cancelled) return;
+        const firstPending =
+          (data?.items || []).find(
+            (item) => item.category === "match_request" && item.can_respond_to_match_request,
+          ) || null;
+        setPendingMatchRequest(firstPending);
+        setPendingMatchError("");
+      } catch (err) {
+        if (!cancelled) {
+          setPendingMatchRequest(null);
+          setPendingMatchError(err.message || "Could not load match requests.");
+        }
+      }
+    };
+
+    void loadPendingMatchRequest();
+    const onAuth = () => void loadPendingMatchRequest();
+    const onNotificationsChanged = () => void loadPendingMatchRequest();
+    window.addEventListener("auth-state-changed", onAuth);
+    window.addEventListener("netup-notifications-changed", onNotificationsChanged);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("auth-state-changed", onAuth);
+      window.removeEventListener("netup-notifications-changed", onNotificationsChanged);
     };
   }, []);
 
@@ -215,6 +273,28 @@ export default function ClubWorkspaceLayout({
     showParentAttendanceTab: viewerAccountRole === "parent" || showParentAttendanceFromProfile,
   });
 
+  const onRespondToPendingMatch = useCallback(async (action) => {
+    if (!pendingMatchRequest?.training_session_id) {
+      return;
+    }
+    setPendingMatchBusyAction(action);
+    setPendingMatchError("");
+    try {
+      await respondToMatchRequest(pendingMatchRequest.training_session_id, action);
+      window.dispatchEvent(new Event("netup-notifications-changed"));
+      window.dispatchEvent(new Event("netup-schedule-changed"));
+      if (action === "accept" && pendingMatchRequest.session_path) {
+        openSessionPath(pendingMatchRequest.session_path);
+      } else {
+        setPendingMatchRequest(null);
+      }
+    } catch (err) {
+      setPendingMatchError(err.message || `Could not ${action} match request.`);
+    } finally {
+      setPendingMatchBusyAction("");
+    }
+  }, [pendingMatchRequest]);
+
   return (
     <div className={`vc-app vc-dashboard${heroOverlay ? " vc-dashboard--hero-overlay" : ""}`}>
       <SiteNavbar
@@ -266,6 +346,35 @@ export default function ClubWorkspaceLayout({
           </>
         }
       />
+
+      {pendingMatchRequest ? (
+        <section className="workspace-match-request-banner" aria-label="Pending match request">
+          <div>
+            <strong>{pendingMatchRequest.requesting_team_name || "Another team"} opened a match session with you.</strong>
+            <p>{pendingMatchRequest.message}</p>
+            {pendingMatchError ? <p className="schedule-feedback schedule-feedback--error">{pendingMatchError}</p> : null}
+          </div>
+          <div className="workspace-match-request-banner__actions">
+            <button
+              type="button"
+              className="vc-action-btn"
+              disabled={pendingMatchBusyAction === "accept"}
+              onClick={() => void onRespondToPendingMatch("accept")}
+            >
+              {pendingMatchBusyAction === "accept" ? "Accepting..." : "Accept"}
+            </button>
+            <button
+              type="button"
+              className="vc-dash-icon-btn"
+              style={{ width: "auto", padding: "0.65rem 1rem", borderRadius: "12px" }}
+              disabled={pendingMatchBusyAction === "decline"}
+              onClick={() => void onRespondToPendingMatch("decline")}
+            >
+              {pendingMatchBusyAction === "decline" ? "Declining..." : "Decline"}
+            </button>
+          </div>
+        </section>
+      ) : null}
 
       {liveMatch ? (
         <button

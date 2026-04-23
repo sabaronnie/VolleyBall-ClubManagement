@@ -303,6 +303,153 @@ def _format_time_12h(value):
     return value.strftime("%I:%M %p").lstrip("0")
 
 
+def _session_notification_audience(session):
+    if session.notify_players and session.notify_parents:
+        return "all"
+    if session.notify_players:
+        return "players"
+    if session.notify_parents:
+        return "parents"
+    return None
+
+
+def _match_request_requires_approval(session):
+    return (
+        session.session_type == TrainingSession.SessionType.MATCH
+        and session.opponent_team_id is not None
+    )
+
+
+def _match_is_shared(session):
+    return (
+        _match_request_requires_approval(session)
+        and session.match_request_status == TrainingSession.MatchRequestStatus.ACCEPTED
+    )
+
+
+def _match_owner_can_manage(user, session):
+    return can_manage_team(user, session.team)
+
+
+def _match_opponent_can_manage(user, session):
+    return bool(
+        _match_is_shared(session)
+        and session.opponent_team_id
+        and can_manage_team(user, session.opponent_team)
+    )
+
+
+def _can_manage_match_stats(user, session):
+    return _match_owner_can_manage(user, session) or _match_opponent_can_manage(user, session)
+
+
+def _session_counterparty_team(session, context_team):
+    if session.session_type != TrainingSession.SessionType.MATCH or not session.opponent_team_id:
+        return None
+    if context_team and context_team.id == session.team_id:
+        return session.opponent_team
+    if context_team and context_team.id == session.opponent_team_id:
+        return session.team
+    return session.opponent_team
+
+
+def _display_match_opponent(session, context_team):
+    counterparty = _session_counterparty_team(session, context_team)
+    if counterparty is not None:
+        return counterparty.name
+    return session.opponent
+
+
+def _display_session_title(session, context_team):
+    if session.session_type == TrainingSession.SessionType.MATCH and session.opponent_team_id:
+        opponent_name = _display_match_opponent(session, context_team)
+        return f"Match vs {opponent_name}" if opponent_name else "Match"
+    return session.title
+
+
+def _can_view_session_from_team(viewer, session, context_team):
+    if context_team.id == session.team_id:
+        if (
+            session.session_type == TrainingSession.SessionType.MATCH
+            and session.opponent_team_id
+            and session.match_request_status in (
+                TrainingSession.MatchRequestStatus.PENDING,
+                TrainingSession.MatchRequestStatus.DECLINED,
+            )
+            and not can_manage_team(viewer, context_team)
+        ):
+            return False
+        return can_view_team(viewer, context_team)
+
+    if context_team.id == session.opponent_team_id and _match_is_shared(session):
+        return can_view_team(viewer, context_team)
+
+    return False
+
+
+def _requested_context_team(request, session):
+    raw_team_id = request.GET.get("team_id") or request.POST.get("team_id")
+    if raw_team_id is None:
+        return None
+    try:
+        team_id = int(raw_team_id)
+    except (TypeError, ValueError):
+        return None
+    if team_id == session.team_id:
+        return session.team
+    if team_id == session.opponent_team_id:
+        return session.opponent_team
+    return None
+
+
+def _resolve_session_context_team(request, session):
+    requested_team = _requested_context_team(request, session)
+    if requested_team and _can_view_session_from_team(request.user, session, requested_team):
+        return requested_team
+
+    if _can_view_session_from_team(request.user, session, session.team):
+        return session.team
+
+    if session.opponent_team_id and _can_view_session_from_team(request.user, session, session.opponent_team):
+        return session.opponent_team
+
+    return None
+
+
+def _build_match_player_memberships(session, context_team):
+    team_order = [context_team]
+    counterparty = _session_counterparty_team(session, context_team) if _match_is_shared(session) else None
+    if counterparty is not None and counterparty.id != context_team.id:
+        team_order.append(counterparty)
+
+    memberships = []
+    for idx, team in enumerate(team_order):
+        team_memberships = list(
+            TeamMembership.objects.active()
+            .filter(team=team, role=TeamRole.PLAYER)
+            .select_related("user", "team")
+            .order_by("user__first_name", "user__last_name", "user__email")
+        )
+        for membership in team_memberships:
+            membership._match_side_order = idx
+        memberships.extend(team_memberships)
+    return memberships
+
+
+def _serialize_match_request_flags(session, viewer, context_team):
+    can_respond = bool(
+        session.session_type == TrainingSession.SessionType.MATCH
+        and context_team.id == session.opponent_team_id
+        and session.match_request_status == TrainingSession.MatchRequestStatus.PENDING
+        and can_manage_team(viewer, context_team)
+    )
+    return {
+        "match_request_status": session.match_request_status,
+        "match_request_status_label": session.get_match_request_status_display(),
+        "can_respond_to_match_request": can_respond,
+    }
+
+
 def _serialize_training_session(session, viewer, team, player_memberships):
     confirmations_by_player_id = {
         confirmation.player_id: confirmation
@@ -340,14 +487,16 @@ def _serialize_training_session(session, viewer, team, player_memberships):
 
     return {
         "id": session.id,
-        "title": session.title,
+        "title": _display_session_title(session, team),
+        "raw_title": session.title,
         "session_type": session.session_type,
         "session_type_label": session.get_session_type_display(),
         "scheduled_date": session.scheduled_date.isoformat(),
         "start_time": session.start_time.strftime("%H:%M"),
         "end_time": session.end_time.strftime("%H:%M"),
         "location": session.location,
-        "opponent": session.opponent,
+        "opponent": _display_match_opponent(session, team),
+        "opponent_team_id": session.opponent_team_id,
         "match_type": session.match_type,
         "match_type_label": session.get_match_type_display() if session.match_type else "",
         "notes": session.notes,
@@ -355,15 +504,17 @@ def _serialize_training_session(session, viewer, team, player_memberships):
         "notify_parents": session.notify_parents,
         "status": session.status,
         "status_label": session.get_status_display(),
-        "can_edit": viewer_can_manage,
-        "can_cancel": viewer_can_manage and session.status != TrainingSession.Status.CANCELLED,
+        "can_edit": viewer_can_manage and team.id == session.team_id,
+        "can_cancel": viewer_can_manage and team.id == session.team_id and session.status != TrainingSession.Status.CANCELLED,
         "confirmed_count": confirmed_count,
         "pending_count": pending_count,
         "player_confirmations": player_confirmations,
+        "is_shared_match": _match_is_shared(session),
+        **_serialize_match_request_flags(session, viewer, team),
     }
 
 
-def _serialize_coach_training_session_attendance(session, team, player_memberships):
+def _serialize_coach_training_session_attendance(session, team, player_memberships, viewer):
     """
     Coach/director planning view: full roster with present/pending/absent/cancelled labels,
     confirmation metadata, optional jersey/position, and summary counts (EP-25).
@@ -401,6 +552,8 @@ def _serialize_coach_training_session_attendance(session, team, player_membershi
                 ),
                 "jersey_number": profile.jersey_number if profile else None,
                 "primary_position": (profile.primary_position if profile else "") or "",
+                "team_id": membership.team_id,
+                "team_name": membership.team.name,
             }
         )
 
@@ -411,10 +564,12 @@ def _serialize_coach_training_session_attendance(session, team, player_membershi
     remind_parents_allowed = session.status != TrainingSession.Status.CANCELLED and not training_session_has_ended(
         session
     )
+    can_manage_context_team = can_manage_team(viewer, team)
 
     return {
         "id": session.id,
-        "title": session.title,
+        "title": _display_session_title(session, team),
+        "raw_title": session.title,
         "description": session.notes or "",
         "session_type": session.session_type,
         "session_type_label": session.get_session_type_display(),
@@ -422,7 +577,8 @@ def _serialize_coach_training_session_attendance(session, team, player_membershi
         "start_time": session.start_time.strftime("%H:%M"),
         "end_time": session.end_time.strftime("%H:%M"),
         "location": session.location,
-        "opponent": session.opponent,
+        "opponent": _display_match_opponent(session, team),
+        "opponent_team_id": session.opponent_team_id,
         "match_type": session.match_type,
         "match_type_label": session.get_match_type_display() if session.match_type else "",
         "notes": session.notes,
@@ -432,7 +588,11 @@ def _serialize_coach_training_session_attendance(session, team, player_membershi
         "players": players_out,
         "summary": session_roster_summary(session, player_memberships, conf_pairs),
         "unconfirmed_roster_count": unconfirmed_roster_count,
-        "remind_parents_allowed": remind_parents_allowed,
+        "remind_parents_allowed": remind_parents_allowed and can_manage_context_team and team.id == session.team_id,
+        "can_send_reminders": can_manage_context_team and team.id == session.team_id,
+        "can_cancel": can_manage_context_team and team.id == session.team_id,
+        "is_shared_match": _match_is_shared(session),
+        **_serialize_match_request_flags(session, viewer, team),
     }
 
 
@@ -466,6 +626,7 @@ def _serialize_match_detail(session, team, player_memberships, viewer):
 
     players = []
     total_team_points = 0
+    team_points = defaultdict(int)
     mvp = None
     has_recorded_stats = False
 
@@ -478,12 +639,15 @@ def _serialize_match_detail(session, team, player_memberships, viewer):
                 stats[field] = getattr(stat_row, field)
         weighted_score = _match_weighted_score(stats)
         total_team_points += stats["points_scored"]
+        team_points[membership.team_id] += stats["points_scored"]
         if any(stats.values()):
             has_recorded_stats = True
         confirmation = confirmations_by_player_id.get(player.id)
         player_payload = {
             "player_id": player.id,
             "player_name": _format_person_name(player),
+            "team_id": membership.team_id,
+            "team_name": membership.team.name,
             "is_confirmed": confirmation is not None,
             "confirmed_at": confirmation.confirmed_at.isoformat() if confirmation else None,
             "confirmed_by_name": (
@@ -511,20 +675,33 @@ def _serialize_match_detail(session, team, player_memberships, viewer):
     return {
         "id": session.id,
         "team": _serialize_team(team),
-        "title": session.title,
+        "title": _display_session_title(session, team),
+        "raw_title": session.title,
         "scheduled_date": session.scheduled_date.isoformat(),
         "start_time": session.start_time.strftime("%H:%M"),
         "end_time": session.end_time.strftime("%H:%M"),
         "location": session.location,
-        "opponent": session.opponent,
+        "opponent": _display_match_opponent(session, team),
+        "opponent_team_id": session.opponent_team_id,
         "status": session.status,
         "status_label": session.get_status_display(),
-        "can_manage_stats": can_manage_team(viewer, team),
+        "can_manage_stats": _can_manage_match_stats(viewer, session),
+        "is_shared_match": _match_is_shared(session),
+        **_serialize_match_request_flags(session, viewer, team),
         "summary": {
             "total_team_points": total_team_points,
             "mvp_suggestion": mvp if has_recorded_stats else None,
             "player_count": len(players),
             "confirmed_count": len([row for row in players if row["is_confirmed"]]),
+            "team_totals": [
+                {
+                    "team_id": candidate.id,
+                    "team_name": candidate.name,
+                    "total_points": team_points.get(candidate.id, 0),
+                }
+                for candidate in [team, _session_counterparty_team(session, team) if _match_is_shared(session) else None]
+                if candidate is not None
+            ],
         },
         "players": players,
     }
@@ -549,7 +726,7 @@ def _parse_match_stat_payload(payload):
 
 def _get_match_session_or_404(match_id):
     return get_object_or_404(
-        TrainingSession.objects.select_related("team__club").prefetch_related(
+        TrainingSession.objects.select_related("team__club", "opponent_team__club").prefetch_related(
             "confirmations__player",
             "confirmations__confirmed_by",
             "match_player_stats__player",
@@ -1083,7 +1260,14 @@ def _serialize_player_access_policy(policy):
     }
 
 
-def _serialize_notification(notification):
+def _serialize_notification(notification, viewer=None):
+    session_path = None
+    if notification.training_session_id and notification.team_id:
+        session_path = coach_attendance_action_path(
+            notification.team_id,
+            notification.training_session_id,
+        )
+
     payload = {
         "id": notification.id,
         "title": notification.title,
@@ -1095,6 +1279,10 @@ def _serialize_notification(notification):
         "created_at": notification.created_at.isoformat(),
         "training_session_id": notification.training_session_id,
         "coach_attendance_path": None,
+        "session_path": session_path,
+        "match_request_status": None,
+        "can_respond_to_match_request": False,
+        "requesting_team_name": None,
     }
     if (
         notification.category == Notification.Category.ATTENDANCE_INCOMPLETE
@@ -1105,6 +1293,22 @@ def _serialize_notification(notification):
             notification.team_id,
             notification.training_session_id,
         )
+    if (
+        notification.category == Notification.Category.MATCH_REQUEST
+        and notification.training_session_id
+        and notification.training_session
+        and notification.training_session.session_type == TrainingSession.SessionType.MATCH
+    ):
+        session = notification.training_session
+        payload["match_request_status"] = session.match_request_status
+        payload["requesting_team_name"] = session.team.name
+        if (
+            viewer is not None
+            and notification.team_id == session.opponent_team_id
+            and session.match_request_status == TrainingSession.MatchRequestStatus.PENDING
+            and can_manage_team(viewer, notification.team)
+        ):
+            payload["can_respond_to_match_request"] = True
     return payload
 
 
@@ -1164,6 +1368,77 @@ def _create_team_notifications(*, team, created_by, title, message, category, au
             for recipient_id in recipient_ids
         ]
     )
+
+
+def _get_team_manager_recipient_ids(team):
+    coach_ids = set(
+        TeamMembership.objects.active()
+        .filter(team=team, role=TeamRole.COACH)
+        .values_list("user_id", flat=True)
+    )
+    director_ids = set(
+        ClubMembership.objects.active()
+        .filter(club=team.club, role=ClubRole.CLUB_DIRECTOR)
+        .values_list("user_id", flat=True)
+    )
+    return coach_ids | director_ids
+
+
+def _create_manager_notifications(
+    *,
+    team,
+    created_by,
+    title,
+    message,
+    category,
+    training_session=None,
+):
+    recipient_ids = _get_team_manager_recipient_ids(team)
+    if not recipient_ids:
+        return
+
+    Notification.objects.bulk_create(
+        [
+            Notification(
+                recipient_id=recipient_id,
+                created_by=created_by,
+                team=team,
+                training_session=training_session,
+                title=title,
+                message=message,
+                category=category,
+            )
+            for recipient_id in recipient_ids
+        ]
+    )
+
+
+def _team_sessions_queryset(team, viewer):
+    viewer_can_manage = can_manage_team(viewer, team)
+    sessions = TrainingSession.objects.filter(
+        Q(team=team)
+        | Q(
+            session_type=TrainingSession.SessionType.MATCH,
+            opponent_team=team,
+            match_request_status=TrainingSession.MatchRequestStatus.ACCEPTED,
+        )
+    ).select_related("team__club", "opponent_team")
+
+    if not viewer_can_manage:
+        sessions = sessions.exclude(
+            Q(
+                team=team,
+                session_type=TrainingSession.SessionType.MATCH,
+                opponent_team__isnull=False,
+                match_request_status__in=[
+                    TrainingSession.MatchRequestStatus.PENDING,
+                    TrainingSession.MatchRequestStatus.DECLINED,
+                ],
+            )
+        )
+        sessions = sessions.exclude(status=TrainingSession.Status.CANCELLED)
+
+    return sessions.prefetch_related("confirmations__player", "confirmations__confirmed_by")
 
 
 def _unconfirmed_roster_player_ids(session, team):
@@ -3035,12 +3310,7 @@ def team_training_sessions(request, team_id):
     )
 
     if request.method == "GET":
-        sessions = TrainingSession.objects.filter(team=team).prefetch_related(
-            "confirmations__player",
-            "confirmations__confirmed_by",
-        )
-        if not can_manage_team(request.user, team):
-            sessions = sessions.exclude(status=TrainingSession.Status.CANCELLED)
+        sessions = _team_sessions_queryset(team, request.user)
 
         return JsonResponse(
             {
@@ -3274,6 +3544,9 @@ def _parse_match_create_payload(payload, team):
     external_opponent = (payload.get("external_opponent") or payload.get("opponent") or "").strip()
     opponent = ""
 
+    opponent_team = None
+    match_request_status = TrainingSession.MatchRequestStatus.NONE
+
     if opponent_team_id:
         try:
             opponent_team_pk = int(opponent_team_id)
@@ -3285,6 +3558,7 @@ def _parse_match_create_payload(payload, team):
         if opponent_team is None:
             raise ValidationError({"opponent_team_id": "Opponent team was not found in this club."})
         opponent = opponent_team.name
+        match_request_status = TrainingSession.MatchRequestStatus.PENDING
     elif external_opponent:
         opponent = external_opponent
     else:
@@ -3298,7 +3572,9 @@ def _parse_match_create_payload(payload, team):
         "end_time": end_time,
         "location": (payload.get("location") or "").strip(),
         "opponent": opponent,
+        "opponent_team": opponent_team,
         "match_type": (payload.get("match_type") or TrainingSession.MatchType.FRIENDLY),
+        "match_request_status": match_request_status,
         "notes": (payload.get("notes") or "").strip(),
         "notify_players": bool(payload.get("notify_players", True)),
         "notify_parents": bool(payload.get("notify_parents", True)),
@@ -3333,25 +3609,40 @@ def create_match(request):
             return JsonResponse({"errors": exc.message_dict}, status=400)
         return JsonResponse({"errors": {"body": exc.messages}}, status=400)
 
-    session = TrainingSession.objects.create(team=team, created_by=request.user, **match_data)
-    session = _get_match_session_or_404(session.pk)
+    with transaction.atomic():
+        session = TrainingSession.objects.create(team=team, created_by=request.user, **match_data)
+        session = _get_match_session_or_404(session.pk)
     player_memberships = _match_player_memberships(team)
-
-    _create_team_notifications(
-        team=team,
-        created_by=request.user,
-        title=f"New match for {team.name}",
-        message=(
-            f"{session.title} was scheduled for {session.scheduled_date.isoformat()} "
-            f"from {_format_time_12h(session.start_time)} to {_format_time_12h(session.end_time)}."
-        ),
-        category=Notification.Category.SESSION,
-        audience="all",
-    )
+    if session.opponent_team_id:
+        _create_manager_notifications(
+            team=session.opponent_team,
+            created_by=request.user,
+            training_session=session,
+            title=f"{team.name} opened a match session with {session.opponent_team.name}",
+            message=(
+                f"{team.name} scheduled {session.scheduled_date.isoformat()} "
+                f"from {_format_time_12h(session.start_time)} to {_format_time_12h(session.end_time)}. Accept?"
+            ),
+            category=Notification.Category.MATCH_REQUEST,
+        )
+        message = "Match request sent for opponent approval."
+    else:
+        _create_team_notifications(
+            team=team,
+            created_by=request.user,
+            title=f"New match for {team.name}",
+            message=(
+                f"{session.title} was scheduled for {session.scheduled_date.isoformat()} "
+                f"from {_format_time_12h(session.start_time)} to {_format_time_12h(session.end_time)}."
+            ),
+            category=Notification.Category.SESSION,
+            audience="all",
+        )
+        message = "Match created successfully."
 
     return JsonResponse(
         {
-            "message": "Match created successfully.",
+            "message": message,
             "match": _serialize_match_detail(session, team, player_memberships, request.user),
         },
         status=201,
@@ -3359,11 +3650,133 @@ def create_match(request):
 
 
 @login_required
+@require_POST
+@csrf_exempt
+def respond_match_request(request, match_id):
+    payload = _parse_json_request(request)
+    if payload is None:
+        return JsonResponse({"errors": {"body": "Invalid JSON."}}, status=400)
+
+    action = (payload.get("action") or "").strip().lower()
+    if action not in {"accept", "decline"}:
+        return JsonResponse({"errors": {"action": "Action must be 'accept' or 'decline'."}}, status=400)
+
+    session = _get_match_session_or_404(match_id)
+    if not session.opponent_team_id:
+        return JsonResponse({"errors": {"match": "This match does not require opponent approval."}}, status=400)
+    if not can_manage_team(request.user, session.opponent_team):
+        return JsonResponse(
+            {"errors": {"authorization": "Only coaches or directors for the invited team can respond."}},
+            status=403,
+        )
+
+    with transaction.atomic():
+        locked_session = (
+            TrainingSession.objects.select_for_update()
+            .select_related("team__club", "opponent_team__club")
+            .get(pk=session.pk)
+        )
+        if locked_session.match_request_status != TrainingSession.MatchRequestStatus.PENDING:
+            context_team = locked_session.opponent_team
+            return JsonResponse(
+                {
+                    "message": (
+                        f"Match request already {locked_session.get_match_request_status_display().lower()}."
+                    ),
+                    "match": _serialize_match_detail(
+                        locked_session,
+                        context_team,
+                        _build_match_player_memberships(locked_session, context_team),
+                        request.user,
+                    ),
+                }
+            )
+
+        locked_session.match_request_status = (
+            TrainingSession.MatchRequestStatus.ACCEPTED
+            if action == "accept"
+            else TrainingSession.MatchRequestStatus.DECLINED
+        )
+        locked_session.opponent_responded_by = request.user
+        locked_session.opponent_responded_at = timezone.now()
+        locked_session.save(
+            update_fields=[
+                "match_request_status",
+                "opponent_responded_by",
+                "opponent_responded_at",
+                "updated_at",
+            ]
+        )
+
+        Notification.objects.filter(
+            category=Notification.Category.MATCH_REQUEST,
+            training_session=locked_session,
+            team=locked_session.opponent_team,
+        ).update(is_read=True)
+
+        if action == "accept":
+            audience = _session_notification_audience(locked_session)
+            if audience:
+                for notify_team in (locked_session.team, locked_session.opponent_team):
+                    _create_team_notifications(
+                        team=notify_team,
+                        created_by=request.user,
+                        title=f"Shared match ready for {notify_team.name}",
+                        message=(
+                            f"{_display_session_title(locked_session, notify_team)} is scheduled for "
+                            f"{locked_session.scheduled_date.isoformat()} from "
+                            f"{_format_time_12h(locked_session.start_time)} to {_format_time_12h(locked_session.end_time)}."
+                        ),
+                        category=Notification.Category.SESSION,
+                        audience=audience,
+                    )
+
+            _create_manager_notifications(
+                team=locked_session.team,
+                created_by=request.user,
+                training_session=locked_session,
+                title=f"{locked_session.opponent_team.name} accepted your match request",
+                message=(
+                    f"{locked_session.opponent_team.name} accepted the shared match scheduled for "
+                    f"{locked_session.scheduled_date.isoformat()}."
+                ),
+                category=Notification.Category.SESSION,
+            )
+            response_message = "Match request accepted."
+        else:
+            _create_manager_notifications(
+                team=locked_session.team,
+                created_by=request.user,
+                training_session=locked_session,
+                title=f"{locked_session.opponent_team.name} declined your match request",
+                message=(
+                    f"{locked_session.opponent_team.name} declined the shared match scheduled for "
+                    f"{locked_session.scheduled_date.isoformat()}."
+                ),
+                category=Notification.Category.SESSION,
+            )
+            response_message = "Match request declined."
+
+    context_team = locked_session.opponent_team
+    return JsonResponse(
+        {
+            "message": response_message,
+            "match": _serialize_match_detail(
+                locked_session,
+                context_team,
+                _build_match_player_memberships(locked_session, context_team),
+                request.user,
+            ),
+        }
+    )
+
+
+@login_required
 @require_GET
 def match_detail(request, match_id):
     session = _get_match_session_or_404(match_id)
-    team = session.team
-    if not can_view_team(request.user, team):
+    team = _resolve_session_context_team(request, session)
+    if team is None:
         return JsonResponse({"errors": {"team": "You do not have access to this match."}}, status=403)
 
     return JsonResponse(
@@ -3371,21 +3784,24 @@ def match_detail(request, match_id):
             "match": _serialize_match_detail(
                 session,
                 team,
-                _match_player_memberships(team),
+                _build_match_player_memberships(session, team),
                 request.user,
             )
         }
     )
 
 
-def _ensure_match_stat_player(team, player_id):
+def _ensure_match_stat_player(session, player_id):
     try:
         player_id = int(player_id)
     except (TypeError, ValueError):
         return None
+    team_filter = Q(team=session.team)
+    if _match_is_shared(session):
+        team_filter |= Q(team=session.opponent_team)
     membership = (
         TeamMembership.objects.active()
-        .filter(team=team, role=TeamRole.PLAYER, user_id=player_id)
+        .filter(team_filter, role=TeamRole.PLAYER, user_id=player_id)
         .select_related("user")
         .first()
     )
@@ -3397,8 +3813,8 @@ def _ensure_match_stat_player(team, player_id):
 @csrf_exempt
 def create_match_stats(request, match_id):
     session = _get_match_session_or_404(match_id)
-    team = session.team
-    if not can_manage_team(request.user, team):
+    team = _resolve_session_context_team(request, session)
+    if team is None or not _can_manage_match_stats(request.user, session):
         return JsonResponse(
             {"errors": {"team": "Only coaches or directors can edit match stats."}},
             status=403,
@@ -3417,26 +3833,28 @@ def create_match_stats(request, match_id):
     for row in rows:
         if not isinstance(row, dict):
             return JsonResponse({"errors": {"stats": "Each stats row must be an object."}}, status=400)
-        player = _ensure_match_stat_player(team, row.get("player_id"))
+        player = _ensure_match_stat_player(session, row.get("player_id"))
         if player is None:
-            return JsonResponse({"errors": {"player_id": "Player is not on this team."}}, status=400)
+            return JsonResponse({"errors": {"player_id": "Player is not part of this match."}}, status=400)
         try:
             stat_data = _parse_match_stat_payload(row)
         except ValidationError as exc:
             if hasattr(exc, "message_dict"):
                 return JsonResponse({"errors": exc.message_dict}, status=400)
             return JsonResponse({"errors": {"stats": exc.messages}}, status=400)
-        MatchPlayerStat.objects.update_or_create(
-            training_session=session,
-            player=player,
-            defaults={**stat_data, "updated_by": request.user},
-        )
+        with transaction.atomic():
+            TrainingSession.objects.select_for_update().filter(pk=session.pk).exists()
+            MatchPlayerStat.objects.update_or_create(
+                training_session=session,
+                player=player,
+                defaults={**stat_data, "updated_by": request.user},
+            )
 
     session = _get_match_session_or_404(match_id)
     return JsonResponse(
         {
             "message": "Match stats saved.",
-            "match": _serialize_match_detail(session, team, _match_player_memberships(team), request.user),
+            "match": _serialize_match_detail(session, team, _build_match_player_memberships(session, team), request.user),
         }
     )
 
@@ -3446,16 +3864,16 @@ def create_match_stats(request, match_id):
 @csrf_exempt
 def update_match_player_stats(request, match_id, player_id):
     session = _get_match_session_or_404(match_id)
-    team = session.team
-    if not can_manage_team(request.user, team):
+    team = _resolve_session_context_team(request, session)
+    if team is None or not _can_manage_match_stats(request.user, session):
         return JsonResponse(
             {"errors": {"team": "Only coaches or directors can edit match stats."}},
             status=403,
         )
 
-    player = _ensure_match_stat_player(team, player_id)
+    player = _ensure_match_stat_player(session, player_id)
     if player is None:
-        return JsonResponse({"errors": {"player_id": "Player is not on this team."}}, status=400)
+        return JsonResponse({"errors": {"player_id": "Player is not part of this match."}}, status=400)
 
     payload = _parse_json_request(request)
     if payload is None:
@@ -3468,17 +3886,19 @@ def update_match_player_stats(request, match_id, player_id):
             return JsonResponse({"errors": exc.message_dict}, status=400)
         return JsonResponse({"errors": {"stats": exc.messages}}, status=400)
 
-    MatchPlayerStat.objects.update_or_create(
-        training_session=session,
-        player=player,
-        defaults={**stat_data, "updated_by": request.user},
-    )
+    with transaction.atomic():
+        TrainingSession.objects.select_for_update().filter(pk=session.pk).exists()
+        MatchPlayerStat.objects.update_or_create(
+            training_session=session,
+            player=player,
+            defaults={**stat_data, "updated_by": request.user},
+        )
 
     session = _get_match_session_or_404(match_id)
     return JsonResponse(
         {
             "message": "Player stats saved.",
-            "match": _serialize_match_detail(session, team, _match_player_memberships(team), request.user),
+            "match": _serialize_match_detail(session, team, _build_match_player_memberships(session, team), request.user),
         }
     )
 
@@ -3536,12 +3956,12 @@ def _resolve_training_confirmation_target(request, session, team):
 @csrf_exempt
 def confirm_training_session(request, session_id):
     session = get_object_or_404(
-        TrainingSession.objects.select_related("team__club"),
+        TrainingSession.objects.select_related("team__club", "opponent_team__club"),
         pk=session_id,
     )
-    team = session.team
+    team = _resolve_session_context_team(request, session)
 
-    if not can_view_team(request.user, team):
+    if team is None or not can_view_team(request.user, team):
         return JsonResponse({"errors": {"team": "You do not have access to this team."}}, status=403)
 
     if session.status == TrainingSession.Status.CANCELLED:
@@ -3583,12 +4003,12 @@ def confirm_training_session(request, session_id):
 def coach_training_session_attendance(request, session_id):
     """EP-25: session roster + attendance for coaches and club directors (planning)."""
     session = get_object_or_404(
-        TrainingSession.objects.select_related("team__club")
+        TrainingSession.objects.select_related("team__club", "opponent_team__club")
         .prefetch_related("confirmations__player", "confirmations__confirmed_by"),
         pk=session_id,
     )
-    team = session.team
-    if not can_manage_team(request.user, team):
+    team = _resolve_session_context_team(request, session)
+    if team is None or not can_manage_team(request.user, team):
         return JsonResponse(
             {
                 "errors": {
@@ -3600,16 +4020,19 @@ def coach_training_session_attendance(request, session_id):
             status=403,
         )
 
-    player_memberships = list(
-        TeamMembership.objects.active()
-        .filter(team=team, role=TeamRole.PLAYER)
-        .select_related("user")
-        .order_by("user__first_name", "user__last_name", "user__email")
-    )
+    if session.session_type == TrainingSession.SessionType.MATCH and _match_is_shared(session):
+        player_memberships = _build_match_player_memberships(session, team)
+    else:
+        player_memberships = list(
+            TeamMembership.objects.active()
+            .filter(team=team, role=TeamRole.PLAYER)
+            .select_related("user", "team")
+            .order_by("user__first_name", "user__last_name", "user__email")
+        )
     return JsonResponse(
         {
             "session": _serialize_coach_training_session_attendance(
-                session, team, player_memberships
+                session, team, player_memberships, request.user
             ),
         }
     )
@@ -3832,7 +4255,7 @@ def notifications(request):
     return JsonResponse(
         {
             "unread_count": unread_count,
-            "items": [_serialize_notification(item) for item in notification_items],
+            "items": [_serialize_notification(item, request.user) for item in notification_items],
             "sent_items": sent_items,
         }
     )

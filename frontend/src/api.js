@@ -267,16 +267,24 @@ export async function createMatch(payload) {
   return authenticatedJson("/api/matches/", "POST", payload);
 }
 
-export async function fetchMatch(matchId) {
-  return authenticatedGet(`/api/matches/${matchId}/`);
+function appendTeamQuery(path, teamId) {
+  return teamId != null && teamId !== "" ? `${path}?team_id=${encodeURIComponent(String(teamId))}` : path;
 }
 
-export async function saveMatchStats(matchId, payload) {
-  return authenticatedJson(`/api/matches/${matchId}/stats/`, "POST", payload);
+export async function fetchMatch(matchId, teamId) {
+  return authenticatedGet(appendTeamQuery(`/api/matches/${matchId}/`, teamId));
 }
 
-export async function updateMatchPlayerStats(matchId, playerId, payload) {
-  return authenticatedJson(`/api/matches/${matchId}/stats/${playerId}/`, "PUT", payload);
+export async function respondToMatchRequest(matchId, action) {
+  return authenticatedJson(`/api/matches/${matchId}/respond/`, "POST", { action });
+}
+
+export async function saveMatchStats(matchId, payload, teamId) {
+  return authenticatedJson(appendTeamQuery(`/api/matches/${matchId}/stats/`, teamId), "POST", payload);
+}
+
+export async function updateMatchPlayerStats(matchId, playerId, payload, teamId) {
+  return authenticatedJson(appendTeamQuery(`/api/matches/${matchId}/stats/${playerId}/`, teamId), "PUT", payload);
 }
 
 export async function updateTrainingSession(sessionId, payload) {
@@ -353,8 +361,8 @@ export async function unconfirmTrainingSession(sessionId, playerId) {
   return authenticatedJson(`/api/training-sessions/${sessionId}/confirm/`, "DELETE", body);
 }
 
-export async function fetchCoachTrainingSessionAttendance(sessionId) {
-  return authenticatedGet(`/api/training-sessions/${sessionId}/attendance/`);
+export async function fetchCoachTrainingSessionAttendance(sessionId, teamId) {
+  return authenticatedGet(appendTeamQuery(`/api/training-sessions/${sessionId}/attendance/`, teamId));
 }
 
 export async function fetchTeamAttendanceAnalytics(teamId, params = {}) {
@@ -424,8 +432,8 @@ export async function sendTeamNotification(payload) {
 }
 
 /** Attendance: only unconfirmed roster players; parents skipped for past/cancelled (cancelled rejected on server). */
-export async function remindUnconfirmedTrainingSession(sessionId, audience) {
-  return authenticatedJson(`/api/training-sessions/${sessionId}/remind-unconfirmed/`, "POST", {
+export async function remindUnconfirmedTrainingSession(sessionId, audience, teamId) {
+  return authenticatedJson(appendTeamQuery(`/api/training-sessions/${sessionId}/remind-unconfirmed/`, teamId), "POST", {
     audience,
   });
 }

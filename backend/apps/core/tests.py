@@ -4317,6 +4317,199 @@ class CoachTrainingSessionAttendanceTests(TestCase):
         self.assertEqual(response.json()["session"]["summary"]["roster_size"], 2)
 
 
+class SharedMatchRequestFlowTests(TestCase):
+    def _fixture(self):
+        director = User.objects.create_user(email="sm-dir@example.com", password="StrongPassword123!")
+        club = Club.objects.create_club(name="Shared Match Club", director=director)
+        team_a = Team.objects.create(club=club, name="Shared Team A")
+        team_b = Team.objects.create(club=club, name="Shared Team B")
+        coach_a = User.objects.create_user(email="sm-coach-a@example.com", password="StrongPassword123!")
+        coach_b = User.objects.create_user(email="sm-coach-b@example.com", password="StrongPassword123!")
+        player_a = User.objects.create_user(
+            email="sm-player-a@example.com",
+            password="StrongPassword123!",
+            date_of_birth=date(2008, 1, 1),
+        )
+        player_b = User.objects.create_user(
+            email="sm-player-b@example.com",
+            password="StrongPassword123!",
+            date_of_birth=date(2008, 2, 1),
+        )
+        TeamMembership.objects.add_member(user=coach_a, team=team_a, role=TeamRole.COACH)
+        TeamMembership.objects.add_member(user=coach_b, team=team_b, role=TeamRole.COACH)
+        TeamMembership.objects.add_member(user=player_a, team=team_a, role=TeamRole.PLAYER)
+        TeamMembership.objects.add_member(user=player_b, team=team_b, role=TeamRole.PLAYER)
+        return {
+            "director": director,
+            "club": club,
+            "team_a": team_a,
+            "team_b": team_b,
+            "coach_a": coach_a,
+            "coach_b": coach_b,
+            "player_a": player_a,
+            "player_b": player_b,
+        }
+
+    def test_existing_team_match_request_acceptance_creates_shared_match(self):
+        fx = self._fixture()
+        create_response = self.client.post(
+            reverse("core:create-match"),
+            data=json.dumps(
+                {
+                    "team_id": fx["team_a"].id,
+                    "scheduled_date": (timezone.localdate() + timedelta(days=4)).isoformat(),
+                    "start_time": "18:00",
+                    "end_time": "19:30",
+                    "location": "Main Court",
+                    "opponent_team_id": fx["team_b"].id,
+                }
+            ),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_a'])}",
+        )
+        self.assertEqual(create_response.status_code, 201)
+        body = create_response.json()
+        self.assertEqual(body["message"], "Match request sent for opponent approval.")
+        match_id = body["match"]["id"]
+
+        session = TrainingSession.objects.get(pk=match_id)
+        self.assertEqual(session.opponent_team_id, fx["team_b"].id)
+        self.assertEqual(session.match_request_status, TrainingSession.MatchRequestStatus.PENDING)
+
+        recipient_ids = set(
+            Notification.objects.filter(
+                category=Notification.Category.MATCH_REQUEST,
+                training_session=session,
+            ).values_list("recipient_id", flat=True)
+        )
+        self.assertEqual(recipient_ids, {fx["coach_b"].id, fx["director"].id})
+
+        team_b_sessions_before = self.client.get(
+            reverse("core:team-training-sessions", kwargs={"team_id": fx["team_b"].id}),
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_b'])}",
+        )
+        self.assertEqual(team_b_sessions_before.status_code, 200)
+        self.assertEqual(team_b_sessions_before.json()["sessions"], [])
+
+        coach_notifications = self.client.get(
+            reverse("core:notifications"),
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_b'])}",
+        )
+        self.assertEqual(coach_notifications.status_code, 200)
+        request_item = next(
+            item for item in coach_notifications.json()["items"] if item["category"] == "match_request"
+        )
+        self.assertTrue(request_item["can_respond_to_match_request"])
+        self.assertEqual(request_item["requesting_team_name"], fx["team_a"].name)
+
+        accept_response = self.client.post(
+            reverse("core:respond-match-request", kwargs={"match_id": match_id}),
+            data=json.dumps({"action": "accept"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_b'])}",
+        )
+        self.assertEqual(accept_response.status_code, 200)
+        session.refresh_from_db()
+        self.assertEqual(session.match_request_status, TrainingSession.MatchRequestStatus.ACCEPTED)
+        self.assertEqual(session.opponent_responded_by_id, fx["coach_b"].id)
+
+        team_b_sessions_after = self.client.get(
+            reverse("core:team-training-sessions", kwargs={"team_id": fx["team_b"].id}),
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_b'])}",
+        )
+        self.assertEqual(team_b_sessions_after.status_code, 200)
+        sessions = team_b_sessions_after.json()["sessions"]
+        self.assertEqual(len(sessions), 1)
+        self.assertEqual(sessions[0]["opponent"], fx["team_a"].name)
+        self.assertEqual(sessions[0]["match_request_status"], TrainingSession.MatchRequestStatus.ACCEPTED)
+
+        attendance_response = self.client.get(
+            reverse("core:coach-training-session-attendance", kwargs={"session_id": match_id}),
+            {"team_id": fx["team_b"].id},
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_b'])}",
+        )
+        self.assertEqual(attendance_response.status_code, 200)
+        attendance_players = attendance_response.json()["session"]["players"]
+        self.assertEqual({row["team_name"] for row in attendance_players}, {fx["team_a"].name, fx["team_b"].name})
+
+        detail_url = reverse("core:match-detail", kwargs={"match_id": match_id}) + f"?team_id={fx['team_b'].id}"
+        detail_response = self.client.get(
+            detail_url,
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_b'])}",
+        )
+        self.assertEqual(detail_response.status_code, 200)
+        detail_players = detail_response.json()["match"]["players"]
+        self.assertEqual({row["team_name"] for row in detail_players}, {fx["team_a"].name, fx["team_b"].name})
+
+        update_a_url = (
+            reverse(
+                "core:update-match-player-stats",
+                kwargs={"match_id": match_id, "player_id": fx["player_a"].id},
+            )
+            + f"?team_id={fx['team_b'].id}"
+        )
+        update_b_url = (
+            reverse(
+                "core:update-match-player-stats",
+                kwargs={"match_id": match_id, "player_id": fx["player_b"].id},
+            )
+            + f"?team_id={fx['team_b'].id}"
+        )
+        response_a = self.client.put(
+            update_a_url,
+            data=json.dumps({"points_scored": 9, "aces": 1, "blocks": 0, "assists": 0, "errors": 0, "digs": 2}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_b'])}",
+        )
+        response_b = self.client.put(
+            update_b_url,
+            data=json.dumps({"points_scored": 7, "aces": 0, "blocks": 1, "assists": 3, "errors": 1, "digs": 4}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['coach_b'])}",
+        )
+        self.assertEqual(response_a.status_code, 200)
+        self.assertEqual(response_b.status_code, 200)
+
+        session.refresh_from_db()
+        stats_by_player = {
+            row.player_id: row
+            for row in MatchPlayerStat.objects.filter(training_session=session)
+        }
+        self.assertEqual(stats_by_player[fx["player_a"].id].points_scored, 9)
+        self.assertEqual(stats_by_player[fx["player_b"].id].assists, 3)
+
+    def test_opponent_player_can_confirm_shared_match_after_acceptance(self):
+        fx = self._fixture()
+        session = TrainingSession.objects.create(
+            team=fx["team_a"],
+            created_by=fx["coach_a"],
+            title="Match vs Shared Team B",
+            session_type=TrainingSession.SessionType.MATCH,
+            scheduled_date=timezone.localdate() + timedelta(days=2),
+            start_time=time(18, 0),
+            end_time=time(19, 30),
+            location="Court 2",
+            opponent=fx["team_b"].name,
+            opponent_team=fx["team_b"],
+            match_type=TrainingSession.MatchType.FRIENDLY,
+            match_request_status=TrainingSession.MatchRequestStatus.ACCEPTED,
+        )
+
+        response = self.client.post(
+            reverse("core:confirm-training-session", kwargs={"session_id": session.id}) + f"?team_id={fx['team_b'].id}",
+            data=json.dumps({}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(fx['player_b'])}",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            TrainingSessionConfirmation.objects.filter(
+                training_session=session,
+                player=fx["player_b"],
+            ).exists()
+        )
+
+
 class RemindUnconfirmedAttendanceTests(TestCase):
     """Targeted session reminders: only unconfirmed roster; no parents for past/cancelled."""
 

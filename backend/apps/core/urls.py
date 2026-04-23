@@ -33,6 +33,7 @@ from .views import (
     create_match,
     create_match_stats,
     match_detail,
+    respond_match_request,
     me,
     member_hub_dashboard,
     parent_child_attendance_history,
@@ -296,6 +297,7 @@ urlpatterns = [
     ),
     path("matches/", create_match, name="create-match"),
     path("matches/<int:match_id>/", match_detail, name="match-detail"),
+    path("matches/<int:match_id>/respond/", respond_match_request, name="respond-match-request"),
     path("matches/<int:match_id>/stats/", create_match_stats, name="create-match-stats"),
     path(
         "matches/<int:match_id>/stats/<int:player_id>/",
