@@ -15,7 +15,7 @@ const METRIC_OPTIONS = [
   { key: "assists", label: "Assists" },
   { key: "digs", label: "Digs" },
   { key: "errors", label: "Errors" },
-  { key: "serveEfficiency", label: "Serve efficiency" },
+  { key: "serveEfficiency", label: "Serve Efficiency" },
 ];
 
 function dateTimeValue(session) {
@@ -44,19 +44,17 @@ function formatMetricValue(metricKey, value) {
 }
 
 export default function CoachPlayerSearchPage({ activeTeam }) {
-  const teamId = activeTeam?.id && activeTeam.id !== "__all__" ? Number(activeTeam.id) : null;
+  const [urlTeamId, setUrlTeamId] = useState(null);
   const [selectedPlayerId, setSelectedPlayerId] = useState(null);
   const [selectedMetricKey, setSelectedMetricKey] = useState("weightedScore");
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState("");
   const [profilePayload, setProfilePayload] = useState(null);
+  const activeTeamId =
+    activeTeam?.id != null && activeTeam.id !== "__all__" ? Number(activeTeam.id) : null;
+  const teamId = activeTeamId || urlTeamId;
 
   useEffect(() => {
-    if (!teamId) {
-      setSelectedPlayerId(null);
-      return;
-    }
-
     const syncFromUrl = () => {
       const path = window.location.pathname.replace(/\/$/, "") || "/";
       if (path !== "/coach/player-search") {
@@ -65,9 +63,13 @@ export default function CoachPlayerSearchPage({ activeTeam }) {
       const params = new URLSearchParams(window.location.search);
       const urlTeam = Number(params.get("team"));
       const urlPlayer = Number(params.get("player"));
-      if (Number.isFinite(urlTeam) && urlTeam !== teamId) {
+      if (Number.isFinite(urlTeam) && urlTeam > 0) {
+        setUrlTeamId(urlTeam);
+      } else {
+        setUrlTeamId(null);
+      }
+      if (Number.isFinite(urlTeam) && urlTeam > 0 && urlTeam !== activeTeamId) {
         window.dispatchEvent(new CustomEvent("netup-set-active-team", { detail: { teamId: urlTeam } }));
-        return;
       }
       if (Number.isFinite(urlPlayer) && urlPlayer > 0) {
         setSelectedPlayerId(urlPlayer);
@@ -79,7 +81,7 @@ export default function CoachPlayerSearchPage({ activeTeam }) {
     syncFromUrl();
     window.addEventListener("popstate", syncFromUrl);
     return () => window.removeEventListener("popstate", syncFromUrl);
-  }, [teamId]);
+  }, [activeTeamId]);
 
   const loadPlayerProfile = useCallback(async () => {
     if (!teamId || !selectedPlayerId) {
@@ -356,7 +358,7 @@ export default function CoachPlayerSearchPage({ activeTeam }) {
           <p className="teams-page-kicker">Coaching</p>
           <h1>Player Performance</h1>
           <p className="teams-page-subtitle">
-            Opened from Users for <strong>{activeTeam?.name}</strong>. This view auto-syncs with saved match stats.
+            Opened from Statistics for <strong>{activeTeam?.name}</strong>. This view auto-syncs with saved match stats.
           </p>
           <button
             type="button"
@@ -381,7 +383,7 @@ export default function CoachPlayerSearchPage({ activeTeam }) {
         <h2 className="vc-panel-title" style={{ fontSize: "1.05rem" }}>Player Profile</h2>
         {!selectedPlayerId ? (
           <p className="vc-modal__muted" style={{ margin: 0 }}>
-            Open a player from the Users table using the `View Performance` button.
+            Open a player from Statistics search results to view their performance profile.
           </p>
         ) : profileLoading ? (
           <p className="vc-modal__muted" style={{ margin: 0 }}>Loading player profile…</p>
