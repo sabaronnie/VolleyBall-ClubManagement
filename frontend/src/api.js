@@ -615,6 +615,40 @@ export async function fetchTeamStandings(teamId) {
   return authenticatedGet(`/api/teams/${teamId}/standings/`);
 }
 
+export async function downloadTeamStandingsPdf(teamId) {
+  const token = localStorage.getItem(AUTH_TOKEN_KEY);
+  const path = `/api/teams/${teamId}/standings.pdf/`;
+  let response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token || ""}` },
+    });
+  } catch {
+    throw new Error("Cannot reach backend. Make sure Django is running on port 8000.");
+  }
+  if (!response.ok) {
+    const ct = response.headers.get("Content-Type") || "";
+    let msg = "Could not download standings PDF.";
+    let payload = null;
+    if (ct.includes("application/json")) {
+      try {
+        payload = await response.json();
+        msg = normalizeErrors(payload, msg);
+      } catch {
+        /* ignore */
+      }
+    }
+    logoutExpiredSession(response, payload);
+    throw new Error(msg);
+  }
+  let blob = await response.blob();
+  if (!blob.type || blob.type === "application/octet-stream") {
+    blob = new Blob([blob], { type: "application/pdf" });
+  }
+  return blob;
+}
+
 export async function directorAddTeamMember(teamId, body) {
   return authenticatedJson(`/api/teams/${teamId}/members/add/`, "POST", body);
 }

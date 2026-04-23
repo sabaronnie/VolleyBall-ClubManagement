@@ -1389,6 +1389,43 @@
   gap: 1rem;
 }
 
+.vc-team-standings-card__head-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.vc-team-standings-card__export-btn {
+  border: 0;
+  border-radius: 999px;
+  padding: 0.72rem 1rem;
+  background: linear-gradient(135deg, #12315c, #145f82);
+  color: #fff;
+  font-size: 0.88rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  box-shadow: 0 12px 24px rgba(18, 49, 92, 0.18);
+  transition:
+    transform 140ms ease,
+    box-shadow 140ms ease,
+    opacity 140ms ease;
+}
+
+.vc-team-standings-card__export-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 16px 28px rgba(18, 49, 92, 0.24);
+}
+
+.vc-team-standings-card__export-btn:disabled {
+  opacity: 0.68;
+  cursor: wait;
+  transform: none;
+  box-shadow: none;
+}
+
 .vc-team-standings-card__record {
   display: flex;
   flex-wrap: wrap;
@@ -1416,6 +1453,15 @@
   font-weight: 800;
   letter-spacing: -0.04em;
   color: #10213f;
+}
+
+.vc-team-standings-card__record-note {
+  margin-top: 0.28rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #7b8798;
 }
 
 .vc-team-standings-card__matches {
@@ -1458,6 +1504,20 @@
   color: #617083;
   font-size: 0.92rem;
   line-height: 1.6;
+}
+
+.vc-team-standings-card__feedback {
+  margin: -0.15rem 0 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.vc-team-standings-card__feedback.is-success {
+  color: #15803d;
+}
+
+.vc-team-standings-card__feedback.is-error {
+  color: #b42318;
 }
 
 .vc-summary-head--dashboard {

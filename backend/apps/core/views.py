@@ -16,7 +16,7 @@ from django.core.validators import EmailValidator
 from django.core.mail import send_mail
 from django.db import IntegrityError, transaction
 from django.db.models import Exists, OuterRef, Prefetch, Q
-from django.http import JsonResponse
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -38,6 +38,7 @@ from .attendance_summary import (
 )
 from .decorators import login_required
 from .payment_views import ensure_monthly_fee_for_new_player
+from .payment_pdf import build_team_standings_pdf_bytes
 from .models import (
     AssignedAccountRole,
     Club,
@@ -655,6 +656,13 @@ def _format_duration_label(duration_minutes):
 
 
 def _match_points_by_team(session):
+    return {
+        team_id: int(stats.get("points_scored", 0))
+        for team_id, stats in _match_stat_totals_by_team(session).items()
+    }
+
+
+def _match_stat_totals_by_team(session):
     player_stats = list(session.match_player_stats.all())
     if not player_stats:
         return {}
@@ -676,16 +684,19 @@ def _match_points_by_team(session):
     for user_id, team_id in memberships:
         team_by_player_id.setdefault(user_id, team_id)
 
-    totals = defaultdict(int)
+    totals = defaultdict(_empty_match_stats)
     for row in player_stats:
         team_id = team_by_player_id.get(row.player_id)
-        if team_id is not None:
-            totals[team_id] += int(row.points_scored or 0)
-    return totals
+        if team_id is None:
+            continue
+        team_totals = totals[team_id]
+        for field in MATCH_STAT_FIELDS:
+            team_totals[field] += int(getattr(row, field) or 0)
+    return {team_id: dict(stats) for team_id, stats in totals.items()}
 
 
-def _build_team_standings(team):
-    sessions = list(
+def _completed_team_match_sessions(team):
+    return list(
         TrainingSession.objects.filter(
             Q(team=team)
             | Q(
@@ -701,11 +712,62 @@ def _build_team_standings(team):
         .order_by("-scheduled_date", "-start_time", "-id")
     )
 
+
+def _format_pdf_date_label(value):
+    return value.strftime("%b %d, %Y").replace(" 0", " ")
+
+
+def _build_team_standings_match_row(session, team):
+    team_stat_totals = _match_stat_totals_by_team(session)
+    score_summary = _build_match_score_summary(
+        session,
+        team,
+        {team_id: stats.get("points_scored", 0) for team_id, stats in team_stat_totals.items()},
+    )
+    team_score = score_summary.get("your_team_score")
+    opponent_score = score_summary.get("opponent_score")
+    if team_score is None or opponent_score is None:
+        return None
+
+    team_stats = dict(_empty_match_stats())
+    team_stats.update(team_stat_totals.get(team.id, {}))
+
+    return {
+        "match_id": session.id,
+        "team_id": team.id,
+        "team_name": team.name,
+        "title": _display_session_title(session, team),
+        "opponent": score_summary.get("opponent_name") or _display_match_opponent(session, team) or "Opponent",
+        "scheduled_date": session.scheduled_date.isoformat(),
+        "scheduled_date_label": _format_pdf_date_label(session.scheduled_date),
+        "start_time_label": _format_time_12h(session.start_time),
+        "end_time_label": _format_time_12h(session.end_time),
+        "time_window_label": (
+            f"{_format_pdf_date_label(session.scheduled_date)} · {_format_time_12h(session.start_time)} - {_format_time_12h(session.end_time)}"
+        ),
+        "location": session.location or "",
+        "match_type": session.match_type or "",
+        "match_type_label": session.get_match_type_display() if session.match_type else score_summary.get("tournament_label", "Match"),
+        "result": score_summary.get("result"),
+        "result_label": score_summary.get("result_label"),
+        "final_score_label": score_summary.get("final_score_label"),
+        "points_for": int(team_score),
+        "points_against": int(opponent_score),
+        "point_differential": int(team_score) - int(opponent_score),
+        "duration_label": score_summary.get("duration_label") or "",
+        "team_stats": team_stats,
+    }
+
+
+def _build_team_standings(team):
+    sessions = _completed_team_match_sessions(team)
+
     wins = 0
     losses = 0
     points_for = 0
     points_against = 0
     matches_played = 0
+    matches = []
 
     for session in sessions:
         if team.id != session.team_id and not (
@@ -713,19 +775,18 @@ def _build_team_standings(team):
         ):
             continue
 
-        score_summary = _build_match_score_summary(session, team, _match_points_by_team(session))
-        team_score = score_summary.get("your_team_score")
-        opponent_score = score_summary.get("opponent_score")
-        if team_score is None or opponent_score is None:
+        match_row = _build_team_standings_match_row(session, team)
+        if match_row is None:
             continue
 
         matches_played += 1
-        points_for += int(team_score)
-        points_against += int(opponent_score)
-        if team_score > opponent_score:
+        points_for += match_row["points_for"]
+        points_against += match_row["points_against"]
+        if match_row["points_for"] > match_row["points_against"]:
             wins += 1
-        elif team_score < opponent_score:
+        elif match_row["points_for"] < match_row["points_against"]:
             losses += 1
+        matches.append(match_row)
 
     return {
         "team_id": team.id,
@@ -739,6 +800,7 @@ def _build_team_standings(team):
         "point_differential": points_for - points_against,
         "record_label": f"{wins}-{losses}",
         "note": "Completed matches only.",
+        "matches": matches,
     }
 
 
@@ -4572,6 +4634,43 @@ def team_standings(request, team_id):
             "standings": _build_team_standings(team),
         }
     )
+
+
+@login_required
+@require_GET
+def team_standings_pdf(request, team_id):
+    team = get_object_or_404(Team.objects.select_related("club"), pk=team_id)
+    if not can_manage_team(request.user, team):
+        return JsonResponse(
+            {
+                "errors": {
+                    "authorization": (
+                        "Only coaches or club directors for this team can export standings."
+                    )
+                }
+            },
+            status=403,
+        )
+
+    standings = _build_team_standings(team)
+    pdf_bytes = build_team_standings_pdf_bytes(
+        team_name=standings["team_name"],
+        club_name=standings["club_name"] or (team.club.name if team.club_id else ""),
+        record_label=standings["record_label"],
+        matches_played=standings["matches_played"],
+        wins=standings["wins"],
+        losses=standings["losses"],
+        points_for=standings["points_for"],
+        points_against=standings["points_against"],
+        point_differential=standings["point_differential"],
+        note=standings["note"],
+        generated_at_label=timezone.localtime().strftime("%b %d, %Y %I:%M %p").replace(" 0", " "),
+        matches=standings["matches"],
+    )
+    safe_team_name = "".join(char if char.isalnum() else "_" for char in team.name.lower()).strip("_") or "team"
+    response = HttpResponse(pdf_bytes, content_type="application/pdf")
+    response["Content-Disposition"] = f'attachment; filename="team_standings_{safe_team_name}.pdf"'
+    return response
 
 
 @login_required

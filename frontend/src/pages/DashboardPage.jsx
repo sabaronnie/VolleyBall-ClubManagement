@@ -851,6 +851,7 @@ export default function DashboardPage({
           <div className="vc-dash-bottom vc-dash-bottom--dashboard">
             <TeamStandingsCard
               activeTeamId={activeTeamId}
+              canExport
               emptySelectionMessage="Select a team in the focus dropdown to load standings."
             />
             <DirectorClubSummaryCard
@@ -993,6 +994,7 @@ export default function DashboardPage({
           <div className="vc-dash-bottom vc-dash-bottom--dashboard">
             <TeamStandingsCard
               activeTeamId={activeTeamId}
+              canExport
               emptySelectionMessage="Select a team in the focus dropdown to load standings."
             />
             <DirectorClubSummaryCard

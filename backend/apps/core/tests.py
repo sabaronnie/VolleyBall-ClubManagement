@@ -4698,6 +4698,11 @@ class TeamStandingsApiTests(TestCase):
         self.assertEqual(standings["points_against"], 45)
         self.assertEqual(standings["point_differential"], -2)
         self.assertEqual(standings["matches_played"], 2)
+        self.assertEqual(len(standings["matches"]), 2)
+        self.assertEqual(standings["matches"][0]["opponent"], "Rivals")
+        self.assertEqual(standings["matches"][0]["team_stats"]["points_scored"], 18)
+        self.assertEqual(standings["matches"][1]["opponent"], "Team B")
+        self.assertEqual(standings["matches"][1]["team_stats"]["points_scored"], 25)
 
     def test_player_parent_and_coach_can_view_team_standings(self):
         for user in (self.player, self.parent, self.coach):
@@ -4713,6 +4718,25 @@ class TeamStandingsApiTests(TestCase):
             HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(self.outsider)}",
         )
         self.assertEqual(response.status_code, 403)
+
+    def test_coach_and_director_can_download_team_standings_pdf(self):
+        for user in (self.director, self.coach):
+            response = self.client.get(
+                reverse("core:team-standings-pdf", kwargs={"team_id": self.team_a.id}),
+                HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(user)}",
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response["Content-Type"], "application/pdf")
+            self.assertIn("attachment;", response["Content-Disposition"])
+            self.assertGreater(len(response.content), 500)
+
+    def test_player_and_parent_cannot_download_team_standings_pdf(self):
+        for user in (self.player, self.parent, self.outsider):
+            response = self.client.get(
+                reverse("core:team-standings-pdf", kwargs={"team_id": self.team_a.id}),
+                HTTP_AUTHORIZATION=f"Bearer {generate_auth_token(user)}",
+            )
+            self.assertEqual(response.status_code, 403)
 
 
 class RemindUnconfirmedAttendanceTests(TestCase):
