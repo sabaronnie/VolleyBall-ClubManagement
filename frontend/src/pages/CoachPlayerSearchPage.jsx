@@ -17,7 +17,7 @@ const METRIC_OPTIONS = [
   { key: "errors", label: "Errors" },
   { key: "serveEfficiency", label: "Serve Efficiency" },
 ];
-const MAX_COMPARE_MATCHES = 4;
+const MAX_COMPARE_MATCHES = 2;
 const MATCH_METRIC_KEYS = [
   "weightedScore",
   "points",
@@ -770,7 +770,7 @@ export default function CoachPlayerSearchPage({ activeTeam }) {
               </section>
             ) : selectedComparisonRows.length === 1 ? (
               <p className="vc-modal__muted" style={{ margin: "0.7rem 0 0" }}>
-                Select at least one more match to compare this player&apos;s performance.
+                Select one more match to compare this player&apos;s performance.
               </p>
             ) : null}
           </div>
