@@ -314,6 +314,22 @@ export default function CoachPlayerSearchPage({ activeTeam }) {
           <p className="teams-page-subtitle">
             Opened from Users for <strong>{activeTeam?.name}</strong>. This view auto-syncs with saved match stats.
           </p>
+          <button
+            type="button"
+            className="vc-link-cyan"
+            style={{
+              marginTop: "0.55rem",
+              width: "fit-content",
+              border: "none",
+              background: "none",
+              padding: 0,
+              fontSize: "0.9rem",
+              cursor: "pointer",
+            }}
+            onClick={() => navigate("/dashboard")}
+          >
+            Back to Dashboard
+          </button>
         </div>
       </header>
 

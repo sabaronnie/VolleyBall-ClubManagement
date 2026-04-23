@@ -528,11 +528,16 @@ function scheduleEventHorizontalStyle(layout, entryId) {
     return { left: "0.3rem", right: "0.3rem" };
   }
 
-  // Overlapping sessions should still stay wide enough to read.
-  const staggerPx = 8;
+  const availablePercent = 100;
+  const columnGapPercent = 2;
+  const totalGapPercent = Math.max(0, maxCols - 1) * columnGapPercent;
+  const columnWidthPercent = Math.max(18, (availablePercent - totalGapPercent) / maxCols);
+  const leftPercent = col * (columnWidthPercent + columnGapPercent);
+  const rightPercent = Math.max(0, availablePercent - leftPercent - columnWidthPercent);
+
   return {
-    left: `calc(0.3rem + ${col * staggerPx}px)`,
-    right: "0.3rem",
+    left: `calc(0.3rem + ${leftPercent}%)`,
+    right: `calc(0.3rem + ${rightPercent}%)`,
   };
 }
 
