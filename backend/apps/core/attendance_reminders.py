@@ -27,6 +27,10 @@ def coach_attendance_action_path(team_id: int, session_id: int) -> str:
     return f"/coach/attendance?team={team_id}&session={session_id}"
 
 
+def _format_time_12h(value):
+    return value.strftime("%I:%M %p").lstrip("0")
+
+
 def confirmed_player_ids_for_session(session_id: int) -> set[int]:
     return set(
         TrainingSessionConfirmation.objects.filter(training_session_id=session_id).values_list(
@@ -89,7 +93,7 @@ def sync_incomplete_attendance_notifications_for_session(
     path = coach_attendance_action_path(team.id, session.id)
     message = (
         f"\"{session.title}\" on {session.scheduled_date.isoformat()} "
-        f"({session.start_time.strftime('%H:%M')}–{session.end_time.strftime('%H:%M')}) "
+        f"({_format_time_12h(session.start_time)}-{_format_time_12h(session.end_time)}) "
         f"still needs confirmations for {missing_count} roster player(s). "
         f"Review in Team attendance: {path}"
     )

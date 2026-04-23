@@ -299,6 +299,10 @@ def _format_person_name(user):
     return f"{user.first_name} {user.last_name}".strip() or user.email
 
 
+def _format_time_12h(value):
+    return value.strftime("%I:%M %p").lstrip("0")
+
+
 def _serialize_training_session(session, viewer, team, player_memberships):
     confirmations_by_player_id = {
         confirmation.player_id: confirmation
@@ -3082,7 +3086,7 @@ def team_training_sessions(request, team_id):
         title=f"New {session.get_session_type_display().lower()} session for {team.name}",
         message=(
             f"{session.title} was scheduled for {session.scheduled_date.isoformat()} "
-            f"from {session.start_time.strftime('%H:%M')} to {session.end_time.strftime('%H:%M')}."
+            f"from {_format_time_12h(session.start_time)} to {_format_time_12h(session.end_time)}."
         ),
         category=Notification.Category.SESSION,
         audience="all",
@@ -3339,7 +3343,7 @@ def create_match(request):
         title=f"New match for {team.name}",
         message=(
             f"{session.title} was scheduled for {session.scheduled_date.isoformat()} "
-            f"from {session.start_time.strftime('%H:%M')} to {session.end_time.strftime('%H:%M')}."
+            f"from {_format_time_12h(session.start_time)} to {_format_time_12h(session.end_time)}."
         ),
         category=Notification.Category.SESSION,
         audience="all",
@@ -3956,7 +3960,7 @@ def remind_unconfirmed_training_session(request, session_id):
     loc = f" Location: {session.location}." if session.location else ""
     message = (
         f'Please confirm attendance for "{session.title}" on {session.scheduled_date.isoformat()} '
-        f"({session.start_time.strftime('%H:%M')}–{session.end_time.strftime('%H:%M')}).{loc} "
+        f"({_format_time_12h(session.start_time)}-{_format_time_12h(session.end_time)}).{loc} "
         "Players: open My sessions. Parents: open Attendance. Thank you."
     )
     Notification.objects.bulk_create(
