@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { fetchCurrentUser } from "../api";
+import { fetchCurrentUser, fetchTeamTrainingSessions } from "../api";
 import { ChevronDownIcon, UserCircleIcon } from "./AppIcons";
 import NotificationBell from "./NotificationBell";
 import SiteNavbar, { buildWorkspaceTabs } from "./SiteNavbar";
@@ -56,6 +56,20 @@ function buildTeamAssignmentLines(me) {
   return lines;
 }
 
+function isLiveMatchSession(session) {
+  if (!session || session.session_type !== "match" || session.status === "cancelled") {
+    return false;
+  }
+  const date = session.scheduled_date;
+  if (!date) return false;
+  const start = typeof session.start_time === "string" ? session.start_time.slice(0, 5) : "00:00";
+  const end = typeof session.end_time === "string" ? session.end_time.slice(0, 5) : "23:59";
+  const startTime = new Date(`${date}T${start}:00`);
+  const endTime = new Date(`${date}T${end}:00`);
+  const now = Date.now();
+  return Number.isFinite(startTime.getTime()) && Number.isFinite(endTime.getTime()) && startTime.getTime() <= now && now <= endTime.getTime();
+}
+
 export default function ClubWorkspaceLayout({
   activeTab,
   heroOverlay = false,
@@ -79,6 +93,7 @@ export default function ClubWorkspaceLayout({
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState("");
   const [showParentAttendanceFromProfile, setShowParentAttendanceFromProfile] = useState(false);
+  const [liveMatch, setLiveMatch] = useState(null);
 
   useEffect(() => {
     if (!localStorage.getItem(AUTH_TOKEN_KEY)) {
@@ -105,6 +120,37 @@ export default function ClubWorkspaceLayout({
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!showCoachAttendanceTab || !activeTeamId || activeTeamId === "__all__") {
+      setLiveMatch(null);
+      return undefined;
+    }
+
+    let cancelled = false;
+    const loadLiveMatch = async () => {
+      try {
+        const payload = await fetchTeamTrainingSessions(activeTeamId);
+        if (cancelled) return;
+        const match = (payload?.sessions || []).find(isLiveMatchSession) || null;
+        setLiveMatch(match);
+      } catch {
+        if (!cancelled) {
+          setLiveMatch(null);
+        }
+      }
+    };
+
+    void loadLiveMatch();
+    const intervalId = window.setInterval(loadLiveMatch, 60000);
+    const onScheduleChanged = () => void loadLiveMatch();
+    window.addEventListener("netup-schedule-changed", onScheduleChanged);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener("netup-schedule-changed", onScheduleChanged);
+    };
+  }, [activeTeamId, showCoachAttendanceTab]);
 
   const loadProfile = useCallback(async () => {
     setProfileLoading(true);
@@ -220,6 +266,21 @@ export default function ClubWorkspaceLayout({
           </>
         }
       />
+
+      {liveMatch ? (
+        <button
+          type="button"
+          className="live-match-banner"
+          onClick={() => navigate(`/coach/attendance?team=${encodeURIComponent(String(activeTeamId))}&session=${encodeURIComponent(String(liveMatch.id))}`)}
+        >
+          <span className="live-match-banner__pulse" aria-hidden="true" />
+          <span>
+            Live match now: <strong>{liveMatch.title}</strong>
+            {liveMatch.opponent ? ` vs ${liveMatch.opponent}` : ""}
+          </span>
+          <span className="live-match-banner__cta">Open match stats</span>
+        </button>
+      ) : null}
 
       {profileOpen ? (
         <div

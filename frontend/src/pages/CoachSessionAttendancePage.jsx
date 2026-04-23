@@ -1,12 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   cancelTrainingSession,
+  createMatch,
   createTeamTrainingSession,
   fetchCoachTrainingSessionAttendance,
+  fetchCurrentUser,
+  fetchMatch,
   fetchTeamAttendanceAnalytics,
   fetchTeamTrainingSessions,
   remindUnconfirmedTrainingSession,
+  updateMatchPlayerStats,
 } from "../api";
+import InlineDropdown from "../components/InlineDropdown";
+import { formatTimeRange12h, TimeSelect } from "../timeUtils";
 
 function parseLocalDate(iso) {
   if (!iso || typeof iso !== "string") return null;
@@ -51,6 +57,161 @@ function sessionHasStarted(session) {
   return Number.isFinite(dt.getTime()) ? dt.getTime() <= Date.now() : false;
 }
 
+const MATCH_STAT_FIELDS = [
+  { key: "points_scored", label: "Points" },
+  { key: "aces", label: "Aces" },
+  { key: "blocks", label: "Blocks" },
+  { key: "assists", label: "Assists" },
+  { key: "errors", label: "Errors" },
+  { key: "digs", label: "Digs" },
+];
+
+const EVENT_TYPE_OPTIONS = [
+  { value: "training", label: "Training" },
+  { value: "fundraiser", label: "Fundraiser" },
+  { value: "game", label: "Game" },
+];
+
+function normalizeStatValue(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.floor(n);
+}
+
+function collectVisibleTeams(me) {
+  const map = new Map();
+  const addTeam = (team) => {
+    if (!team?.id || map.has(Number(team.id))) return;
+    map.set(Number(team.id), team);
+  };
+  (me?.director_teams || []).forEach(addTeam);
+  (me?.coached_teams || []).forEach(addTeam);
+  (me?.player_teams || []).forEach(addTeam);
+  (me?.children || []).forEach((child) => (child.teams || []).forEach(addTeam));
+  return Array.from(map.values());
+}
+
+function GameOpponentDropdown({
+  teams,
+  searchValue,
+  onSearchChange,
+  selectedTeam,
+  selectedTeamId,
+  onSelectTeam,
+  useExternalOpponent,
+  externalOpponentName,
+  onUseExternalOpponent,
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+  const displayValue = useExternalOpponent
+    ? externalOpponentName.trim() || "External team"
+    : selectedTeam?.name || "Choose opponent";
+
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+
+    const onPointerDown = (event) => {
+      if (!wrapRef.current?.contains(event.target)) {
+        setOpen(false);
+      }
+    };
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    };
+
+    document.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div className={`match-opponent-dropdown${open ? " is-open" : ""}`} ref={wrapRef}>
+      <button
+        type="button"
+        className="match-opponent-dropdown__trigger"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => {
+          setOpen((current) => {
+            const nextOpen = !current;
+            if (nextOpen) {
+              onSearchChange("");
+            }
+            return nextOpen;
+          });
+        }}
+      >
+        <span>{displayValue}</span>
+      </button>
+      {open ? (
+        <div className="match-opponent-dropdown__menu" role="listbox" aria-label="Opponent team">
+          <input
+            className="match-opponent-dropdown__search"
+            value={searchValue}
+            onChange={(event) => onSearchChange(event.target.value)}
+            placeholder="Search teams"
+          />
+          <div className="match-opponent-dropdown__options">
+            {teams.length ? (
+              teams.map((team) => (
+                <button
+                  key={team.id}
+                  type="button"
+                  role="option"
+                  aria-selected={!useExternalOpponent && Number(selectedTeamId) === Number(team.id)}
+                  className={`match-opponent-dropdown__option${
+                    !useExternalOpponent && Number(selectedTeamId) === Number(team.id) ? " is-selected" : ""
+                  }`}
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    onSelectTeam(team);
+                    setOpen(false);
+                  }}
+                  onClick={(event) => {
+                    if (event.detail === 0) {
+                      onSelectTeam(team);
+                      setOpen(false);
+                    }
+                  }}
+                >
+                  {team.name}
+                </button>
+              ))
+            ) : (
+              <p className="match-opponent-dropdown__empty">No teams found</p>
+            )}
+            <button
+              type="button"
+              className={`match-opponent-dropdown__option${useExternalOpponent ? " is-selected" : ""}`}
+              onPointerDown={(event) => {
+                event.preventDefault();
+                onUseExternalOpponent();
+                setOpen(false);
+              }}
+              onClick={(event) => {
+                if (event.detail === 0) {
+                  onUseExternalOpponent();
+                  setOpen(false);
+                }
+              }}
+            >
+              Other external team
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function CoachSessionAttendancePage({ activeTeam }) {
   const teamId = activeTeam?.id && activeTeam.id !== "__all__" ? activeTeam.id : null;
   const defaultRange = useMemo(() => {
@@ -74,6 +235,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [analyticsError, setAnalyticsError] = useState("");
   const [analyticsExpanded, setAnalyticsExpanded] = useState(false);
+  const [newEventType, setNewEventType] = useState("training");
   const [newSessionTitle, setNewSessionTitle] = useState("");
   const [newSessionDate, setNewSessionDate] = useState(() => isoDateLocal(new Date()));
   const [newSessionStart, setNewSessionStart] = useState("18:00");
@@ -84,7 +246,20 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
   const [createSessionBusy, setCreateSessionBusy] = useState(false);
   const [createSessionError, setCreateSessionError] = useState("");
   const titleInputRef = useRef(null);
+  const locationInputRef = useRef(null);
   const [createSessionSuccess, setCreateSessionSuccess] = useState("");
+  const [opponentTeams, setOpponentTeams] = useState([]);
+  const [opponentSearch, setOpponentSearch] = useState("");
+  const [selectedOpponentTeamId, setSelectedOpponentTeamId] = useState("");
+  const [useExternalOpponent, setUseExternalOpponent] = useState(false);
+  const [externalOpponentName, setExternalOpponentName] = useState("");
+  const [matchPayload, setMatchPayload] = useState(null);
+  const [matchLoading, setMatchLoading] = useState(false);
+  const [matchError, setMatchError] = useState("");
+  const [expandedMatchPlayerId, setExpandedMatchPlayerId] = useState(null);
+  const [savingStatsByPlayerId, setSavingStatsByPlayerId] = useState({});
+  const [statsSaveError, setStatsSaveError] = useState("");
+  const statsSaveTimersRef = useRef({});
   const [remindBusy, setRemindBusy] = useState(false);
   const [remindMessage, setRemindMessage] = useState("");
   const [remindError, setRemindError] = useState("");
@@ -116,6 +291,30 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
   }, [loadList]);
 
   useEffect(() => {
+    let cancelled = false;
+    fetchCurrentUser()
+      .then((me) => {
+        if (!cancelled) {
+          setOpponentTeams(collectVisibleTeams(me));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setOpponentTeams([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      Object.values(statsSaveTimersRef.current || {}).forEach((timer) => clearTimeout(timer));
+    };
+  }, []);
+
+  useEffect(() => {
     setSelectedSessionId(null);
     setDetailPayload(null);
     setDetailError("");
@@ -125,8 +324,19 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
     setAnalyticsLastN("");
     setAnalyticsExpanded(false);
     setAnalyticsPayload(null);
+    setNewEventType("training");
+    setNewSessionTitle("");
     setCreateSessionError("");
     setCreateSessionSuccess("");
+    setOpponentSearch("");
+    setSelectedOpponentTeamId("");
+    setUseExternalOpponent(false);
+    setExternalOpponentName("");
+    setMatchPayload(null);
+    setMatchError("");
+    setExpandedMatchPlayerId(null);
+    setSavingStatsByPlayerId({});
+    setStatsSaveError("");
     setRemindMessage("");
     setRemindError("");
     setCancelMessage("");
@@ -228,6 +438,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
   useEffect(() => {
     if (!selectedSessionId) {
       setDetailPayload(null);
+      setMatchPayload(null);
       return;
     }
     setRemindMessage("");
@@ -237,35 +448,125 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
     void loadDetail(selectedSessionId);
   }, [selectedSessionId, loadDetail]);
 
+  const loadMatchDetail = useCallback(async (matchId) => {
+    if (!matchId) {
+      setMatchPayload(null);
+      return;
+    }
+    setMatchLoading(true);
+    setMatchError("");
+    try {
+      const data = await fetchMatch(matchId);
+      setMatchPayload(data);
+    } catch (err) {
+      setMatchPayload(null);
+      setMatchError(err.message || "Could not load match stats.");
+    } finally {
+      setMatchLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (detailPayload?.session?.session_type !== "match") {
+      setMatchPayload(null);
+      setExpandedMatchPlayerId(null);
+      return;
+    }
+    void loadMatchDetail(detailPayload.session.id);
+  }, [detailPayload, loadMatchDetail]);
+
   const canManageTraining = Boolean(listPayload?.can_manage_training);
 
-  const onCreateTrainingSession = useCallback(async () => {
-    if (!teamId || !newSessionTitle.trim()) {
-      setCreateSessionError("Enter a session title.");
+  const filteredOpponentTeams = useMemo(() => {
+    const q = opponentSearch.trim().toLowerCase();
+    return opponentTeams
+      .filter((team) => Number(team.id) !== Number(teamId))
+      .filter((team) => {
+        if (!q) return true;
+        return `${team.name || ""} ${team.club_name || team.clubName || ""}`.toLowerCase().includes(q);
+      })
+      .slice(0, 8);
+  }, [opponentTeams, opponentSearch, teamId]);
+
+  const selectedOpponentTeam = useMemo(
+    () => opponentTeams.find((team) => Number(team.id) === Number(selectedOpponentTeamId)) || null,
+    [opponentTeams, selectedOpponentTeamId],
+  );
+
+  const onCreateEvent = useCallback(async () => {
+    if (!teamId) return;
+    if (newEventType === "training" && !newSessionTitle.trim()) {
+      setCreateSessionError("Enter the type of training.");
       if (titleInputRef.current && typeof titleInputRef.current.focus === "function") {
         titleInputRef.current.focus();
       }
       return;
     }
+    if (!newSessionLocation.trim()) {
+      setCreateSessionError("Enter a location.");
+      if (locationInputRef.current && typeof locationInputRef.current.focus === "function") {
+        locationInputRef.current.focus();
+      }
+      return;
+    }
+    if (newEventType === "game" && !useExternalOpponent && !selectedOpponentTeamId) {
+      setCreateSessionError("Choose an opponent team or select Other.");
+      return;
+    }
+    if (newEventType === "game" && useExternalOpponent && !externalOpponentName.trim()) {
+      setCreateSessionError("Enter the external opponent name.");
+      return;
+    }
+
     setCreateSessionBusy(true);
     setCreateSessionError("");
     setCreateSessionSuccess("");
     try {
       const startT = newSessionStart.length > 5 ? newSessionStart.slice(0, 5) : newSessionStart;
       const endT = newSessionEnd.length > 5 ? newSessionEnd.slice(0, 5) : newSessionEnd;
-      await createTeamTrainingSession(teamId, {
-        title: newSessionTitle.trim(),
-        session_type: "training",
-        scheduled_date: newSessionDate,
-        start_time: startT,
-        end_time: endT,
-        location: newSessionLocation.trim(),
-        notify_players: newSessionNotifyPlayers,
-        notify_parents: newSessionNotifyParents,
-      });
-      setCreateSessionSuccess("Session added. Check notify options above if families should get an in-app alert.");
-      setNewSessionTitle("");
-      // signal other parts of the app (schedule page) to refresh
+
+      if (newEventType === "game") {
+        const data = await createMatch({
+          team_id: teamId,
+          scheduled_date: newSessionDate,
+          start_time: startT,
+          end_time: endT,
+          location: newSessionLocation.trim(),
+          opponent_team_id: useExternalOpponent ? null : selectedOpponentTeamId,
+          external_opponent: useExternalOpponent ? externalOpponentName.trim() : "",
+          notify_players: newSessionNotifyPlayers,
+          notify_parents: newSessionNotifyParents,
+        });
+        const match = data?.match;
+        setCreateSessionSuccess("Game added. Players and parents can confirm attendance like any other event.");
+        setOpponentSearch("");
+        setSelectedOpponentTeamId("");
+        setUseExternalOpponent(false);
+        setExternalOpponentName("");
+        if (match?.id) {
+          setSelectedSessionId(match.id);
+          setMatchPayload(data);
+        }
+      } else {
+        await createTeamTrainingSession(teamId, {
+          title: newEventType === "fundraiser" ? "Fundraiser" : newSessionTitle.trim(),
+          session_type: "training",
+          scheduled_date: newSessionDate,
+          start_time: startT,
+          end_time: endT,
+          location: newSessionLocation.trim(),
+          notify_players: newSessionNotifyPlayers,
+          notify_parents: newSessionNotifyParents,
+        });
+        setCreateSessionSuccess(
+          newEventType === "fundraiser"
+            ? "Fundraiser added. Check notify options if families should get an in-app alert."
+            : "Training added. Check notify options if families should get an in-app alert.",
+        );
+        setNewSessionTitle("");
+      }
+
+      setNewSessionLocation("");
       try {
         window.dispatchEvent(new Event("netup-schedule-changed"));
       } catch (e) {
@@ -273,12 +574,13 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
       }
       await loadList();
     } catch (err) {
-      setCreateSessionError(err.message || "Could not create session.");
+      setCreateSessionError(err.message || "Could not create event.");
     } finally {
       setCreateSessionBusy(false);
     }
   }, [
     teamId,
+    newEventType,
     newSessionTitle,
     newSessionDate,
     newSessionStart,
@@ -286,6 +588,9 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
     newSessionLocation,
     newSessionNotifyPlayers,
     newSessionNotifyParents,
+    useExternalOpponent,
+    selectedOpponentTeamId,
+    externalOpponentName,
     loadList,
   ]);
 
@@ -347,6 +652,82 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
       setCancelBusy(false);
     }
   }, [teamId, detailPayload, loadList, loadDetail, analyticsExpanded, loadAnalytics]);
+
+  const schedulePlayerStatSave = useCallback((playerId, nextStats) => {
+    const matchId = detailPayload?.session?.id;
+    if (!matchId || !playerId) return;
+    if (statsSaveTimersRef.current[playerId]) {
+      clearTimeout(statsSaveTimersRef.current[playerId]);
+    }
+    statsSaveTimersRef.current[playerId] = setTimeout(async () => {
+      setSavingStatsByPlayerId((prev) => ({ ...prev, [playerId]: true }));
+      setStatsSaveError("");
+      try {
+        const data = await updateMatchPlayerStats(matchId, playerId, nextStats);
+        setMatchPayload(data);
+      } catch (err) {
+        setStatsSaveError(err.message || "Could not auto-save player stats.");
+      } finally {
+        setSavingStatsByPlayerId((prev) => ({ ...prev, [playerId]: false }));
+      }
+    }, 450);
+  }, [detailPayload]);
+
+  const onChangePlayerStat = useCallback((playerId, field, value) => {
+    const normalizedValue = normalizeStatValue(value);
+    let nextStats = null;
+    setMatchPayload((prev) => {
+      if (!prev?.match) return prev;
+      const players = (prev.match.players || []).map((player) => {
+        if (Number(player.player_id) !== Number(playerId)) return player;
+        nextStats = {
+          ...(player.stats || {}),
+          [field]: normalizedValue,
+        };
+        return {
+          ...player,
+          stats: nextStats,
+        };
+      });
+      const totalTeamPoints = players.reduce((sum, player) => sum + normalizeStatValue(player.stats?.points_scored), 0);
+      const scoredPlayers = players.map((player) => {
+        const stats = player.stats || {};
+        const weightedScore =
+          normalizeStatValue(stats.points_scored) +
+          normalizeStatValue(stats.aces) * 2 +
+          normalizeStatValue(stats.blocks) * 2 +
+          normalizeStatValue(stats.assists) * 1.5 +
+          normalizeStatValue(stats.digs) -
+          normalizeStatValue(stats.errors);
+        return { player, weightedScore };
+      });
+      const hasRecordedStats = players.some((player) =>
+        MATCH_STAT_FIELDS.some((field) => normalizeStatValue(player.stats?.[field.key]) > 0),
+      );
+      const mvp = scoredPlayers.reduce((best, row) => (!best || row.weightedScore > best.weightedScore ? row : best), null);
+      return {
+        ...prev,
+        match: {
+          ...prev.match,
+          summary: {
+            ...(prev.match.summary || {}),
+            total_team_points: totalTeamPoints,
+            mvp_suggestion: hasRecordedStats && mvp
+              ? {
+                  player_id: mvp.player.player_id,
+                  player_name: mvp.player.player_name,
+                  weighted_score: Math.round(mvp.weightedScore * 100) / 100,
+                }
+              : null,
+          },
+          players,
+        },
+      };
+    });
+    if (nextStats) {
+      schedulePlayerStatSave(playerId, nextStats);
+    }
+  }, [schedulePlayerStatSave]);
 
   const today = useMemo(() => {
     const t = new Date();
@@ -446,11 +827,11 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
           aria-labelledby="coach-add-session-heading"
         >
           <h2 id="coach-add-session-heading" style={{ fontSize: "1.05rem", margin: "0 0 0.5rem" }}>
-            Schedule a new session
+            Schedule a new event
           </h2>
           <p className="vc-modal__muted" style={{ margin: "0 0 1rem", fontSize: "0.88rem", lineHeight: 1.5 }}>
-            Creates a practice on the team calendar and optionally notifies roster players and linked parents (same as
-            other session alerts).
+            Create training, fundraiser, or game events on the team calendar and optionally notify roster players and
+            linked parents.
           </p>
           {createSessionSuccess ? (
             <p className="vc-director-success" style={{ marginBottom: "0.65rem" }}>
@@ -470,17 +851,33 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
               alignItems: "end",
             }}
           >
-            <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem", fontSize: "0.82rem" }}>
-              <span className="vc-modal__muted">Title</span>
-              <input
-                ref={titleInputRef}
-                className="vc-dash-team-select"
-                value={newSessionTitle}
-                onChange={(e) => setNewSessionTitle(e.target.value)}
-                placeholder="e.g. Evening practice"
+            <label className="match-form-field">
+              <span className="vc-modal__muted">Event Type</span>
+              <InlineDropdown
+                ariaLabel="Event Type"
+                className="vc-inline-dropdown--event-type"
+                options={EVENT_TYPE_OPTIONS}
+                value={newEventType}
+                onChange={(value) => {
+                  setNewEventType(value);
+                  setCreateSessionError("");
+                  setCreateSessionSuccess("");
+                }}
               />
             </label>
-            <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem", fontSize: "0.82rem" }}>
+            {newEventType === "training" ? (
+              <label className="match-form-field">
+                <span className="vc-modal__muted">Training Type</span>
+                <input
+                  ref={titleInputRef}
+                  className="vc-dash-team-select"
+                  value={newSessionTitle}
+                  onChange={(e) => setNewSessionTitle(e.target.value)}
+                  placeholder="e.g. Conditioning"
+                />
+              </label>
+            ) : null}
+            <label className="match-form-field">
               <span className="vc-modal__muted">Date</span>
               <input
                 type="date"
@@ -489,33 +886,66 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
                 onChange={(e) => setNewSessionDate(e.target.value)}
               />
             </label>
-            <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem", fontSize: "0.82rem" }}>
+            <label className="match-form-field">
               <span className="vc-modal__muted">Start</span>
-              <input
-                type="time"
+              <TimeSelect
                 className="vc-dash-team-select"
                 value={newSessionStart}
-                onChange={(e) => setNewSessionStart(e.target.value)}
+                onChange={setNewSessionStart}
               />
             </label>
-            <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem", fontSize: "0.82rem" }}>
+            <label className="match-form-field">
               <span className="vc-modal__muted">End</span>
-              <input
-                type="time"
+              <TimeSelect
                 className="vc-dash-team-select"
                 value={newSessionEnd}
-                onChange={(e) => setNewSessionEnd(e.target.value)}
+                onChange={setNewSessionEnd}
               />
             </label>
-            <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem", fontSize: "0.82rem", gridColumn: "1 / -1" }}>
-              <span className="vc-modal__muted">Location (optional)</span>
+            <label className="match-form-field">
+              <span className="vc-modal__muted">Location</span>
               <input
+                ref={locationInputRef}
                 className="vc-dash-team-select"
+                required
                 value={newSessionLocation}
                 onChange={(e) => setNewSessionLocation(e.target.value)}
                 placeholder="Main gym"
               />
             </label>
+            {newEventType === "game" ? (
+              <div className="match-form-field match-form-field--wide">
+                <span className="vc-modal__muted">Versus</span>
+                <GameOpponentDropdown
+                  teams={filteredOpponentTeams}
+                  searchValue={opponentSearch}
+                  onSearchChange={setOpponentSearch}
+                  selectedTeam={selectedOpponentTeam}
+                  selectedTeamId={selectedOpponentTeamId}
+                  onSelectTeam={(team) => {
+                    setUseExternalOpponent(false);
+                    setExternalOpponentName("");
+                    setSelectedOpponentTeamId(team.id);
+                    setOpponentSearch(team.name || "");
+                  }}
+                  useExternalOpponent={useExternalOpponent}
+                  externalOpponentName={externalOpponentName}
+                  onUseExternalOpponent={() => {
+                    setUseExternalOpponent(true);
+                    setSelectedOpponentTeamId("");
+                    setOpponentSearch("");
+                  }}
+                />
+                {useExternalOpponent ? (
+                  <input
+                    className="vc-dash-team-select match-opponent-dropdown__external-input"
+                    value={externalOpponentName}
+                    onChange={(event) => setExternalOpponentName(event.target.value)}
+                    placeholder="External team name"
+                  />
+                ) : null}
+              </div>
+            ) : null}
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem", marginTop: "0.75rem", alignItems: "center" }}>
             <label className="session-toggle" style={{ fontSize: "0.88rem" }}>
@@ -543,9 +973,9 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
               type="button"
               className="vc-action-btn"
               disabled={createSessionBusy}
-              onClick={() => void onCreateTrainingSession()}
+              onClick={() => void onCreateEvent()}
             >
-              {createSessionBusy ? "Saving…" : "Add session"}
+              {createSessionBusy ? "Saving…" : "Add event"}
             </button>
           </div>
         </section>
@@ -847,7 +1277,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
                           </div>
                           <h3 style={{ margin: "0.35rem 0 0.25rem" }}>{session.title}</h3>
                           <p className="training-session-card__location">
-                            {session.scheduled_date} · {session.start_time} – {session.end_time}
+                            {session.scheduled_date} · {formatTimeRange12h(session.start_time, session.end_time)}
                             {session.location ? ` · ${session.location}` : ""}
                           </p>
                           {session.session_type === "match" && session.opponent ? (
@@ -891,7 +1321,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
               <header style={{ marginBottom: "0.75rem" }}>
                 <h3 style={{ fontSize: "1.1rem", margin: "0 0 0.25rem" }}>{detailSession.title}</h3>
                 <p className="vc-modal__muted" style={{ margin: 0, lineHeight: 1.5 }}>
-                  {detailSession.scheduled_date} · {detailSession.start_time} – {detailSession.end_time}
+                  {detailSession.scheduled_date} · {formatTimeRange12h(detailSession.start_time, detailSession.end_time)}
                   {detailSession.location ? ` · ${detailSession.location}` : ""}
                   <br />
                   {detailSession.session_type_label}
@@ -913,6 +1343,75 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
                   <span className="vc-modal__muted">Roster {detailSession.summary?.roster_size ?? 0}</span>
                 </div>
               </header>
+              {detailSession.session_type === "match" ? (
+                <section className="match-stats-panel" aria-labelledby="match-stats-heading">
+                  <div className="match-stats-panel__head">
+                    <div>
+                      <h4 id="match-stats-heading">Match performance tracking</h4>
+                      <p className="vc-modal__muted">Stats auto-save per player while the match is open.</p>
+                    </div>
+                    <div className="match-stats-summary">
+                      <span>Total points: {matchPayload?.match?.summary?.total_team_points ?? 0}</span>
+                      <span>
+                        MVP: {matchPayload?.match?.summary?.mvp_suggestion?.player_name || "No stats yet"}
+                      </span>
+                    </div>
+                  </div>
+                  {matchLoading && !matchPayload ? <p className="vc-modal__muted">Loading match stats…</p> : null}
+                  {matchError ? <p className="schedule-feedback schedule-feedback--error">{matchError}</p> : null}
+                  {statsSaveError ? <p className="schedule-feedback schedule-feedback--error">{statsSaveError}</p> : null}
+                  {matchPayload?.match?.players?.length ? (
+                    <div className="match-player-stat-list">
+                      {matchPayload.match.players.map((player) => {
+                        const isOpen = Number(expandedMatchPlayerId) === Number(player.player_id);
+                        const saving = Boolean(savingStatsByPlayerId[player.player_id]);
+                        return (
+                          <article key={player.player_id} className="match-player-stat-card">
+                            <button
+                              type="button"
+                              className="match-player-stat-card__trigger"
+                              onClick={() => setExpandedMatchPlayerId(isOpen ? null : player.player_id)}
+                              aria-expanded={isOpen}
+                            >
+                              <span>
+                                <strong>{player.player_name}</strong>
+                                <small>{player.is_confirmed ? "Confirmed" : "Pending attendance"}</small>
+                              </span>
+                              <span className="match-player-stat-card__score">
+                                {saving ? "Saving…" : `Score ${player.weighted_score ?? 0}`}
+                              </span>
+                            </button>
+                            {isOpen ? (
+                              <div className="match-player-stat-card__body">
+                                <div className="match-stat-grid">
+                                  {MATCH_STAT_FIELDS.map((field) => (
+                                    <label key={field.key} className="match-stat-input">
+                                      <span>{field.label}</span>
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        value={player.stats?.[field.key] ?? 0}
+                                        disabled={!matchPayload.match.can_manage_stats}
+                                        onChange={(e) => onChangePlayerStat(player.player_id, field.key, e.target.value)}
+                                      />
+                                    </label>
+                                  ))}
+                                </div>
+                                <p className="vc-modal__muted">
+                                  Last saved: {player.updated_at ? new Date(player.updated_at).toLocaleString() : "Not saved yet"}
+                                  {player.updated_by_name ? ` by ${player.updated_by_name}` : ""}
+                                </p>
+                              </div>
+                            ) : null}
+                          </article>
+                        );
+                      })}
+                    </div>
+                  ) : !matchLoading ? (
+                    <p className="vc-modal__muted">No roster players available for this match.</p>
+                  ) : null}
+                </section>
+              ) : null}
               {canManageTraining && detailSession.status !== "cancelled" ? (
                 <section
                   style={{

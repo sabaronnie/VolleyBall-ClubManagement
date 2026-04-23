@@ -1026,9 +1026,325 @@ button {
   align-items: start;
 }
 
+.live-match-banner {
+  width: 100%;
+  border: 0;
+  border-top: 1px solid rgba(190, 46, 46, 0.18);
+  border-bottom: 1px solid rgba(190, 46, 46, 0.18);
+  background: #fff4f2;
+  color: #8a1f1f;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 0.72rem 1rem;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.live-match-banner__pulse {
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 999px;
+  background: #d92d20;
+  box-shadow: 0 0 0 5px rgba(217, 45, 32, 0.12);
+  flex: 0 0 auto;
+}
+
+.live-match-banner__cta {
+  color: #b42318;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.match-create-panel,
+.match-stats-panel {
+  margin-bottom: 1.25rem;
+  padding: 1.1rem 1.25rem;
+  border-radius: 12px;
+  border: 1px solid #e4e7ec;
+  background: #fff;
+}
+
+.match-create-panel__head,
+.match-stats-panel__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+  margin-bottom: 0.85rem;
+}
+
+.match-create-panel h2,
+.match-stats-panel h4 {
+  font-size: 1.05rem;
+  margin: 0 0 0.3rem;
+}
+
+.match-create-panel p,
+.match-stats-panel p {
+  margin-top: 0;
+}
+
+.match-create-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  column-gap: 1rem;
+  row-gap: 0.65rem;
+  align-items: start;
+  margin-bottom: 0.85rem;
+}
+
+.match-form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.82rem;
+}
+
+.match-form-field--wide {
+  grid-column: 1 / -1;
+}
+
+.vc-inline-dropdown--event-type {
+  min-width: 0;
+  width: 100%;
+}
+
+.match-opponent-picker {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.match-opponent-picker__menu {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.match-opponent-picker__item,
+.match-opponent-picker__selected {
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  background: #fff;
+  color: #24315b;
+  padding: 0.45rem 0.65rem;
+  font-size: 0.82rem;
+}
+
+.match-opponent-picker__item {
+  cursor: pointer;
+}
+
+.match-opponent-picker__item.is-selected,
+.match-opponent-picker__item:hover {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+
+.match-opponent-dropdown {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  z-index: 0;
+}
+
+.match-opponent-dropdown.is-open {
+  z-index: 230;
+}
+
+.match-opponent-dropdown__trigger {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid #d8dee6;
+  border-radius: 8px;
+  background: #fafbfc;
+  color: #1a1d21;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.55rem;
+  padding: 0.55rem 0.78rem;
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 700;
+  text-align: left;
+}
+
+.match-opponent-dropdown__trigger::after {
+  border-left: 0.25rem solid transparent;
+  border-right: 0.25rem solid transparent;
+  border-top: 0.3rem solid currentColor;
+  content: "";
+  flex: 0 0 auto;
+}
+
+.match-opponent-dropdown__trigger span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.match-opponent-dropdown__menu {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  left: 0;
+  right: 0;
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.5rem;
+  border: 1px solid #d8dee6;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.16);
+}
+
+.match-opponent-dropdown__search {
+  width: 100%;
+  border: 1px solid #d8dee6;
+  border-radius: 8px;
+  background: #fbfdff;
+  color: #1a1d21;
+  font: inherit;
+  font-size: 0.88rem;
+  padding: 0.52rem 0.6rem;
+}
+
+.match-opponent-dropdown__options {
+  display: grid;
+  gap: 0.25rem;
+  max-height: 12rem;
+  overflow: auto;
+}
+
+.match-opponent-dropdown__option {
+  width: 100%;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #24315b;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 700;
+  padding: 0.5rem 0.58rem;
+  text-align: left;
+}
+
+.match-opponent-dropdown__option:hover,
+.match-opponent-dropdown__option.is-selected {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.match-opponent-dropdown__empty {
+  margin: 0;
+  padding: 0.45rem 0.58rem;
+  color: #667085;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.match-opponent-dropdown__external-input {
+  margin-top: 0.45rem;
+  max-width: none;
+}
+
+.match-stats-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  justify-content: flex-end;
+}
+
+.match-stats-summary span {
+  border-radius: 999px;
+  background: #eef9fb;
+  color: #1d95a8;
+  padding: 0.38rem 0.65rem;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.match-player-stat-list {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.match-player-stat-card {
+  border: 1px solid #e4e7ec;
+  border-radius: 8px;
+  background: #fbfcfe;
+  overflow: hidden;
+}
+
+.match-player-stat-card__trigger {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0.75rem 0.85rem;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.match-player-stat-card__trigger small {
+  display: block;
+  margin-top: 0.15rem;
+  color: #667085;
+  font-size: 0.78rem;
+}
+
+.match-player-stat-card__score {
+  color: #2563eb;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.match-player-stat-card__body {
+  border-top: 1px solid #e4e7ec;
+  padding: 0.85rem;
+  background: #fff;
+}
+
+.match-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(95px, 1fr));
+  gap: 0.6rem;
+}
+
+.match-stat-input {
+  display: grid;
+  gap: 0.25rem;
+  color: #667085;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.match-stat-input input {
+  width: 100%;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  padding: 0.45rem 0.5rem;
+  color: #111827;
+}
+
 @media (max-width: 900px) {
   .coach-attendance-layout {
     grid-template-columns: 1fr;
+  }
+
+  .match-create-panel__head,
+  .match-stats-panel__head,
+  .match-player-stat-card__trigger,
+  .live-match-banner {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 
@@ -1391,6 +1707,12 @@ button {
   box-shadow: 0 18px 36px rgba(15, 23, 42, 0.18);
 }
 
+.schedule-event--match {
+  justify-content: center;
+  gap: 0.16rem;
+  padding: 0.48rem 0.52rem 0.52rem;
+}
+
 .schedule-event:nth-child(2n) {
   background: linear-gradient(135deg, #3f5da1, #456fb8);
 }
@@ -1434,6 +1756,23 @@ button {
   overflow-wrap: break-word;
   word-break: normal;
   hyphens: auto;
+}
+
+.schedule-event--match strong {
+  font-size: 0.92rem;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.schedule-event--match .schedule-event__time {
+  margin-bottom: 0;
+  padding: 0;
+  background: transparent;
+  font-size: 0.66rem;
+  line-height: 1.1;
+  white-space: normal;
 }
 
 .schedule-event em {
@@ -1522,7 +1861,8 @@ button {
 .schedule-form-row {
   display: grid;
   grid-template-columns: 1fr 1.5fr 1fr 1fr 1.2fr auto;
-  gap: 0.7rem;
+  column-gap: 1rem;
+  row-gap: 0.7rem;
   align-items: center;
 }
 
@@ -1534,6 +1874,136 @@ button {
   padding: 0.78rem 0.85rem;
   background: #fbfdff;
   font: inherit;
+}
+
+.time-input {
+  display: grid;
+  grid-template-columns: 1.55rem auto 1.75rem auto;
+  align-items: center;
+  column-gap: 0.06rem;
+  width: 100%;
+  min-width: 0;
+  justify-content: start;
+  border: 1px solid rgba(34, 51, 84, 0.12);
+  border-radius: 0.85rem;
+  padding: 0.36rem;
+  background: #fbfdff;
+  color: #1a1d21;
+  font: inherit;
+}
+
+.time-input.vc-dash-team-select {
+  max-width: 13rem;
+  border: 0;
+  border-radius: 0;
+  padding: 0.12rem 0;
+  background: transparent;
+  cursor: default;
+}
+
+.schedule-form-row .time-input + .time-input {
+  margin-left: 0.25rem;
+}
+
+.time-input__field {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  border-radius: 0.45rem;
+  padding: 0.22rem 0.1rem;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  text-align: center;
+}
+
+.schedule-form-row .time-input__field {
+  border: 0;
+  padding: 0.22rem 0.1rem;
+  background: transparent;
+}
+
+.time-input__field:focus {
+  outline: 2px solid rgba(78, 111, 184, 0.25);
+  outline-offset: 1px;
+}
+
+.time-input__separator {
+  color: #64748b;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.time-input__meridiem {
+  position: relative;
+  min-width: 3.05rem;
+}
+
+.time-input__period-trigger {
+  width: 100%;
+  border: 0;
+  border-radius: 0.58rem;
+  padding: 0.28rem 1rem 0.28rem 0.42rem;
+  background: rgba(34, 51, 84, 0.08);
+  color: #24315b;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 800;
+  position: relative;
+  text-align: left;
+}
+
+.time-input__period-trigger::after {
+  border-left: 0.23rem solid transparent;
+  border-right: 0.23rem solid transparent;
+  border-top: 0.28rem solid currentColor;
+  content: "";
+  position: absolute;
+  right: 0.42rem;
+  top: 50%;
+  transform: translateY(-35%);
+}
+
+.time-input__period-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.18rem);
+  z-index: 20;
+  display: grid;
+  min-width: 100%;
+  padding: 0.16rem;
+  border: 1px solid rgba(34, 51, 84, 0.12);
+  border-radius: 0.6rem;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(34, 51, 84, 0.16);
+}
+
+.time-input__period-option {
+  border: 0;
+  border-radius: 0.45rem;
+  padding: 0.3rem 0.44rem;
+  background: transparent;
+  color: #52606f;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-align: left;
+}
+
+.time-input__period-option:hover,
+.time-input__period-option.is-active {
+  background: rgba(78, 111, 184, 0.12);
+  color: #24315b;
+}
+
+.time-input__field:disabled,
+.time-input__period-trigger:disabled,
+.time-input__period-option:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
 }
 
 .schedule-form-row__remove {
@@ -2303,6 +2773,10 @@ button {
 
   .schedule-form-row {
     grid-template-columns: 1fr;
+  }
+
+  .schedule-form-row .time-input + .time-input {
+    margin-left: 0;
   }
 
   .team-training-panel__header,

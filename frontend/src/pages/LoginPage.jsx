@@ -3,6 +3,7 @@ import { loginWithPassword } from "../api";
 
 const AUTH_TOKEN_KEY = "netup.auth.token";
 const AUTH_USER_KEY = "netup.auth.user";
+const AUTH_EXPIRED_KEY = "netup.auth.expired";
 
 function notifyAuthStateChanged() {
   window.dispatchEvent(new Event("auth-state-changed"));
@@ -19,7 +20,13 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState(() => {
+    if (sessionStorage.getItem(AUTH_EXPIRED_KEY) !== "1") {
+      return "";
+    }
+    sessionStorage.removeItem(AUTH_EXPIRED_KEY);
+    return "Your session expired. Please log in again.";
+  });
 
   const onSubmit = async (event) => {
     event.preventDefault();

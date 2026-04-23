@@ -78,6 +78,11 @@ export default function InlineDropdown({
     };
   }, [open]);
 
+  const selectOption = (option) => {
+    onChange(option.value);
+    setOpen(false);
+  };
+
   const menu = open && !disabled ? (
     <div
       className={`vc-inline-dropdown__menu${portal ? " vc-inline-dropdown__menu--portal" : ""}`}
@@ -94,9 +99,14 @@ export default function InlineDropdown({
           role="option"
           aria-selected={selectedOption?.value === option.value}
           className={`vc-inline-dropdown__option${selectedOption?.value === option.value ? " is-selected" : ""}`}
-          onClick={() => {
-            onChange(option.value);
-            setOpen(false);
+          onPointerDown={(event) => {
+            event.preventDefault();
+            selectOption(option);
+          }}
+          onClick={(event) => {
+            if (event.detail === 0) {
+              selectOption(option);
+            }
           }}
         >
           {option.label}

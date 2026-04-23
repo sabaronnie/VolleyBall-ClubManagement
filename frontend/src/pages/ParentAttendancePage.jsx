@@ -6,6 +6,7 @@ import {
   fetchTeamTrainingSessions,
   unconfirmTrainingSession,
 } from "../api";
+import { formatTimeRange12h } from "../timeUtils";
 
 function statusClass(status) {
   if (status === "present") return "vc-status-paid";
@@ -364,7 +365,7 @@ export default function ParentAttendancePage() {
                       </div>
                       <h3>{session.title}</h3>
                       <p className="training-session-card__location">
-                        {session.scheduled_date} · {session.start_time} – {session.end_time}
+                        {session.scheduled_date} · {formatTimeRange12h(session.start_time, session.end_time)}
                         {session.location ? ` · ${session.location}` : ""}
                       </p>
                     </div>
@@ -444,7 +445,7 @@ export default function ParentAttendancePage() {
                         </div>
                         <h3 style={{ fontSize: "1rem" }}>{session.title}</h3>
                         <p className="training-session-card__location">
-                          {session.scheduled_date} · {session.start_time} – {session.end_time}
+                          {session.scheduled_date} · {formatTimeRange12h(session.start_time, session.end_time)}
                           {session.location ? ` · ${session.location}` : ""}
                         </p>
                       </div>
@@ -614,7 +615,7 @@ export default function ParentAttendancePage() {
                   <td>{row.session_type_label || row.session_type}</td>
                   <td>{row.title}</td>
                   <td>
-                    {row.start_time} – {row.end_time}
+                    {formatTimeRange12h(row.start_time, row.end_time)}
                   </td>
                   <td>{row.location || "—"}</td>
                   <td>{row.team?.name || "—"}</td>

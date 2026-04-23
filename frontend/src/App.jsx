@@ -26,6 +26,7 @@ import { ForgotPasswordPage, ResetPasswordPage } from "./pages/PasswordResetPage
 import RegisterPage from "./pages/RegisterPage";
 import ContactUsPage from "./pages/ContactUsPage";
 import TeamInvitationPage from "./pages/TeamInvitationPage";
+import { formatTime12h, formatTimeRange12h, TimeSelect } from "./timeUtils";
 
 const AUTH_TOKEN_KEY = "netup.auth.token";
 const ACTIVE_TEAM_KEY = "netup.active.team";
@@ -403,9 +404,7 @@ function buildScheduleRows() {
 }
 
 function formatHourLabel(hour) {
-  const suffix = hour >= 12 ? "PM" : "AM";
-  const normalizedHour = hour % 12 || 12;
-  return `${normalizedHour} ${suffix}`;
+  return formatTime12h(`${String(hour).padStart(2, "0")}:00`);
 }
 
 function normalizeScheduleEntries(entries) {
@@ -536,6 +535,34 @@ function scheduleEventHorizontalStyle(layout, entryId) {
   };
 }
 
+function trainingSessionToScheduleEntry(session, weekStart, options = {}) {
+  if (!session?.scheduled_date || !weekStart || session.status === "cancelled") {
+    return null;
+  }
+  const wk = new Date(`${weekStart}T00:00:00`);
+  const sd = new Date(`${session.scheduled_date}T00:00:00`);
+  const diff = Math.round((sd - wk) / (24 * 60 * 60 * 1000));
+  if (diff < 0 || diff >= 7) {
+    return null;
+  }
+  const isMatch = session.session_type === "match";
+  return {
+    id: options.idPrefix ? `${options.idPrefix}-ts-${session.id}` : `ts-${session.id}`,
+    weekday: diff,
+    activity_name: session.title || (isMatch ? "Match" : "Session"),
+    start_time: session.start_time || "",
+    end_time: session.end_time || "",
+    location: session.location || "",
+    isTrainingSession: true,
+    isMatchSession: isMatch,
+    sessionId: session.id,
+    sessionTypeLabel: session.session_type_label || session.session_type || "Session",
+    opponent: session.opponent || "",
+    teamColor: options.teamColor,
+    teamName: options.teamName,
+  };
+}
+
 function ScheduleEditor({ draftEntries, onChangeEntry, onAddEntry, onRemoveEntry, onSave, isSaving }) {
   return (
     <section className="schedule-editor-card">
@@ -570,15 +597,13 @@ function ScheduleEditor({ draftEntries, onChangeEntry, onAddEntry, onRemoveEntry
               value={entry.activity_name}
               onChange={(event) => onChangeEntry(index, "activity_name", event.target.value)}
             />
-            <input
-              type="time"
+            <TimeSelect
               value={entry.start_time}
-              onChange={(event) => onChangeEntry(index, "start_time", event.target.value)}
+              onChange={(value) => onChangeEntry(index, "start_time", value)}
             />
-            <input
-              type="time"
+            <TimeSelect
               value={entry.end_time}
-              onChange={(event) => onChangeEntry(index, "end_time", event.target.value)}
+              onChange={(value) => onChangeEntry(index, "end_time", value)}
             />
             <input
               type="text"
@@ -698,12 +723,14 @@ function WeeklyScheduleBoard({ weekStart, entries, onSelectEntry, legendTeams })
                   const hz = scheduleEventHorizontalStyle(overlapLayout, entry.id);
                   const entryKey = String(entry.id);
                   const isHoverTarget = hoverTip && String(hoverTip.entry?.id) === entryKey;
+                  const scheduleTitle = entry.isMatchSession ? "Match" : entry.activity_name;
 
                   return (
                     <article
                       key={entry.id}
                       className={`schedule-event${entry.isTrainingSession ? " schedule-event--interactive" : ""}${
                         entry.teamColor ? " schedule-event--team-colored" : ""
+                      }${entry.isMatchSession ? " schedule-event--match" : ""
                       }`}
                       style={{
                         top: `${(minutesFromTop / 60) * SCHEDULE_HOUR_HEIGHT}px`,
@@ -736,10 +763,16 @@ function WeeklyScheduleBoard({ weekStart, entries, onSelectEntry, legendTeams })
                         }
                       }}
                     >
+                      <strong>{scheduleTitle}</strong>
                       <span className="schedule-event__time">
-                        {entry.start_time} - {entry.end_time}
+                        {formatTimeRange12h(entry.start_time, entry.end_time)}
                       </span>
-                      <strong>{entry.activity_name}</strong>
+                      {entry.isTrainingSession && !entry.isMatchSession ? (
+                        <span style={{ display: "block", fontSize: "0.72rem", opacity: 0.9 }}>
+                          Session
+                          {entry.opponent ? ` vs ${entry.opponent}` : ""}
+                        </span>
+                      ) : null}
                       {entry.teamName ? (
                         <span style={{ display: "block", fontSize: "0.72rem", opacity: 0.9 }}>{entry.teamName}</span>
                       ) : null}
@@ -785,7 +818,7 @@ function WeeklyScheduleBoard({ weekStart, entries, onSelectEntry, legendTeams })
           <div className="schedule-hover-popover__row">
             <span className="schedule-hover-popover__label">Time</span>
             <span>
-              {hoverTip.entry.start_time} – {hoverTip.entry.end_time}
+              {formatTimeRange12h(hoverTip.entry.start_time, hoverTip.entry.end_time)}
             </span>
           </div>
           {hoverTip.entry.location ? (
@@ -795,7 +828,10 @@ function WeeklyScheduleBoard({ weekStart, entries, onSelectEntry, legendTeams })
             </div>
           ) : null}
           {hoverTip.entry.isTrainingSession ? (
-            <div className="schedule-hover-popover__muted">Training session (tap for details if available)</div>
+            <div className="schedule-hover-popover__muted">
+              {hoverTip.entry.isMatchSession ? "Match" : "Training session"}
+              {hoverTip.entry.opponent ? ` vs ${hoverTip.entry.opponent}` : ""}
+            </div>
           ) : null}
         </div>
       ) : null}
@@ -1283,25 +1319,14 @@ function App() {
             );
             trainingPayloads.forEach((tp, i) => {
               for (const s of tp?.sessions || []) {
-                if (s?.status === "cancelled") continue;
-                const sDate = s.scheduled_date;
-                if (!sDate) continue;
-                const wk = new Date(`${weekStart}T00:00:00`);
-                const sd = new Date(`${sDate}T00:00:00`);
-                const diff = Math.round((sd - wk) / (24 * 60 * 60 * 1000));
-                if (diff >= 0 && diff < 7) {
-                  const team = scheduleTeams[i];
-                  mergedEntries.push({
-                    id: `${team.id}-ts-${s.id}`,
-                    weekday: diff,
-                    activity_name: s.title || s.activity_name || "Session",
-                    start_time: s.start_time || "",
-                    end_time: s.end_time || "",
-                    location: s.location || "",
-                    isTrainingSession: true,
-                    teamColor: legend[i].color,
-                    teamName: team.name,
-                  });
+                const team = scheduleTeams[i];
+                const entry = trainingSessionToScheduleEntry(s, weekStart, {
+                  idPrefix: team.id,
+                  teamColor: legend[i].color,
+                  teamName: team.name,
+                });
+                if (entry) {
+                  mergedEntries.push(entry);
                 }
               }
             });
@@ -1321,24 +1346,8 @@ function App() {
             const training = await fetchTeamTrainingSessions(activeTeamId).catch(() => null);
             const weekStart = payload?.week_start || null;
             if (training?.sessions?.length && weekStart) {
-              const wk = new Date(`${weekStart}T00:00:00`);
               const extra = training.sessions
-                .map((s) => {
-                  if (s?.status === "cancelled") return null;
-                  const sd = s.scheduled_date ? new Date(`${s.scheduled_date}T00:00:00`) : null;
-                  if (!sd) return null;
-                  const diff = Math.round((sd - wk) / (24 * 60 * 60 * 1000));
-                  if (diff < 0 || diff >= 7) return null;
-                  return {
-                    id: `ts-${s.id}`,
-                    weekday: diff,
-                    activity_name: s.title || s.activity_name || "Session",
-                    start_time: s.start_time || "",
-                    end_time: s.end_time || "",
-                    location: s.location || "",
-                    isTrainingSession: true,
-                  };
-                })
+                .map((s) => trainingSessionToScheduleEntry(s, weekStart))
                 .filter(Boolean);
               if (extra.length) {
                 payload.entries = [...(payload.entries || []), ...extra];

@@ -1,5 +1,10 @@
+import { navigate } from "./navigation";
+
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
 const AUTH_TOKEN_KEY = "netup.auth.token";
+const AUTH_USER_KEY = "netup.auth.user";
+const ACTIVE_TEAM_KEY = "netup.active.team";
+const AUTH_EXPIRED_KEY = "netup.auth.expired";
 
 function normalizeErrors(payload, fallbackMessage) {
   if (!payload || typeof payload !== "object") {
@@ -18,6 +23,38 @@ function normalizeErrors(payload, fallbackMessage) {
   }
 
   return fallbackMessage;
+}
+
+function isExpiredTokenResponse(response, payload) {
+  if (response.status !== 401 || !payload || typeof payload !== "object") {
+    return false;
+  }
+
+  const tokenErrors = payload.errors?.token;
+  const messages = Array.isArray(tokenErrors) ? tokenErrors : [tokenErrors];
+  return messages.some(
+    (message) => typeof message === "string" && message.toLowerCase().includes("expired"),
+  );
+}
+
+function shouldLogoutRejectedSession(response, payload) {
+  return response.status === 403 || isExpiredTokenResponse(response, payload);
+}
+
+function logoutExpiredSession(response, payload) {
+  if (!shouldLogoutRejectedSession(response, payload)) {
+    return;
+  }
+
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+  localStorage.removeItem(AUTH_USER_KEY);
+  localStorage.removeItem(ACTIVE_TEAM_KEY);
+  sessionStorage.setItem(AUTH_EXPIRED_KEY, "1");
+  window.dispatchEvent(new Event("auth-state-changed"));
+
+  if (window.location.pathname !== "/login") {
+    navigate("/login");
+  }
 }
 
 async function request(path, body) {
@@ -75,6 +112,7 @@ async function authenticatedGet(path) {
 
   if (!response.ok) {
     const fromApi = normalizeErrors(payload, "");
+    logoutExpiredSession(response, payload);
     throw new Error(
       fromApi || `Request failed (HTTP ${response.status}). Response was not JSON — is Django running on port 8000?`,
     );
@@ -108,6 +146,7 @@ async function authenticatedJson(path, method, body) {
   }
 
   if (!response.ok) {
+    logoutExpiredSession(response, payload);
     throw new Error(normalizeErrors(payload, "Request failed. Please try again."));
   }
 
@@ -137,6 +176,7 @@ async function authenticatedDelete(path) {
   }
 
   if (!response.ok) {
+    logoutExpiredSession(response, payload);
     throw new Error(normalizeErrors(payload, "Request failed. Please try again."));
   }
 
@@ -223,6 +263,22 @@ export async function createTeamTrainingSession(teamId, payload) {
   return authenticatedJson(`/api/teams/${teamId}/training-sessions/`, "POST", payload);
 }
 
+export async function createMatch(payload) {
+  return authenticatedJson("/api/matches/", "POST", payload);
+}
+
+export async function fetchMatch(matchId) {
+  return authenticatedGet(`/api/matches/${matchId}/`);
+}
+
+export async function saveMatchStats(matchId, payload) {
+  return authenticatedJson(`/api/matches/${matchId}/stats/`, "POST", payload);
+}
+
+export async function updateMatchPlayerStats(matchId, playerId, payload) {
+  return authenticatedJson(`/api/matches/${matchId}/stats/${playerId}/`, "PUT", payload);
+}
+
 export async function updateTrainingSession(sessionId, payload) {
   return authenticatedJson(`/api/training-sessions/${sessionId}/`, "PUT", payload);
 }
@@ -250,6 +306,7 @@ export async function cancelTrainingSession(sessionId) {
   }
 
   if (!response.ok) {
+    logoutExpiredSession(response, payload);
     throw new Error(normalizeErrors(payload, "Request failed. Please try again."));
   }
 
@@ -279,6 +336,7 @@ export async function clearTrainingSession(sessionId) {
   }
 
   if (!response.ok) {
+    logoutExpiredSession(response, payload);
     throw new Error(normalizeErrors(payload, "Request failed. Please try again."));
   }
 
@@ -428,14 +486,16 @@ export async function downloadDirectorReceiptPdf(clubId, recordId) {
   if (!response.ok) {
     const ct = response.headers.get("Content-Type") || "";
     let msg = "Could not download receipt PDF.";
+    let payload = null;
     if (ct.includes("application/json")) {
       try {
-        const payload = await response.json();
+        payload = await response.json();
         msg = normalizeErrors(payload, msg);
       } catch {
         /* ignore */
       }
     }
+    logoutExpiredSession(response, payload);
     throw new Error(msg);
   }
   let blob = await response.blob();

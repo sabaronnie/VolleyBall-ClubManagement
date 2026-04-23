@@ -6,6 +6,7 @@ import {
   fetchTeamTrainingSessions,
   unconfirmTrainingSession,
 } from "../api";
+import { formatTimeRange12h } from "../timeUtils";
 
 function parseLocalDate(iso) {
   if (!iso || typeof iso !== "string") return null;
@@ -281,7 +282,7 @@ export default function PlayerAttendancePage({ activeTeam }) {
                       </div>
                       <h3>{session.title}</h3>
                       <p className="training-session-card__location">
-                        {session.scheduled_date} · {session.start_time} – {session.end_time}
+                        {session.scheduled_date} · {formatTimeRange12h(session.start_time, session.end_time)}
                         {session.location ? ` · ${session.location}` : ""}
                       </p>
                       {session.session_type === "match" && session.opponent ? (
@@ -356,7 +357,7 @@ export default function PlayerAttendancePage({ activeTeam }) {
                     <div>
                       <h3 style={{ fontSize: "1rem" }}>{session.title}</h3>
                       <p className="training-session-card__location">
-                        {session.scheduled_date} · {session.start_time} – {session.end_time}
+                        {session.scheduled_date} · {formatTimeRange12h(session.start_time, session.end_time)}
                       </p>
                     </div>
                     <span className={confirmed ? "vc-status-paid" : "vc-status-pending"}>
