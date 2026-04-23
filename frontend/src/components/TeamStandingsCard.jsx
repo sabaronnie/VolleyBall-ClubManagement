@@ -30,30 +30,36 @@ export default function TeamStandingsCard({
     }
 
     let cancelled = false;
-    setLoading(true);
-    setError("");
-    setDownloadFeedback("");
+    const loadStandings = () => {
+      setLoading(true);
+      setError("");
+      setDownloadFeedback("");
+      void fetchTeamStandings(activeTeamId)
+        .then((data) => {
+          if (!cancelled) {
+            setPayload(data);
+          }
+        })
+        .catch((err) => {
+          if (!cancelled) {
+            setPayload(null);
+            setError(err.message || "Could not load standings.");
+          }
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setLoading(false);
+          }
+        });
+    };
 
-    void fetchTeamStandings(activeTeamId)
-      .then((data) => {
-        if (!cancelled) {
-          setPayload(data);
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setPayload(null);
-          setError(err.message || "Could not load standings.");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      });
+    loadStandings();
+    const onStandingsChanged = () => loadStandings();
+    window.addEventListener("netup-standings-changed", onStandingsChanged);
 
     return () => {
       cancelled = true;
+      window.removeEventListener("netup-standings-changed", onStandingsChanged);
     };
   }, [activeTeamId]);
 

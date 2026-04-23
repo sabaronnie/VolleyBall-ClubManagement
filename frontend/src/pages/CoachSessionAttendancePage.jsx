@@ -933,6 +933,11 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
       const data = await endMatch(match.id, payload, teamId);
       setMatchPayload(data);
       setEndMatchMessage(data?.message || "Match ended.");
+      try {
+        window.dispatchEvent(new Event("netup-standings-changed"));
+      } catch (e) {
+        // ignore if dispatch fails in some environments
+      }
       await loadList();
       await loadDetail(sess.id);
     } catch (err) {
@@ -955,6 +960,11 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
       const data = await resumeMatch(match.id, teamId);
       setMatchPayload(data);
       setEndMatchMessage(data?.message || "Match resumed.");
+      try {
+        window.dispatchEvent(new Event("netup-standings-changed"));
+      } catch (e) {
+        // ignore if dispatch fails in some environments
+      }
       await loadList();
       await loadDetail(sess.id);
     } catch (err) {

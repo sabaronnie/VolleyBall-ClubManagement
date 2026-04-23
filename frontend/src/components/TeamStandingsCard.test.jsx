@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../api";
@@ -68,5 +68,21 @@ describe("TeamStandingsCard", () => {
     expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
     expect(HTMLAnchorElement.prototype.click).toHaveBeenCalledTimes(1);
     expect(screen.getByText(/standings pdf downloaded/i)).toBeInTheDocument();
+  });
+
+  it("refreshes standings when match result updates are emitted", async () => {
+    render(<TeamStandingsCard activeTeamId="11" />);
+
+    await waitFor(() => {
+      expect(api.fetchTeamStandings).toHaveBeenCalledTimes(1);
+    });
+
+    act(() => {
+      window.dispatchEvent(new Event("netup-standings-changed"));
+    });
+
+    await waitFor(() => {
+      expect(api.fetchTeamStandings).toHaveBeenCalledTimes(2);
+    });
   });
 });
