@@ -44,6 +44,7 @@ from .models import (
     ClubMembership,
     ClubRole,
     ContactSubmission,
+    MatchPlayerStat,
     Notification,
     ParentLinkApprovalStatus,
     ParentPlayerRelation,
@@ -429,6 +430,130 @@ def _serialize_coach_training_session_attendance(session, team, player_membershi
         "unconfirmed_roster_count": unconfirmed_roster_count,
         "remind_parents_allowed": remind_parents_allowed,
     }
+
+
+MATCH_STAT_FIELDS = ("points_scored", "aces", "blocks", "assists", "errors", "digs")
+
+
+def _match_weighted_score(stats):
+    return (
+        stats["points_scored"]
+        + (stats["aces"] * 2)
+        + (stats["blocks"] * 2)
+        + (stats["assists"] * 1.5)
+        + stats["digs"]
+        - stats["errors"]
+    )
+
+
+def _empty_match_stats():
+    return {field: 0 for field in MATCH_STAT_FIELDS}
+
+
+def _serialize_match_detail(session, team, player_memberships, viewer):
+    stats_by_player_id = {
+        row.player_id: row
+        for row in session.match_player_stats.select_related("player", "updated_by")
+    }
+    confirmations_by_player_id = {
+        confirmation.player_id: confirmation
+        for confirmation in session.confirmations.select_related("confirmed_by", "player")
+    }
+
+    players = []
+    total_team_points = 0
+    mvp = None
+    has_recorded_stats = False
+
+    for membership in player_memberships:
+        player = membership.user
+        stat_row = stats_by_player_id.get(player.id)
+        stats = _empty_match_stats()
+        if stat_row is not None:
+            for field in MATCH_STAT_FIELDS:
+                stats[field] = getattr(stat_row, field)
+        weighted_score = _match_weighted_score(stats)
+        total_team_points += stats["points_scored"]
+        if any(stats.values()):
+            has_recorded_stats = True
+        confirmation = confirmations_by_player_id.get(player.id)
+        player_payload = {
+            "player_id": player.id,
+            "player_name": _format_person_name(player),
+            "is_confirmed": confirmation is not None,
+            "confirmed_at": confirmation.confirmed_at.isoformat() if confirmation else None,
+            "confirmed_by_name": (
+                _format_person_name(confirmation.confirmed_by)
+                if confirmation and confirmation.confirmed_by
+                else None
+            ),
+            "stats": stats,
+            "weighted_score": round(weighted_score, 2),
+            "updated_at": stat_row.updated_at.isoformat() if stat_row else None,
+            "updated_by_name": (
+                _format_person_name(stat_row.updated_by)
+                if stat_row and stat_row.updated_by
+                else None
+            ),
+        }
+        players.append(player_payload)
+        if mvp is None or weighted_score > mvp["weighted_score"]:
+            mvp = {
+                "player_id": player.id,
+                "player_name": player_payload["player_name"],
+                "weighted_score": round(weighted_score, 2),
+            }
+
+    return {
+        "id": session.id,
+        "team": _serialize_team(team),
+        "title": session.title,
+        "scheduled_date": session.scheduled_date.isoformat(),
+        "start_time": session.start_time.strftime("%H:%M"),
+        "end_time": session.end_time.strftime("%H:%M"),
+        "location": session.location,
+        "opponent": session.opponent,
+        "status": session.status,
+        "status_label": session.get_status_display(),
+        "can_manage_stats": can_manage_team(viewer, team),
+        "summary": {
+            "total_team_points": total_team_points,
+            "mvp_suggestion": mvp if has_recorded_stats else None,
+            "player_count": len(players),
+            "confirmed_count": len([row for row in players if row["is_confirmed"]]),
+        },
+        "players": players,
+    }
+
+
+def _parse_match_stat_payload(payload):
+    if not isinstance(payload, dict):
+        raise ValidationError({"body": "Invalid JSON payload."})
+
+    parsed = {}
+    for field in MATCH_STAT_FIELDS:
+        raw_value = payload.get(field, 0)
+        try:
+            value = int(raw_value)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError({field: "Use a whole number."}) from exc
+        if value < 0:
+            raise ValidationError({field: "Use zero or a positive number."})
+        parsed[field] = value
+    return parsed
+
+
+def _get_match_session_or_404(match_id):
+    return get_object_or_404(
+        TrainingSession.objects.select_related("team__club").prefetch_related(
+            "confirmations__player",
+            "confirmations__confirmed_by",
+            "match_player_stats__player",
+            "match_player_stats__updated_by",
+        ),
+        pk=match_id,
+        session_type=TrainingSession.SessionType.MATCH,
+    )
 
 
 def _parse_training_session_payload(payload):
@@ -3109,6 +3234,249 @@ def clear_training_session(request, session_id):
 
     session.delete()
     return JsonResponse({"message": "Session cleared successfully.", "session_id": session_id})
+
+
+def _match_player_memberships(team):
+    return list(
+        TeamMembership.objects.active()
+        .filter(team=team, role=TeamRole.PLAYER)
+        .select_related("user")
+        .order_by("user__first_name", "user__last_name", "user__email")
+    )
+
+
+def _parse_match_create_payload(payload, team):
+    if not isinstance(payload, dict):
+        raise ValidationError({"body": "Invalid JSON payload."})
+
+    scheduled_date_value = payload.get("scheduled_date") or payload.get("date")
+    try:
+        scheduled_date = date.fromisoformat(scheduled_date_value)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError({"scheduled_date": "Use YYYY-MM-DD format."}) from exc
+
+    start_value = payload.get("start_time") or "18:00"
+    end_value = payload.get("end_time") or "20:00"
+    try:
+        start_time = datetime.strptime(start_value, "%H:%M").time()
+        end_time = datetime.strptime(end_value, "%H:%M").time()
+    except (TypeError, ValueError) as exc:
+        raise ValidationError({"time": "Start and end time must use HH:MM format."}) from exc
+
+    if end_time <= start_time:
+        raise ValidationError({"time": "End time must be after start time."})
+
+    opponent_team_id = payload.get("opponent_team_id")
+    external_opponent = (payload.get("external_opponent") or payload.get("opponent") or "").strip()
+    opponent = ""
+
+    if opponent_team_id:
+        try:
+            opponent_team_pk = int(opponent_team_id)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError({"opponent_team_id": "Choose an existing team or Other."}) from exc
+        if opponent_team_pk == team.id:
+            raise ValidationError({"opponent_team_id": "Choose a different opponent team."})
+        opponent_team = Team.objects.filter(pk=opponent_team_pk, club=team.club).first()
+        if opponent_team is None:
+            raise ValidationError({"opponent_team_id": "Opponent team was not found in this club."})
+        opponent = opponent_team.name
+    elif external_opponent:
+        opponent = external_opponent
+    else:
+        raise ValidationError({"opponent": "Choose an opponent team or enter an external opponent."})
+
+    return {
+        "title": (payload.get("title") or f"Match vs {opponent}").strip(),
+        "session_type": TrainingSession.SessionType.MATCH,
+        "scheduled_date": scheduled_date,
+        "start_time": start_time,
+        "end_time": end_time,
+        "location": (payload.get("location") or "").strip(),
+        "opponent": opponent,
+        "match_type": (payload.get("match_type") or TrainingSession.MatchType.FRIENDLY),
+        "notes": (payload.get("notes") or "").strip(),
+        "notify_players": bool(payload.get("notify_players", True)),
+        "notify_parents": bool(payload.get("notify_parents", True)),
+    }
+
+
+@login_required
+@require_POST
+@csrf_exempt
+def create_match(request):
+    payload = _parse_json_request(request)
+    if payload is None:
+        return JsonResponse({"errors": {"body": "Invalid JSON."}}, status=400)
+
+    team_id = payload.get("team_id")
+    try:
+        team_id = int(team_id)
+    except (TypeError, ValueError):
+        return JsonResponse({"errors": {"team_id": "A focused team is required."}}, status=400)
+
+    team = get_object_or_404(Team.objects.select_related("club"), pk=team_id)
+    if not can_manage_team(request.user, team):
+        return JsonResponse(
+            {"errors": {"team": "Only coaches or directors can create matches."}},
+            status=403,
+        )
+
+    try:
+        match_data = _parse_match_create_payload(payload, team)
+    except ValidationError as exc:
+        if hasattr(exc, "message_dict"):
+            return JsonResponse({"errors": exc.message_dict}, status=400)
+        return JsonResponse({"errors": {"body": exc.messages}}, status=400)
+
+    session = TrainingSession.objects.create(team=team, created_by=request.user, **match_data)
+    session = _get_match_session_or_404(session.pk)
+    player_memberships = _match_player_memberships(team)
+
+    _create_team_notifications(
+        team=team,
+        created_by=request.user,
+        title=f"New match for {team.name}",
+        message=(
+            f"{session.title} was scheduled for {session.scheduled_date.isoformat()} "
+            f"from {session.start_time.strftime('%H:%M')} to {session.end_time.strftime('%H:%M')}."
+        ),
+        category=Notification.Category.SESSION,
+        audience="all",
+    )
+
+    return JsonResponse(
+        {
+            "message": "Match created successfully.",
+            "match": _serialize_match_detail(session, team, player_memberships, request.user),
+        },
+        status=201,
+    )
+
+
+@login_required
+@require_GET
+def match_detail(request, match_id):
+    session = _get_match_session_or_404(match_id)
+    team = session.team
+    if not can_view_team(request.user, team):
+        return JsonResponse({"errors": {"team": "You do not have access to this match."}}, status=403)
+
+    return JsonResponse(
+        {
+            "match": _serialize_match_detail(
+                session,
+                team,
+                _match_player_memberships(team),
+                request.user,
+            )
+        }
+    )
+
+
+def _ensure_match_stat_player(team, player_id):
+    try:
+        player_id = int(player_id)
+    except (TypeError, ValueError):
+        return None
+    membership = (
+        TeamMembership.objects.active()
+        .filter(team=team, role=TeamRole.PLAYER, user_id=player_id)
+        .select_related("user")
+        .first()
+    )
+    return membership.user if membership else None
+
+
+@login_required
+@require_POST
+@csrf_exempt
+def create_match_stats(request, match_id):
+    session = _get_match_session_or_404(match_id)
+    team = session.team
+    if not can_manage_team(request.user, team):
+        return JsonResponse(
+            {"errors": {"team": "Only coaches or directors can edit match stats."}},
+            status=403,
+        )
+
+    payload = _parse_json_request(request)
+    if payload is None:
+        return JsonResponse({"errors": {"body": "Invalid JSON."}}, status=400)
+
+    rows = payload.get("stats") if isinstance(payload, dict) else None
+    if rows is None:
+        rows = [payload]
+    if not isinstance(rows, list):
+        return JsonResponse({"errors": {"stats": "Stats must be an object or a list."}}, status=400)
+
+    for row in rows:
+        if not isinstance(row, dict):
+            return JsonResponse({"errors": {"stats": "Each stats row must be an object."}}, status=400)
+        player = _ensure_match_stat_player(team, row.get("player_id"))
+        if player is None:
+            return JsonResponse({"errors": {"player_id": "Player is not on this team."}}, status=400)
+        try:
+            stat_data = _parse_match_stat_payload(row)
+        except ValidationError as exc:
+            if hasattr(exc, "message_dict"):
+                return JsonResponse({"errors": exc.message_dict}, status=400)
+            return JsonResponse({"errors": {"stats": exc.messages}}, status=400)
+        MatchPlayerStat.objects.update_or_create(
+            training_session=session,
+            player=player,
+            defaults={**stat_data, "updated_by": request.user},
+        )
+
+    session = _get_match_session_or_404(match_id)
+    return JsonResponse(
+        {
+            "message": "Match stats saved.",
+            "match": _serialize_match_detail(session, team, _match_player_memberships(team), request.user),
+        }
+    )
+
+
+@login_required
+@require_http_methods(["PUT"])
+@csrf_exempt
+def update_match_player_stats(request, match_id, player_id):
+    session = _get_match_session_or_404(match_id)
+    team = session.team
+    if not can_manage_team(request.user, team):
+        return JsonResponse(
+            {"errors": {"team": "Only coaches or directors can edit match stats."}},
+            status=403,
+        )
+
+    player = _ensure_match_stat_player(team, player_id)
+    if player is None:
+        return JsonResponse({"errors": {"player_id": "Player is not on this team."}}, status=400)
+
+    payload = _parse_json_request(request)
+    if payload is None:
+        return JsonResponse({"errors": {"body": "Invalid JSON."}}, status=400)
+
+    try:
+        stat_data = _parse_match_stat_payload(payload)
+    except ValidationError as exc:
+        if hasattr(exc, "message_dict"):
+            return JsonResponse({"errors": exc.message_dict}, status=400)
+        return JsonResponse({"errors": {"stats": exc.messages}}, status=400)
+
+    MatchPlayerStat.objects.update_or_create(
+        training_session=session,
+        player=player,
+        defaults={**stat_data, "updated_by": request.user},
+    )
+
+    session = _get_match_session_or_404(match_id)
+    return JsonResponse(
+        {
+            "message": "Player stats saved.",
+            "match": _serialize_match_detail(session, team, _match_player_memberships(team), request.user),
+        }
+    )
 
 
 def _resolve_training_confirmation_target(request, session, team):

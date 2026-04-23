@@ -131,3 +131,43 @@ class TrainingSessionConfirmation(models.Model):
 
     def __str__(self) -> str:
         return f"{self.training_session} - {self.player}"
+
+
+class MatchPlayerStat(models.Model):
+    training_session = models.ForeignKey(
+        "core.TrainingSession",
+        on_delete=models.CASCADE,
+        related_name="match_player_stats",
+    )
+    player = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="match_player_stats",
+    )
+    points_scored = models.PositiveIntegerField(default=0)
+    aces = models.PositiveIntegerField(default=0)
+    blocks = models.PositiveIntegerField(default=0)
+    assists = models.PositiveIntegerField(default=0)
+    errors = models.PositiveIntegerField(default=0)
+    digs = models.PositiveIntegerField(default=0)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="updated_match_player_stats",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["training_session", "player"],
+                name="unique_match_stat_per_session_player",
+            )
+        ]
+        ordering = ["player__first_name", "player__last_name", "player__email"]
+
+    def __str__(self) -> str:
+        return f"{self.training_session} - {self.player} stats"

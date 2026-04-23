@@ -15,7 +15,7 @@ from .player_parent_invitation import PlayerParentInvitation, PlayerParentInvita
 from .player_access_policy import PlayerAccessPolicy
 from .player_profile import PlayerProfile
 from .registration_otp import RegistrationOTP
-from .schedule import TeamScheduleEntry, TrainingSession, TrainingSessionConfirmation
+from .schedule import MatchPlayerStat, TeamScheduleEntry, TrainingSession, TrainingSessionConfirmation
 from .team import Team
 from .team_invitation import TeamInvitation, TeamInvitationStatus
 from .password_reset_otp import PasswordResetOTP
