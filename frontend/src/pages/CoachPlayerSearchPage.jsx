@@ -7,6 +7,17 @@ import {
 } from "../api";
 import { navigate } from "../navigation";
 
+const METRIC_OPTIONS = [
+  { key: "weightedScore", label: "Score" },
+  { key: "points", label: "Points" },
+  { key: "aces", label: "Aces" },
+  { key: "blocks", label: "Blocks" },
+  { key: "assists", label: "Assists" },
+  { key: "digs", label: "Digs" },
+  { key: "errors", label: "Errors" },
+  { key: "serveEfficiency", label: "Serve efficiency" },
+];
+
 function dateTimeValue(session) {
   if (!session?.scheduled_date) return Number.NaN;
   const rawTime = typeof session?.start_time === "string" && session.start_time ? session.start_time.slice(0, 5) : "00:00";
@@ -21,9 +32,21 @@ function formatMatchDate(isoDate) {
   return dt.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+function formatMetricValue(metricKey, value) {
+  if (value == null || Number.isNaN(Number(value))) {
+    return "—";
+  }
+  const numeric = Number(value);
+  if (metricKey === "serveEfficiency") {
+    return `${numeric.toFixed(1)}%`;
+  }
+  return numeric.toFixed(1);
+}
+
 export default function CoachPlayerSearchPage({ activeTeam }) {
   const teamId = activeTeam?.id && activeTeam.id !== "__all__" ? Number(activeTeam.id) : null;
   const [selectedPlayerId, setSelectedPlayerId] = useState(null);
+  const [selectedMetricKey, setSelectedMetricKey] = useState("weightedScore");
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState("");
   const [profilePayload, setProfilePayload] = useState(null);
@@ -130,6 +153,10 @@ export default function CoachPlayerSearchPage({ activeTeam }) {
             assists: Number(stats.assists || 0),
             digs: Number(stats.digs || 0),
             errors: Number(stats.errors || 0),
+            serveEfficiency:
+              Number(stats.aces || 0) + Number(stats.errors || 0) > 0
+                ? (Number(stats.aces || 0) / (Number(stats.aces || 0) + Number(stats.errors || 0))) * 100
+                : null,
           };
         })
         .filter(Boolean)
@@ -213,6 +240,7 @@ export default function CoachPlayerSearchPage({ activeTeam }) {
     if (!sourceRows.length) {
       return null;
     }
+    const metric = METRIC_OPTIONS.find((option) => option.key === selectedMetricKey) || METRIC_OPTIONS[0];
 
     const rows = [...sourceRows].sort((left, right) => {
       const leftMs = dateTimeValue({ scheduled_date: left.scheduledDate });
@@ -231,18 +259,23 @@ export default function CoachPlayerSearchPage({ activeTeam }) {
     const padBottom = 64;
     const chartWidth = width - padLeft - padRight;
     const chartHeight = height - padTop - padBottom;
-    const values = rows.map((row) => Number(row.weightedScore || 0));
+    const plottedRows = rows.filter((row) => row?.[metric.key] != null);
+    if (!plottedRows.length) {
+      return null;
+    }
+    const values = plottedRows.map((row) => Number(row?.[metric.key] || 0));
     const valueMin = Math.min(...values);
     const valueMax = Math.max(...values);
     const yPadding = Math.max((valueMax - valueMin) * 0.12, 1);
     const yMin = Math.max(0, valueMin - yPadding);
     const yMax = valueMax + yPadding;
     const yRange = Math.max(yMax - yMin, 1);
-    const xStep = rows.length > 1 ? chartWidth / (rows.length - 1) : 0;
+    const xStep = plottedRows.length > 1 ? chartWidth / (plottedRows.length - 1) : 0;
     const labelOccurrences = new Map();
-    const points = rows.map((row, index) => {
+    const points = plottedRows.map((row, index) => {
       const x = padLeft + index * xStep;
-      const y = padTop + (1 - (Number(row.weightedScore || 0) - yMin) / yRange) * chartHeight;
+      const metricValue = Number(row?.[metric.key] || 0);
+      const y = padTop + (1 - (metricValue - yMin) / yRange) * chartHeight;
       const baseLabel = `${formatMatchDate(row.scheduledDate)} · ${row.opponent || "Opponent"}`;
       const seenCount = labelOccurrences.get(baseLabel) || 0;
       labelOccurrences.set(baseLabel, seenCount + 1);
@@ -251,7 +284,7 @@ export default function CoachPlayerSearchPage({ activeTeam }) {
         x,
         y,
         label,
-        value: Number(row.weightedScore || 0),
+        value: metricValue,
         shortLabel: `${formatMatchDate(row.scheduledDate)} #${index + 1}`,
       };
     });
@@ -281,8 +314,11 @@ export default function CoachPlayerSearchPage({ activeTeam }) {
       chartRight: width - padRight,
       chartTop: padTop,
       chartBottom: height - padBottom,
+      metricLabel: metric.label,
+      metricKey: metric.key,
+      shouldRotateXLabels: points.length > 6,
     };
-  }, [profilePayload?.performanceRows]);
+  }, [profilePayload?.performanceRows, selectedMetricKey]);
 
   if (!teamId) {
     return (
@@ -304,6 +340,14 @@ export default function CoachPlayerSearchPage({ activeTeam }) {
   const totals = profilePayload?.totals || null;
   const avgWeightedScore =
     totals && totals.matches > 0 ? (totals.weightedScore / totals.matches).toFixed(1) : "—";
+  const selectedMetric = METRIC_OPTIONS.find((option) => option.key === selectedMetricKey) || METRIC_OPTIONS[0];
+  const selectedMetricValues = performanceRows
+    .map((row) => row?.[selectedMetric.key])
+    .filter((value) => value != null)
+    .map((value) => Number(value));
+  const selectedMetricAverage = selectedMetricValues.length
+    ? (selectedMetricValues.reduce((sum, value) => sum + value, 0) / selectedMetricValues.length).toFixed(1)
+    : null;
 
   return (
     <section className="teams-page-shell">
@@ -373,6 +417,30 @@ export default function CoachPlayerSearchPage({ activeTeam }) {
               {" · "}
               Blocks <strong>{totals?.blocks ?? 0}</strong>
             </div>
+            <div style={{ display: "grid", gap: "0.35rem", marginTop: "0.2rem" }}>
+              <label className="vc-modal__muted" style={{ display: "grid", gap: "0.2rem", maxWidth: "17rem" }}>
+                <span style={{ fontSize: "0.82rem" }}>Performance metric</span>
+                <select
+                  className="vc-director-modal__select"
+                  value={selectedMetricKey}
+                  onChange={(event) => setSelectedMetricKey(event.target.value)}
+                >
+                  {METRIC_OPTIONS.map((option) => (
+                    <option key={option.key} value={option.key}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p className="vc-modal__muted" style={{ margin: 0 }}>
+                Selected metric average ({selectedMetric.label}):{" "}
+                <strong>
+                  {selectedMetricAverage != null
+                    ? formatMetricValue(selectedMetric.key, selectedMetricAverage)
+                    : "No data"}
+                </strong>
+              </p>
+            </div>
             {chartPoints ? (
               <section
                 style={{
@@ -383,7 +451,9 @@ export default function CoachPlayerSearchPage({ activeTeam }) {
                   background: "#fbfcfe",
                 }}
               >
-                <h3 style={{ margin: "0 0 0.35rem", fontSize: "0.94rem" }}>Performance trend (recent matches)</h3>
+                <h3 style={{ margin: "0 0 0.35rem", fontSize: "0.94rem" }}>
+                  {chartPoints.metricLabel} trend over time
+                </h3>
                 <svg viewBox={`0 0 ${chartPoints.width} ${chartPoints.height}`} style={{ width: "100%", height: 220 }}>
                   {chartPoints.yTicks.map((tick) => (
                     <g key={`ytick-${tick.y}`}>
@@ -396,7 +466,7 @@ export default function CoachPlayerSearchPage({ activeTeam }) {
                         strokeWidth="1"
                       />
                       <text x={chartPoints.chartLeft - 8} y={tick.y + 3} fill="#6b7280" fontSize="10" textAnchor="end">
-                        {tick.value.toFixed(1)}
+                        {formatMetricValue(selectedMetric.key, tick.value)}
                       </text>
                     </g>
                   ))}
@@ -420,26 +490,40 @@ export default function CoachPlayerSearchPage({ activeTeam }) {
                   {chartPoints.points.map((point) => (
                     <g key={`${point.label}-${point.x}`}>
                       <circle cx={point.x} cy={point.y} r="3.5" fill="#2563eb" />
-                      <title>{`${point.label}: ${point.value.toFixed(1)}`}</title>
+                      <title>{`${point.label}: ${formatMetricValue(selectedMetric.key, point.value)}`}</title>
                     </g>
                   ))}
                   {chartPoints.xTicks.map((tick) => (
-                    <text
-                      key={`xtick-${tick.x}`}
-                      x={tick.x}
-                      y={chartPoints.chartBottom + 18}
-                      fill="#6b7280"
-                      fontSize="10"
-                      textAnchor="middle"
-                    >
-                      {tick.label}
-                    </text>
+                    chartPoints.shouldRotateXLabels ? (
+                      <text
+                        key={`xtick-${tick.x}`}
+                        x={tick.x}
+                        y={chartPoints.chartBottom + 18}
+                        fill="#6b7280"
+                        fontSize="10"
+                        textAnchor="end"
+                        transform={`rotate(-30 ${tick.x} ${chartPoints.chartBottom + 18})`}
+                      >
+                        {tick.label}
+                      </text>
+                    ) : (
+                      <text
+                        key={`xtick-${tick.x}`}
+                        x={tick.x}
+                        y={chartPoints.chartBottom + 18}
+                        fill="#6b7280"
+                        fontSize="10"
+                        textAnchor="middle"
+                      >
+                        {tick.label}
+                      </text>
+                    )
                   ))}
                 </svg>
               </section>
             ) : (
               <p className="vc-modal__muted" style={{ margin: "0.35rem 0 0" }}>
-                No completed match stats yet for this player.
+                No data available for {selectedMetric.label.toLowerCase()} in this player&apos;s recent matches.
               </p>
             )}
             {performanceRows.length ? (
@@ -449,13 +533,14 @@ export default function CoachPlayerSearchPage({ activeTeam }) {
                     <tr>
                       <th>Date</th>
                       <th>Opponent</th>
-                      <th>Score</th>
-                      <th>Pts</th>
-                      <th>Aces</th>
-                      <th>Blocks</th>
-                      <th>Assists</th>
-                      <th>Digs</th>
-                      <th>Errors</th>
+                      <th style={selectedMetricKey === "weightedScore" ? { background: "#eef4ff" } : undefined}>Score</th>
+                      <th style={selectedMetricKey === "points" ? { background: "#eef4ff" } : undefined}>Pts</th>
+                      <th style={selectedMetricKey === "aces" ? { background: "#eef4ff" } : undefined}>Aces</th>
+                      <th style={selectedMetricKey === "blocks" ? { background: "#eef4ff" } : undefined}>Blocks</th>
+                      <th style={selectedMetricKey === "assists" ? { background: "#eef4ff" } : undefined}>Assists</th>
+                      <th style={selectedMetricKey === "digs" ? { background: "#eef4ff" } : undefined}>Digs</th>
+                      <th style={selectedMetricKey === "errors" ? { background: "#eef4ff" } : undefined}>Errors</th>
+                      <th style={selectedMetricKey === "serveEfficiency" ? { background: "#eef4ff" } : undefined}>Serve Efficiency</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -463,13 +548,18 @@ export default function CoachPlayerSearchPage({ activeTeam }) {
                       <tr key={row.matchId}>
                         <td>{row.scheduledDate}</td>
                         <td>{row.opponent}</td>
-                        <td>{row.weightedScore.toFixed(1)}</td>
-                        <td>{row.points}</td>
-                        <td>{row.aces}</td>
-                        <td>{row.blocks}</td>
-                        <td>{row.assists}</td>
-                        <td>{row.digs}</td>
-                        <td>{row.errors}</td>
+                        <td style={selectedMetricKey === "weightedScore" ? { background: "#f5f8ff", fontWeight: 700 } : undefined}>
+                          {row.weightedScore.toFixed(1)}
+                        </td>
+                        <td style={selectedMetricKey === "points" ? { background: "#f5f8ff", fontWeight: 700 } : undefined}>{row.points}</td>
+                        <td style={selectedMetricKey === "aces" ? { background: "#f5f8ff", fontWeight: 700 } : undefined}>{row.aces}</td>
+                        <td style={selectedMetricKey === "blocks" ? { background: "#f5f8ff", fontWeight: 700 } : undefined}>{row.blocks}</td>
+                        <td style={selectedMetricKey === "assists" ? { background: "#f5f8ff", fontWeight: 700 } : undefined}>{row.assists}</td>
+                        <td style={selectedMetricKey === "digs" ? { background: "#f5f8ff", fontWeight: 700 } : undefined}>{row.digs}</td>
+                        <td style={selectedMetricKey === "errors" ? { background: "#f5f8ff", fontWeight: 700 } : undefined}>{row.errors}</td>
+                        <td style={selectedMetricKey === "serveEfficiency" ? { background: "#f5f8ff", fontWeight: 700 } : undefined}>
+                          {formatMetricValue("serveEfficiency", row.serveEfficiency)}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
