@@ -132,10 +132,10 @@ export default function PlayerAttendancePage({ activeTeam }) {
     setConfirmingId(sessionId);
     try {
       if (confirmed) {
-        await unconfirmTrainingSession(sessionId, null);
+        await unconfirmTrainingSession(sessionId, null, teamId);
         setSuccessMessage("Attendance confirmation removed.");
       } else {
-        await confirmTrainingSession(sessionId, null);
+        await confirmTrainingSession(sessionId, null, teamId);
         setSuccessMessage("Attendance saved.");
       }
       await loadSessions();

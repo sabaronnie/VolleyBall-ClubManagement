@@ -217,10 +217,10 @@ export default function ParentAttendancePage() {
     setConfirmingKey(`${sessionId}-${childId}`);
     try {
       if (confirmed) {
-        await unconfirmTrainingSession(sessionId, childId);
+        await unconfirmTrainingSession(sessionId, childId, activeConfirmContext?.teamId);
         setConfirmBanner("Attendance confirmation removed for your child.");
       } else {
-        await confirmTrainingSession(sessionId, childId);
+        await confirmTrainingSession(sessionId, childId, activeConfirmContext?.teamId);
         setConfirmBanner("Attendance saved for your child.");
       }
       if (activeConfirmContext?.teamId) {
@@ -308,13 +308,14 @@ export default function ParentAttendancePage() {
         </div>
 
         {confirmContexts.length > 1 ? (
-          <div className="vc-dash-team-field" style={{ marginBottom: "1rem", maxWidth: 420 }}>
+          <div className="vc-dash-team-field" style={{ marginBottom: "1rem", width: "100%", maxWidth: 400 }}>
             <label className="vc-dash-team-field__label" htmlFor="parent-confirm-context">
               Child &amp; team
             </label>
             <select
               id="parent-confirm-context"
               className="vc-dash-team-select"
+              style={{ flex: 1, maxWidth: "none", minWidth: 0 }}
               value={activeConfirmContext?.key || ""}
               onChange={(e) => setConfirmContextKey(e.target.value)}
             >
