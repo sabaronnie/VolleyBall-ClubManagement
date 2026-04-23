@@ -270,6 +270,7 @@ export default function ClubWorkspaceLayout({
   const tabs = buildWorkspaceTabs({
     showPlayerSessionsTab,
     showCoachAttendanceTab,
+    showCoachStatisticsTab: showCoachAttendanceTab,
     showParentAttendanceTab: viewerAccountRole === "parent" || showParentAttendanceFromProfile,
   });
 

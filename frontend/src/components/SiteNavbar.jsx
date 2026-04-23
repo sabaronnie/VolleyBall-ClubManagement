@@ -15,6 +15,7 @@ function BrandContent() {
 export function buildWorkspaceTabs({
   showPlayerSessionsTab = false,
   showCoachAttendanceTab = false,
+  showCoachStatisticsTab = false,
   showParentAttendanceTab = false,
 }) {
   const tabs = [
@@ -27,6 +28,9 @@ export function buildWorkspaceTabs({
   }
   if (showCoachAttendanceTab) {
     tabs.push({ id: "coach-attendance", label: "Events", path: "/coach/attendance" });
+  }
+  if (showCoachStatisticsTab) {
+    tabs.push({ id: "coach-statistics", label: "Statistics", path: "/coach/statistics" });
   }
   if (showParentAttendanceTab) {
     tabs.push({ id: "parent-attendance", label: "Family attendance", path: "/parent/attendance" });
