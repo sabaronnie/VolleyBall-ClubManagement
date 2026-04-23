@@ -66,6 +66,43 @@ function sessionHasStarted(session) {
   return Number.isFinite(dt.getTime()) ? dt.getTime() <= Date.now() : false;
 }
 
+function sessionDateTimeValue(session, timeKey, fallbackTime) {
+  if (!session?.scheduled_date) return Number.NaN;
+  const rawTime = typeof session?.[timeKey] === "string" && session[timeKey] ? session[timeKey].slice(0, 5) : fallbackTime;
+  const dt = new Date(`${session.scheduled_date}T${rawTime}:00`);
+  return dt.getTime();
+}
+
+function sessionSortBucket(session, nowMs) {
+  const isCancelled = session?.status === "cancelled";
+  const isMatch = session?.session_type === "match";
+  const isEndedMatch = isMatch && Boolean(session?.is_ended);
+  const startMs = sessionDateTimeValue(session, "start_time", "00:00");
+  const endMs = sessionDateTimeValue(session, "end_time", "23:59");
+  const hasStarted = Number.isFinite(startMs) ? startMs <= nowMs : false;
+  const hasFinishedByClock = Number.isFinite(endMs) ? endMs < nowMs : false;
+
+  if (isCancelled) {
+    return 2;
+  }
+  if (isMatch) {
+    if (isEndedMatch && hasFinishedByClock) {
+      return 2;
+    }
+    if (hasStarted && !isEndedMatch) {
+      return 0;
+    }
+    return 1;
+  }
+  if (hasStarted && !hasFinishedByClock) {
+    return 0;
+  }
+  if (hasFinishedByClock) {
+    return 2;
+  }
+  return 1;
+}
+
 function formatDateTimeLabel(isoString) {
   if (!isoString) return "";
   const dt = new Date(isoString);
@@ -1031,11 +1068,24 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
         ? sessions
         : sessions.filter((session) => sessionCategoryValue(session) === sessionListFilter);
     const copy = [...filtered];
+    const nowMs = Date.now();
     const byDate = (a, b) => {
-      const da = parseLocalDate(a.scheduled_date);
-      const db = parseLocalDate(b.scheduled_date);
-      if (!da || !db) return 0;
-      return db - da || String(b.start_time).localeCompare(String(a.start_time));
+      const bucketA = sessionSortBucket(a, nowMs);
+      const bucketB = sessionSortBucket(b, nowMs);
+      if (bucketA !== bucketB) {
+        return bucketA - bucketB;
+      }
+
+      const startA = sessionDateTimeValue(a, "start_time", "00:00");
+      const startB = sessionDateTimeValue(b, "start_time", "00:00");
+      if (!Number.isFinite(startA) || !Number.isFinite(startB)) {
+        return 0;
+      }
+
+      if (bucketA === 1) {
+        return startA - startB;
+      }
+      return startB - startA;
     };
     copy.sort(byDate);
     return copy;
