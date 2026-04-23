@@ -25,6 +25,7 @@ export function buildWorkspaceTabs({
 
   if (showPlayerSessionsTab) {
     tabs.push({ id: "player-attendance", label: "My sessions", path: "/player/attendance" });
+    tabs.push({ id: "player-statistics", label: "Statistics", path: "/player/statistics" });
   }
   if (showCoachAttendanceTab) {
     tabs.push({ id: "coach-attendance", label: "Events", path: "/coach/attendance" });

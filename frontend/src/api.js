@@ -426,6 +426,10 @@ export async function fetchPlayerTeamAttendanceSummary(teamId, playerId, params 
   return authenticatedGet(q ? `${base}?${q}` : base);
 }
 
+export async function fetchPlayerSelfPerformanceHistory(teamId) {
+  return authenticatedGet(`/api/teams/${encodeURIComponent(String(teamId))}/players/me/performance-history/`);
+}
+
 export async function fetchNotifications(teamId) {
   const query = teamId ? `?team_id=${encodeURIComponent(teamId)}` : "";
   return authenticatedGet(`/api/notifications/${query}`);

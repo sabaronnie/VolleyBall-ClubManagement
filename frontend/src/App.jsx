@@ -20,6 +20,7 @@ import MemberHubPage from "./pages/MemberHubPage";
 import MyFeesPage from "./pages/MyFeesPage";
 import ParentAttendancePage from "./pages/ParentAttendancePage";
 import PlayerAttendancePage from "./pages/PlayerAttendancePage";
+import PlayerStatisticsPage from "./pages/PlayerStatisticsPage";
 import CoachSessionAttendancePage from "./pages/CoachSessionAttendancePage";
 import CoachStatisticsPage from "./pages/CoachStatisticsPage";
 import CoachPlayerSearchPage from "./pages/CoachPlayerSearchPage";
@@ -1203,7 +1204,12 @@ function App() {
   }, [pathname, activeTeamId, scheduleTeams, isAuthenticated]);
 
   useEffect(() => {
-    if (pathname !== "/player/attendance" && pathname !== "/player/attendance/") {
+    if (
+      pathname !== "/player/attendance" &&
+      pathname !== "/player/attendance/" &&
+      pathname !== "/player/statistics" &&
+      pathname !== "/player/statistics/"
+    ) {
       return undefined;
     }
     if (!isAuthenticated || !playerTeamsOnly.length) {
@@ -1903,6 +1909,41 @@ function App() {
         showCoachAttendanceTab={showCoachAttendanceTab}
       >
         <PlayerAttendancePage activeTeam={activeTeam} />
+      </ClubWorkspaceLayout>
+    );
+  }
+
+  if (pathname === "/player/statistics" || pathname === "/player/statistics/") {
+    if (!isAuthenticated) {
+      return <LoginPage />;
+    }
+    if (!showPlayerSessionsTab) {
+      return (
+        <ClubWorkspaceLayout
+          activeTab="player-statistics"
+          viewerAccountRole={viewerAccountRole}
+          {...defaultTeamNavProps}
+          showPlayerSessionsTab={showPlayerSessionsTab}
+          showCoachAttendanceTab={showCoachAttendanceTab}
+        >
+          <section className="teams-page-shell" style={{ padding: "1.5rem" }}>
+            <h1 style={{ fontSize: "1.2rem" }}>Statistics</h1>
+            <p className="vc-modal__muted" style={{ marginTop: "0.75rem" }}>
+              You are not on any roster as a player. Once assigned, your personal statistics will appear here.
+            </p>
+          </section>
+        </ClubWorkspaceLayout>
+      );
+    }
+    return (
+      <ClubWorkspaceLayout
+        activeTab="player-statistics"
+        viewerAccountRole={viewerAccountRole}
+        {...playerTeamNavProps}
+        showPlayerSessionsTab={showPlayerSessionsTab}
+        showCoachAttendanceTab={showCoachAttendanceTab}
+      >
+        <PlayerStatisticsPage activeTeam={activeTeam} />
       </ClubWorkspaceLayout>
     );
   }
