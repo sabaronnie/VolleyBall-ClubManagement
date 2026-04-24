@@ -30,10 +30,7 @@ import { ForgotPasswordPage, ResetPasswordPage } from "./pages/PasswordResetPage
 import RegisterPage from "./pages/RegisterPage";
 import ContactUsPage from "./pages/ContactUsPage";
 import TeamInvitationPage from "./pages/TeamInvitationPage";
-<<<<<<< HEAD
 import TournamentsPage from "./pages/TournamentsPage";
-=======
->>>>>>> 619cb6d10b371f79a9b66fcea0db36e3841d47bd
 import { formatTime12h, formatTimeRange12h, TimeSelect } from "./timeUtils";
 
 const AUTH_TOKEN_KEY = "netup.auth.token";
@@ -1899,7 +1896,6 @@ function App() {
     );
   }
 
-<<<<<<< HEAD
   if (pathname === "/tournaments" || pathname === "/tournaments/") {
     if (!isAuthenticated) {
       return <LoginPage />;
@@ -1941,9 +1937,6 @@ function App() {
       </ClubWorkspaceLayout>
     );
   }
-
-=======
->>>>>>> 619cb6d10b371f79a9b66fcea0db36e3841d47bd
   if (pathname === "/player/attendance" || pathname === "/player/attendance/") {
     if (!isAuthenticated) {
       return <LoginPage />;

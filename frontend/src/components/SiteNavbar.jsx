@@ -18,10 +18,7 @@ export function buildWorkspaceTabs({
   showCoachStatisticsTab = false,
   showParentAttendanceTab = false,
   showParentStatisticsTab = false,
-<<<<<<< HEAD
   showTournamentTab = false,
-=======
->>>>>>> 619cb6d10b371f79a9b66fcea0db36e3841d47bd
 }) {
   const tabs = [
     { id: "dashboard", label: "Dashboard", path: "/dashboard" },
@@ -38,12 +35,9 @@ export function buildWorkspaceTabs({
   if (showCoachStatisticsTab) {
     tabs.push({ id: "coach-statistics", label: "Statistics", path: "/coach/statistics" });
   }
-<<<<<<< HEAD
   if (showTournamentTab) {
     tabs.push({ id: "coach-tournaments", label: "Tournaments", path: "/tournaments" });
   }
-=======
->>>>>>> 619cb6d10b371f79a9b66fcea0db36e3841d47bd
   if (showParentAttendanceTab) {
     tabs.push({ id: "parent-attendance", label: "Family attendance", path: "/parent/attendance" });
   }

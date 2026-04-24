@@ -100,10 +100,7 @@ export default function ClubWorkspaceLayout({
   showPlayerSessionsTab = false,
   /** Coach/director training: per-session attendance planning (EP-25). */
   showCoachAttendanceTab = false,
-<<<<<<< HEAD
   showTournamentTab = false,
-=======
->>>>>>> 619cb6d10b371f79a9b66fcea0db36e3841d47bd
   children,
 }) {
   const accountWrapRef = useRef(null);
@@ -277,10 +274,7 @@ export default function ClubWorkspaceLayout({
     showCoachStatisticsTab: showCoachAttendanceTab,
     showParentAttendanceTab: viewerAccountRole === "parent" || showParentAttendanceFromProfile,
     showParentStatisticsTab: viewerAccountRole === "parent" || showParentAttendanceFromProfile,
-<<<<<<< HEAD
     showTournamentTab: showTournamentTab || viewerAccountRole === "director",
-=======
->>>>>>> 619cb6d10b371f79a9b66fcea0db36e3841d47bd
   });
 
   const onRespondToPendingMatch = useCallback(async (action) => {

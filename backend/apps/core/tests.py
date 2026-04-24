@@ -40,11 +40,8 @@ from .models import (
     TeamInvitation,
     TeamMembership,
     TeamRole,
-<<<<<<< HEAD
     Tournament,
     TournamentFixture,
-=======
->>>>>>> 619cb6d10b371f79a9b66fcea0db36e3841d47bd
     TrainingSession,
     TrainingSessionConfirmation,
     User,
@@ -56,10 +53,7 @@ from .permissions import (
     is_player_parent_managed,
 )
 from .tokens import generate_auth_token, verify_auth_token
-<<<<<<< HEAD
 from .views import _sort_tournament_rows
-=======
->>>>>>> 619cb6d10b371f79a9b66fcea0db36e3841d47bd
 
 
 @override_settings(
@@ -5090,7 +5084,6 @@ class SharedMatchRequestFlowTests(TestCase):
         self.assertEqual(invalid_manual_score.status_code, 400)
         self.assertIn("derived", invalid_manual_score.json()["errors"]["opponent_final_score"].lower())
 
-<<<<<<< HEAD
     def test_elimination_bracket_winner_advances_automatically(self):
         fx = self._fixture()
         team_c = Team.objects.create(club=fx["club"], name="Shared Team C")
@@ -5322,9 +5315,6 @@ class SharedMatchRequestFlowTests(TestCase):
             [(fixture["home_team"]["name"], fixture["away_team"]["name"]) for fixture in semi_finals],
             [(team_c.name, fx["team_a"].name), (team_f.name, team_d.name)],
         )
-
-=======
->>>>>>> 619cb6d10b371f79a9b66fcea0db36e3841d47bd
     def test_standings_update_automatically_after_match_result_entry(self):
         fx = self._fixture()
         session = TrainingSession.objects.create(
