@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="72" viewBox="0 0 240 72" role="img" aria-labelledby="title">
+  <title>VakifBank Istanbul</title>
+  <rect width="240" height="72" rx="12" fill="#f7f8fb"/>
+  <circle cx="34" cy="36" r="18" fill="#f7b500"/>
+  <path d="M24 29l10 14 10-14" fill="none" stroke="#1b2c4f" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="62" y="31" font-family="Inter, Arial, sans-serif" font-size="11" font-weight="700" fill="#2a2f3a">VAKIFBANK</text>
+  <text x="62" y="47" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="800" fill="#1b2c4f">ISTANBUL</text>
+</svg>

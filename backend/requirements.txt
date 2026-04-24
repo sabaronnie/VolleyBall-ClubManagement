@@ -1,0 +1,6 @@
+Django==6.0.4
+PyMySQL>=1.1,<2.0
+cryptography>=42.0.0
+certifi>=2024.0.0
+reportlab>=4.2,<5
+phonenumbers>=9.0,<10
