@@ -3,10 +3,15 @@ import logging
 import secrets
 import threading
 from collections import defaultdict
+<<<<<<< HEAD
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from functools import cmp_to_key
 import hashlib
+=======
+from datetime import date, datetime, timedelta
+from decimal import Decimal
+>>>>>>> 619cb6d10b371f79a9b66fcea0db36e3841d47bd
 
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
@@ -64,9 +69,12 @@ from .models import (
     TeamMembership,
     TeamRole,
     TeamScheduleEntry,
+<<<<<<< HEAD
     Tournament,
     TournamentFixture,
     TournamentPool,
+=======
+>>>>>>> 619cb6d10b371f79a9b66fcea0db36e3841d47bd
     TrainingSession,
     TrainingSessionConfirmation,
     VerificationStatus,
@@ -278,6 +286,7 @@ def _serialize_team_summary(team):
     }
 
 
+<<<<<<< HEAD
 def _serialize_tournament_team(team):
     return {
         "id": team.id,
@@ -424,6 +433,8 @@ def _serialize_tournament(tournament):
     }
 
 
+=======
+>>>>>>> 619cb6d10b371f79a9b66fcea0db36e3841d47bd
 def _serialize_schedule_entry(entry, week_start):
     scheduled_date = week_start + timedelta(days=entry.weekday)
     return {
@@ -438,6 +449,7 @@ def _serialize_schedule_entry(entry, week_start):
     }
 
 
+<<<<<<< HEAD
 def _parse_time_hhmm(raw_value, field_name: str):
     try:
         return datetime.strptime(raw_value, "%H:%M").time()
@@ -1197,6 +1209,8 @@ def _seed_hybrid_bracket_from_pools(tournament):
         _ensure_bracket_fixture_session(fixture)
 
 
+=======
+>>>>>>> 619cb6d10b371f79a9b66fcea0db36e3841d47bd
 def _can_player_self_confirm_training(player_user):
     """Roster players may self-confirm unless parent-managed policy blocks it."""
     return can_player_confirm_attendance(player_user)
@@ -5596,7 +5610,10 @@ def end_match(request, match_id):
         locked_session.match_ended_at = timezone.now()
         locked_session.opponent_final_score = opponent_final_score
         locked_session.save(update_fields=["match_ended_at", "opponent_final_score", "updated_at"])
+<<<<<<< HEAD
         _advance_tournament_bracket_winner_from_session(locked_session)
+=======
+>>>>>>> 619cb6d10b371f79a9b66fcea0db36e3841d47bd
 
     session = _get_match_session_or_404(match_id)
     return JsonResponse(
@@ -6085,6 +6102,7 @@ def team_standings_pdf(request, team_id):
 
 
 @login_required
+<<<<<<< HEAD
 @require_http_methods(["GET", "POST"])
 @csrf_exempt
 def club_tournaments(request, club_id):
@@ -6335,6 +6353,8 @@ def club_tournament_detail(request, club_id, tournament_id):
 
 
 @login_required
+=======
+>>>>>>> 619cb6d10b371f79a9b66fcea0db36e3841d47bd
 @require_GET
 def notifications(request):
     notification_items = list(

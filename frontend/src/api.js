@@ -682,6 +682,7 @@ export async function downloadTeamStandingsPdf(teamId) {
   return blob;
 }
 
+<<<<<<< HEAD
 export async function fetchClubTournaments(clubId) {
   return authenticatedGet(`/api/clubs/${encodeURIComponent(String(clubId))}/tournaments/`);
 }
@@ -702,6 +703,8 @@ export async function deleteClubTournament(clubId, tournamentId) {
   );
 }
 
+=======
+>>>>>>> 619cb6d10b371f79a9b66fcea0db36e3841d47bd
 export async function directorAddTeamMember(teamId, body) {
   return authenticatedJson(`/api/teams/${teamId}/members/add/`, "POST", body);
 }

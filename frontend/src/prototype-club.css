@@ -3700,6 +3700,7 @@
   padding: 1.5rem 1.25rem;
 }
 
+<<<<<<< HEAD
 .tournament-page-grid {
   display: grid;
   grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
@@ -4044,6 +4045,8 @@
   font-size: 0.84rem;
 }
 
+=======
+>>>>>>> 619cb6d10b371f79a9b66fcea0db36e3841d47bd
 @media (max-width: 960px) {
   .vc-member-dash__top-row,
   .vc-member-dash__mid-row {
@@ -4061,6 +4064,7 @@
   .vc-parent-permissions__choice {
     flex: 1;
   }
+<<<<<<< HEAD
 
   .tournament-page-grid,
   .tournament-summary-grid {
@@ -4081,4 +4085,6 @@
   .tournament-form-grid__full {
     grid-column: auto;
   }
+=======
+>>>>>>> 619cb6d10b371f79a9b66fcea0db36e3841d47bd
 }

@@ -13,8 +13,11 @@ from .views import (
     clear_training_session,
     coach_team_dashboard,
     coach_training_session_attendance,
+<<<<<<< HEAD
     club_tournament_detail,
     club_tournaments,
+=======
+>>>>>>> 619cb6d10b371f79a9b66fcea0db36e3841d47bd
     create_club,
     create_team,
     delete_club,
@@ -133,12 +136,15 @@ urlpatterns = [
     path("notifications/send/", send_team_notification, name="send-team-notification"),
     path("clubs/create/", create_club, name="create-club"),
     path("clubs/<int:club_id>/delete/", delete_club, name="delete-club"),
+<<<<<<< HEAD
     path("clubs/<int:club_id>/tournaments/", club_tournaments, name="club-tournaments"),
     path(
         "clubs/<int:club_id>/tournaments/<int:tournament_id>/",
         club_tournament_detail,
         name="club-tournament-detail",
     ),
+=======
+>>>>>>> 619cb6d10b371f79a9b66fcea0db36e3841d47bd
     path(
         "clubs/<int:club_id>/director/payments/overview/",
         payment_views.director_payment_overview,
