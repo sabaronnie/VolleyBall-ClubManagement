@@ -268,13 +268,16 @@ export default function ClubWorkspaceLayout({
     void loadProfile();
   };
 
+  const isDirectorWorkspace = viewerAccountRole === "director";
   const tabs = buildWorkspaceTabs({
     showPlayerSessionsTab,
     showCoachAttendanceTab,
     showCoachStatisticsTab: showCoachAttendanceTab,
-    showParentAttendanceTab: viewerAccountRole === "parent" || showParentAttendanceFromProfile,
-    showParentStatisticsTab: viewerAccountRole === "parent" || showParentAttendanceFromProfile,
-    showTournamentTab: showTournamentTab || viewerAccountRole === "director",
+    showParentAttendanceTab:
+      !isDirectorWorkspace && (viewerAccountRole === "parent" || showParentAttendanceFromProfile),
+    showParentStatisticsTab:
+      !isDirectorWorkspace && (viewerAccountRole === "parent" || showParentAttendanceFromProfile),
+    showTournamentTab: true,
   });
 
   const onRespondToPendingMatch = useCallback(async (action) => {

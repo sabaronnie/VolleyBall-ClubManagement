@@ -39,6 +39,7 @@ from .attendance_summary import (
     training_session_has_ended,
 )
 from .decorators import login_required
+from .decorators import login_rate_limited
 from .payment_views import ensure_monthly_fee_for_new_player
 from .payment_pdf import build_team_standings_pdf_bytes
 from .models import (
@@ -90,7 +91,17 @@ from .permissions import (
     is_team_player,
     is_user_adult,
 )
+from .repositories.audit_log_repository import AuditLogRepository
 from .phone_numbers import normalize_emergency_contact
+from .services.session_service import (
+    cancel_training_session,
+    create_training_session,
+    update_training_session,
+)
+from .services.stats_service import save_match_player_stat
+from .services.authentication_service import AuthenticationService
+from .services.audit_log_service import AuditLogService
+from .services.database_backup_service import DatabaseBackupError, DatabaseBackupService
 from .tokens import generate_auth_token, verify_auth_token
 
 
@@ -381,7 +392,7 @@ def _tournament_runtime_status(tournament, fixtures=None):
     return ("ongoing", "Ongoing")
 
 
-def _serialize_tournament(tournament):
+def _serialize_tournament(tournament, allowed_team_ids=None):
     fixtures = list(
         tournament.fixtures.select_related(
             "pool",
@@ -391,7 +402,32 @@ def _serialize_tournament(tournament):
         ).order_by("round_number", "fixture_order", "id")
     )
     teams = list(tournament.teams.order_by("name", "id"))
+    if allowed_team_ids is not None:
+        allowed_team_ids = {int(team_id) for team_id in allowed_team_ids}
+        teams = [team for team in teams if team.id in allowed_team_ids]
+        fixtures = [
+            fixture
+            for fixture in fixtures
+            if (
+                (fixture.home_team_id is not None and fixture.home_team_id in allowed_team_ids)
+                or (fixture.away_team_id is not None and fixture.away_team_id in allowed_team_ids)
+            )
+        ]
     runtime_status, runtime_status_label = _tournament_runtime_status(tournament, fixtures)
+    pool_standings = _serialize_tournament_pool_standings(tournament)
+    if allowed_team_ids is not None:
+        filtered_pool_standings = []
+        for pool in pool_standings:
+            filtered_pool_rows = [row for row in pool["teams"] if row["team_id"] in allowed_team_ids]
+            if not filtered_pool_rows:
+                continue
+            filtered_pool_standings.append(
+                {
+                    **pool,
+                    "teams": filtered_pool_rows,
+                }
+            )
+        pool_standings = filtered_pool_standings
     return {
         "id": tournament.id,
         "club_id": tournament.club_id,
@@ -418,9 +454,59 @@ def _serialize_tournament(tournament):
         ],
         "teams": [_serialize_tournament_team(team) for team in teams],
         "fixtures": [_serialize_tournament_fixture(fixture) for fixture in fixtures],
-        "pool_standings": _serialize_tournament_pool_standings(tournament),
+        "pool_standings": pool_standings,
         "created_at": tournament.created_at.isoformat(),
     }
+
+
+def _can_view_club_tournaments(user, club):
+    if can_manage_club(user, club):
+        return True
+
+    if TeamMembership.objects.active().filter(
+        user=user,
+        team__club=club,
+        role__in=[TeamRole.COACH, TeamRole.PLAYER],
+    ).exists():
+        return True
+
+    return ParentPlayerRelation.objects.approved().filter(
+        parent=user,
+        player__team_memberships__team__club=club,
+        player__team_memberships__role=TeamRole.PLAYER,
+        player__team_memberships__is_active=True,
+    ).exists()
+
+
+def _viewer_tournament_team_scope(user, club):
+    if can_manage_club(user, club):
+        return None
+
+    team_ids = set(
+        TeamMembership.objects.active()
+        .filter(
+            user=user,
+            team__club=club,
+            role__in=[TeamRole.COACH, TeamRole.PLAYER],
+        )
+        .values_list("team_id", flat=True)
+    )
+    parent_visible_team_ids = ParentPlayerRelation.objects.approved().filter(
+        parent=user,
+        player__team_memberships__team__club=club,
+        player__team_memberships__role=TeamRole.PLAYER,
+        player__team_memberships__is_active=True,
+    ).values_list("player__team_memberships__team_id", flat=True)
+    team_ids.update(parent_visible_team_ids)
+    return team_ids
+
+
+def _is_tournament_visible_for_scope(tournament, allowed_team_ids):
+    if allowed_team_ids is None:
+        return True
+    if not allowed_team_ids:
+        return False
+    return tournament.teams.filter(id__in=allowed_team_ids).exists()
 def _serialize_schedule_entry(entry, week_start):
     scheduled_date = week_start + timedelta(days=entry.weekday)
     return {
@@ -1957,6 +2043,77 @@ def _serialize_match_detail(session, team, player_memberships, viewer):
     }
 
 
+def _match_viewer_role(viewer, context_team):
+    if can_manage_club(viewer, context_team.club):
+        return "director"
+    if can_manage_team(viewer, context_team):
+        return "coach"
+    if is_team_player(viewer, context_team):
+        return "player"
+    if ParentPlayerRelation.objects.approved().filter(
+        parent=viewer,
+        player__team_memberships__team=context_team,
+        player__team_memberships__role=TeamRole.PLAYER,
+        player__team_memberships__is_active=True,
+    ).exists():
+        return "parent"
+    return "viewer"
+
+
+def _serialize_match_common_payload(detail, session):
+    team_rows = detail.get("summary", {}).get("final_score", {}).get("score_rows", [])
+    team_a = team_rows[0] if len(team_rows) > 0 else None
+    team_b = team_rows[1] if len(team_rows) > 1 else None
+    score_label = detail.get("summary", {}).get("final_score", {}).get("final_score_label")
+    match_status = "scheduled"
+    if detail.get("is_ended"):
+        match_status = "finished"
+    elif detail.get("status") == TrainingSession.Status.ONGOING:
+        match_status = "ongoing"
+
+    return {
+        "match_id": session.id,
+        "team_a": team_a["team_name"] if team_a else detail["team"]["name"],
+        "team_b": team_b["team_name"] if team_b else (detail.get("opponent") or session.opponent or "TBD"),
+        "date": detail["scheduled_date"],
+        "time": detail["start_time"],
+        "location": detail.get("location") or "",
+        "match_status": match_status,
+        "match_status_label": detail.get("status_label"),
+        "score": score_label,
+    }
+
+
+def _shape_match_detail_for_role(session, detail, viewer_role):
+    common = _serialize_match_common_payload(detail, session)
+    if viewer_role in {"director", "coach"}:
+        return {
+            **detail,
+            "viewer_role": viewer_role,
+            "common": common,
+            "permissions": {
+                "can_edit_result": bool(detail.get("can_end_match") or detail.get("can_resume_match")),
+                "can_edit_stats": bool(detail.get("can_manage_stats")),
+            },
+        }
+
+    # Player/Parent/other viewers are read-only and only need match essentials.
+    return {
+        "id": detail["id"],
+        "viewer_role": viewer_role,
+        "common": common,
+        "opponent": detail.get("opponent"),
+        "is_ended": detail.get("is_ended", False),
+        "summary": {
+            "final_score": detail.get("summary", {}).get("final_score"),
+        },
+        "permissions": {
+            "can_edit_result": False,
+            "can_edit_stats": False,
+        },
+    }
+
+
 def _parse_match_stat_payload(payload):
     if not isinstance(payload, dict):
         raise ValidationError({"body": "Invalid JSON payload."})
@@ -2776,9 +2933,15 @@ def register(request):
         messages = exc.messages if hasattr(exc, "messages") else [str(exc)]
         return JsonResponse({"errors": {"password": messages}}, status=400)
 
-    if User.objects.filter(email=email).exists():
+    if AuthenticationService.email_exists(email):
         return JsonResponse(
             {"errors": {"email": "An account with this email already exists."}},
+            status=400,
+        )
+
+    if date_of_birth > timezone.localdate():
+        return JsonResponse(
+            {"errors": {"date_of_birth": "Date of birth cannot be in the future."}},
             status=400,
         )
 
@@ -2792,7 +2955,7 @@ def register(request):
                 "first_name": first_name,
                 "last_name": last_name,
                 "date_of_birth": date_of_birth,
-                "password_hash": make_password(password),
+                "password_hash": AuthenticationService.hash_password(password),
                 "otp_hash": make_password(otp_plain),
                 "expires_at": expires_at,
             },
@@ -2887,6 +3050,7 @@ def register_verify(request):
 
 @csrf_exempt
 @require_POST
+@login_rate_limited
 def login(request):
     payload = _parse_json_request(request)
     if payload is None:
@@ -2904,7 +3068,7 @@ def login(request):
     if errors:
         return JsonResponse({"errors": errors}, status=400)
 
-    user = authenticate(request, email=email, password=password)
+    user = AuthenticationService.login_user(request=request, email=email, password=password)
     if user is None:
         return JsonResponse(
             {"errors": {"credentials": "Invalid email or password."}},
@@ -4941,10 +5105,10 @@ def team_training_sessions(request, team_id):
             return JsonResponse({"errors": exc.message_dict}, status=400)
         return JsonResponse({"errors": {"body": exc.messages}}, status=400)
 
-    session = TrainingSession.objects.create(
+    session = create_training_session(
         team=team,
         created_by=request.user,
-        **session_data,
+        session_data=session_data,
     )
     session = (
         TrainingSession.objects.filter(pk=session.pk)
@@ -4996,8 +5160,7 @@ def manage_training_session(request, session_id):
     )
 
     if request.method == "DELETE":
-        session.status = TrainingSession.Status.CANCELLED
-        session.save(update_fields=["status", "updated_at"])
+        session = cancel_training_session(session=session, actor=request.user)
         session = (
             TrainingSession.objects.filter(pk=session.pk)
             .prefetch_related("confirmations__player", "confirmations__confirmed_by")
@@ -5041,9 +5204,11 @@ def manage_training_session(request, session_id):
         "notes": session.notes,
     }
 
-    for field, value in session_data.items():
-        setattr(session, field, value)
-    session.save()
+    session = update_training_session(
+        session=session,
+        actor=request.user,
+        session_data=session_data,
+    )
     session = (
         TrainingSession.objects.filter(pk=session.pk)
         .prefetch_related("confirmations__player", "confirmations__confirmed_by")
@@ -5382,14 +5547,18 @@ def match_detail(request, match_id):
     if team is None:
         return JsonResponse({"errors": {"team": "You do not have access to this match."}}, status=403)
 
+    raw_detail = _serialize_match_detail(
+        session,
+        team,
+        _build_match_player_memberships(session, team),
+        request.user,
+    )
+    viewer_role = _match_viewer_role(request.user, team)
+    shaped_detail = _shape_match_detail_for_role(session, raw_detail, viewer_role)
+
     return JsonResponse(
         {
-            "match": _serialize_match_detail(
-                session,
-                team,
-                _build_match_player_memberships(session, team),
-                request.user,
-            )
+            "match": shaped_detail
         }
     )
 
@@ -5460,13 +5629,12 @@ def create_match_stats(request, match_id):
             if hasattr(exc, "message_dict"):
                 return JsonResponse({"errors": exc.message_dict}, status=400)
             return JsonResponse({"errors": {"stats": exc.messages}}, status=400)
-        with transaction.atomic():
-            TrainingSession.objects.select_for_update().filter(pk=session.pk).exists()
-            MatchPlayerStat.objects.update_or_create(
-                training_session=session,
-                player=player,
-                defaults={**stat_data, "updated_by": request.user},
-            )
+        save_match_player_stat(
+            session=session,
+            player=player,
+            stat_data=stat_data,
+            actor=request.user,
+        )
 
     session = _get_match_session_or_404(match_id)
     return JsonResponse(
@@ -5506,13 +5674,12 @@ def update_match_player_stats(request, match_id, player_id):
             return JsonResponse({"errors": exc.message_dict}, status=400)
         return JsonResponse({"errors": {"stats": exc.messages}}, status=400)
 
-    with transaction.atomic():
-        TrainingSession.objects.select_for_update().filter(pk=session.pk).exists()
-        MatchPlayerStat.objects.update_or_create(
-            training_session=session,
-            player=player,
-            defaults={**stat_data, "updated_by": request.user},
-        )
+    save_match_player_stat(
+        session=session,
+        player=player,
+        stat_data=stat_data,
+        actor=request.user,
+    )
 
     session = _get_match_session_or_404(match_id)
     return JsonResponse(
@@ -6083,13 +6250,15 @@ def team_standings_pdf(request, team_id):
 @csrf_exempt
 def club_tournaments(request, club_id):
     club = get_object_or_404(Club, pk=club_id)
-    if not can_manage_club(request.user, club):
-        return JsonResponse(
-            {"errors": {"authorization": "Only club directors can manage tournaments for this club."}},
-            status=403,
-        )
 
     if request.method == "GET":
+        if not _can_view_club_tournaments(request.user, club):
+            return JsonResponse(
+                {"errors": {"authorization": "You do not have access to tournaments for this club."}},
+                status=403,
+            )
+        allowed_team_ids = _viewer_tournament_team_scope(request.user, club)
+
         tournaments = list(
             Tournament.objects.filter(club=club)
             .select_related("club", "created_by")
@@ -6106,24 +6275,37 @@ def club_tournaments(request, club_id):
         for tournament in tournaments:
             if tournament.status == Tournament.Status.GENERATED:
                 _reconcile_tournament_bracket(tournament)
+        visible_tournaments = [
+            tournament
+            for tournament in tournaments
+            if _is_tournament_visible_for_scope(tournament, allowed_team_ids)
+        ]
         current_tournament = next(
             (
                 tournament
-                for tournament in tournaments
+                for tournament in visible_tournaments
                 if _tournament_runtime_status(tournament)[0] == "ongoing"
             ),
             None,
         )
+        available_teams_queryset = Team.objects.filter(club=club, status=Team.Status.ACTIVE)
+        if allowed_team_ids is not None:
+            available_teams_queryset = available_teams_queryset.filter(id__in=allowed_team_ids)
+
         return JsonResponse(
             {
                 "club": _serialize_club(club),
                 "available_teams": [
                     _serialize_team_summary(team)
-                    for team in Team.objects.filter(club=club, status=Team.Status.ACTIVE)
+                    for team in available_teams_queryset
                     .select_related("club")
                     .order_by("name", "id")
                 ],
-                "current_tournament": _serialize_tournament(current_tournament) if current_tournament else None,
+                "current_tournament": (
+                    _serialize_tournament(current_tournament, allowed_team_ids=allowed_team_ids)
+                    if current_tournament
+                    else None
+                ),
                 "tournaments": [
                     {
                         "id": tournament.id,
@@ -6136,9 +6318,15 @@ def club_tournaments(request, club_id):
                         "status": _tournament_runtime_status(tournament)[0],
                         "status_label": _tournament_runtime_status(tournament)[1],
                     }
-                    for tournament in tournaments
+                    for tournament in visible_tournaments
                 ],
             }
+        )
+
+    if not can_manage_club(request.user, club):
+        return JsonResponse(
+            {"errors": {"authorization": "Only club directors can manage tournaments for this club."}},
+            status=403,
         )
 
     payload = _parse_json_request(request)
@@ -6251,11 +6439,6 @@ def club_tournaments(request, club_id):
 @csrf_exempt
 def club_tournament_detail(request, club_id, tournament_id):
     club = get_object_or_404(Club, pk=club_id)
-    if not can_manage_club(request.user, club):
-        return JsonResponse(
-            {"errors": {"authorization": "Only club directors can view tournaments for this club."}},
-            status=403,
-        )
 
     tournament = get_object_or_404(
         Tournament.objects.filter(club=club)
@@ -6271,6 +6454,18 @@ def club_tournament_detail(request, club_id, tournament_id):
         pk=tournament_id,
     )
     if request.method == "GET":
+        if not _can_view_club_tournaments(request.user, club):
+            return JsonResponse(
+                {"errors": {"authorization": "You do not have access to this tournament."}},
+                status=403,
+            )
+        allowed_team_ids = _viewer_tournament_team_scope(request.user, club)
+        if not _is_tournament_visible_for_scope(tournament, allowed_team_ids):
+            return JsonResponse(
+                {"errors": {"authorization": "You do not have access to this tournament."}},
+                status=403,
+            )
+
         if tournament.status == Tournament.Status.GENERATED:
             _reconcile_tournament_bracket(tournament)
             tournament = get_object_or_404(
@@ -6286,7 +6481,13 @@ def club_tournament_detail(request, club_id, tournament_id):
                 ),
                 pk=tournament_id,
             )
-        return JsonResponse({"tournament": _serialize_tournament(tournament)})
+        return JsonResponse({"tournament": _serialize_tournament(tournament, allowed_team_ids=allowed_team_ids)})
+
+    if not can_manage_club(request.user, club):
+        return JsonResponse(
+            {"errors": {"authorization": "Only club directors can cancel tournaments for this club."}},
+            status=403,
+        )
 
     if tournament.status == Tournament.Status.CANCELLED:
         return JsonResponse(
@@ -6324,6 +6525,216 @@ def club_tournament_detail(request, club_id, tournament_id):
             "message": "Tournament cancelled and removed from team schedules.",
             "tournament": _serialize_tournament(refreshed_tournament),
             "deleted_training_session_count": len(session_ids),
+        }
+    )
+
+
+@login_required
+@require_http_methods(["POST"])
+@csrf_exempt
+def restore_tournament_fixture_session(request, club_id, tournament_id, fixture_id):
+    club = get_object_or_404(Club, pk=club_id)
+    if not can_manage_club(request.user, club):
+        return JsonResponse(
+            {"errors": {"authorization": "Only club directors can restore tournament matches."}},
+            status=403,
+        )
+
+    fixture = get_object_or_404(
+        TournamentFixture.objects.select_related(
+            "tournament",
+            "home_team",
+            "away_team",
+            "pool",
+            "training_session",
+        ).filter(
+            tournament_id=tournament_id,
+            tournament__club=club,
+        ),
+        pk=fixture_id,
+    )
+    tournament = fixture.tournament
+
+    if tournament.status == Tournament.Status.CANCELLED:
+        return JsonResponse(
+            {"errors": {"tournament": "Cannot restore match sessions for a cancelled tournament."}},
+            status=400,
+        )
+
+    if fixture.home_team_id is None or fixture.away_team_id is None:
+        return JsonResponse(
+            {"errors": {"fixture": "Cannot restore a placeholder/BYE fixture."}},
+            status=400,
+        )
+
+    existing_session = fixture.training_session
+    if existing_session and existing_session.status != TrainingSession.Status.CANCELLED:
+        return JsonResponse(
+            {"errors": {"fixture": "This fixture already has an active scheduled session."}},
+            status=400,
+        )
+
+    with transaction.atomic():
+        if existing_session and existing_session.status == TrainingSession.Status.CANCELLED:
+            existing_session.delete()
+
+        restored_session = _create_tournament_match_session(
+            tournament=tournament,
+            home_team=fixture.home_team,
+            away_team=fixture.away_team,
+            scheduled_date=fixture.scheduled_date or tournament.start_date,
+            start_time=fixture.start_time or tournament.start_time,
+            round_label=fixture.round_label or "Tournament Match",
+            pool_name=fixture.pool.name if fixture.pool_id else None,
+        )
+        fixture.training_session = restored_session
+        fixture.save(update_fields=["training_session", "updated_at"])
+
+    refreshed_tournament = (
+        Tournament.objects.filter(pk=tournament.pk)
+        .select_related("club", "created_by")
+        .prefetch_related(
+            "teams",
+            "pools",
+            "fixtures__pool",
+            "fixtures__home_team",
+            "fixtures__away_team",
+            "fixtures__training_session",
+        )
+        .get()
+    )
+    if refreshed_tournament.status == Tournament.Status.GENERATED:
+        _reconcile_tournament_bracket(refreshed_tournament)
+        refreshed_tournament = (
+            Tournament.objects.filter(pk=refreshed_tournament.pk)
+            .select_related("club", "created_by")
+            .prefetch_related(
+                "teams",
+                "pools",
+                "fixtures__pool",
+                "fixtures__home_team",
+                "fixtures__away_team",
+                "fixtures__training_session",
+            )
+            .get()
+        )
+
+    return JsonResponse(
+        {
+            "message": "Cancelled tournament match was added back to team events and schedules.",
+            "fixture_id": fixture.id,
+            "tournament": _serialize_tournament(refreshed_tournament),
+        }
+    )
+
+
+@login_required
+@require_http_methods(["POST"])
+@csrf_exempt
+def reschedule_tournament_fixture_session(request, club_id, tournament_id, fixture_id):
+    club = get_object_or_404(Club, pk=club_id)
+    if not can_manage_club(request.user, club):
+        return JsonResponse(
+            {"errors": {"authorization": "Only club directors can reschedule tournament matches."}},
+            status=403,
+        )
+
+    fixture = get_object_or_404(
+        TournamentFixture.objects.select_related(
+            "tournament",
+            "home_team",
+            "away_team",
+            "pool",
+            "training_session",
+        ).filter(
+            tournament_id=tournament_id,
+            tournament__club=club,
+        ),
+        pk=fixture_id,
+    )
+    tournament = fixture.tournament
+    if tournament.status == Tournament.Status.CANCELLED:
+        return JsonResponse(
+            {"errors": {"tournament": "Cannot reschedule fixtures in a cancelled tournament."}},
+            status=400,
+        )
+
+    if fixture.home_team_id is None or fixture.away_team_id is None:
+        return JsonResponse(
+            {"errors": {"fixture": "Cannot reschedule a placeholder/BYE fixture."}},
+            status=400,
+        )
+
+    payload = _parse_json_request(request)
+    if payload is None:
+        return JsonResponse({"errors": {"body": "Invalid JSON."}}, status=400)
+
+    raw_date = (payload.get("scheduled_date") or "").strip()
+    raw_time = (payload.get("start_time") or "").strip()
+
+    try:
+        scheduled_date = date.fromisoformat(raw_date) if raw_date else (fixture.scheduled_date or tournament.start_date)
+    except ValueError:
+        return JsonResponse({"errors": {"scheduled_date": "Use YYYY-MM-DD format."}}, status=400)
+
+    if raw_time:
+        try:
+            start_time = _parse_time_hhmm(raw_time, "start_time")
+        except ValidationError as exc:
+            if hasattr(exc, "message_dict"):
+                return JsonResponse({"errors": exc.message_dict}, status=400)
+            return JsonResponse({"errors": {"start_time": exc.messages}}, status=400)
+    else:
+        start_time = fixture.start_time or tournament.start_time
+
+    with transaction.atomic():
+        fixture.scheduled_date = scheduled_date
+        fixture.start_time = start_time
+
+        existing_session = fixture.training_session
+        if existing_session and existing_session.status == TrainingSession.Status.CANCELLED:
+            existing_session.delete()
+            existing_session = None
+
+        if existing_session is None:
+            existing_session = _create_tournament_match_session(
+                tournament=tournament,
+                home_team=fixture.home_team,
+                away_team=fixture.away_team,
+                scheduled_date=scheduled_date,
+                start_time=start_time,
+                round_label=fixture.round_label or "Tournament Match",
+                pool_name=fixture.pool.name if fixture.pool_id else None,
+            )
+            fixture.training_session = existing_session
+        else:
+            existing_session.scheduled_date = scheduled_date
+            existing_session.start_time = start_time
+            existing_session.end_time = _add_minutes_to_time(start_time, tournament.match_duration_minutes)
+            existing_session.status = TrainingSession.Status.SCHEDULED
+            existing_session.save(update_fields=["scheduled_date", "start_time", "end_time", "status", "updated_at"])
+
+        fixture.save(update_fields=["scheduled_date", "start_time", "training_session", "updated_at"])
+
+    refreshed_tournament = (
+        Tournament.objects.filter(pk=tournament.pk)
+        .select_related("club", "created_by")
+        .prefetch_related(
+            "teams",
+            "pools",
+            "fixtures__pool",
+            "fixtures__home_team",
+            "fixtures__away_team",
+            "fixtures__training_session",
+        )
+        .get()
+    )
+
+    return JsonResponse(
+        {
+            "message": "Fixture rescheduled successfully.",
+            "fixture_id": fixture.id,
+            "tournament": _serialize_tournament(refreshed_tournament),
         }
     )
 
@@ -6374,6 +6785,131 @@ def notifications(request):
             "unread_count": unread_count,
             "items": [_serialize_notification(item, request.user) for item in notification_items],
             "sent_items": sent_items,
+        }
+    )
+
+
+@login_required
+@require_GET
+def audit_logs(request):
+    if not (is_staff_user(request.user) or is_any_club_director(request.user)):
+        return JsonResponse(
+            {"errors": {"authorization": "Only staff and club directors can view audit logs."}},
+            status=403,
+        )
+
+    user_id = request.GET.get("user_id")
+    entity_type = (request.GET.get("entity_type") or "").strip() or None
+
+    parsed_user_id = None
+    if user_id not in (None, ""):
+        try:
+            parsed_user_id = int(user_id)
+        except (TypeError, ValueError):
+            return JsonResponse({"errors": {"user_id": "user_id must be a numeric value."}}, status=400)
+
+    try:
+        limit = min(int(request.GET.get("limit", "200")), 500)
+    except (TypeError, ValueError):
+        limit = 200
+
+    logs = AuditLogRepository.list_logs(user_id=parsed_user_id, entity_type=entity_type)[:limit]
+    return JsonResponse(
+        {
+            "count": len(logs),
+            "logs": [
+                {
+                    "id": log.id,
+                    "user_id": log.user_id,
+                    "user_role": log.user_role,
+                    "action_type": log.action_type,
+                    "entity_type": log.entity_type,
+                    "entity_id": log.entity_id,
+                    "old_value": log.old_value,
+                    "new_value": log.new_value,
+                    "timestamp": log.timestamp.isoformat(),
+                }
+                for log in logs
+            ],
+        }
+    )
+
+
+@login_required
+@require_GET
+def recent_audit_logs(request):
+    if not (is_staff_user(request.user) or is_any_club_director(request.user)):
+        # Keep this endpoint non-breaking for dashboards that may call it defensively;
+        # unauthorized users receive an empty feed instead of a hard 403.
+        return JsonResponse({"count": 0, "logs": []})
+
+    logs = AuditLogRepository.list_logs()[:10]
+    return JsonResponse(
+        {
+            "count": len(logs),
+            "logs": [
+                {
+                    "user_name": (
+                        (f"{log.user.first_name} {log.user.last_name}".strip() or log.user.email)
+                        if log.user
+                        else "Unknown user"
+                    ),
+                    "action_type": log.action_type,
+                    "entity_type": log.entity_type,
+                    "timestamp": log.timestamp.isoformat(),
+                }
+                for log in logs
+            ],
+        }
+    )
+
+
+@login_required
+@require_POST
+@csrf_exempt
+def admin_restore_database(request):
+    if not (is_staff_user(request.user) or is_any_club_director(request.user)):
+        return JsonResponse(
+            {"errors": {"authorization": "Only staff or directors can restore backups."}},
+            status=403,
+        )
+
+    payload = _parse_json_request(request)
+    if payload is None:
+        return JsonResponse({"errors": {"body": "Invalid JSON."}}, status=400)
+
+    backup_file = (payload.get("backup_file") or "").strip()
+    confirm_restore = bool(payload.get("confirm_restore"))
+    if not backup_file:
+        return JsonResponse({"errors": {"backup_file": "backup_file is required."}}, status=400)
+    if not confirm_restore:
+        return JsonResponse(
+            {
+                "errors": {
+                    "confirm_restore": (
+                        "Set confirm_restore=true to proceed with destructive restore."
+                    )
+                }
+            },
+            status=400,
+        )
+
+    try:
+        result = DatabaseBackupService.restore_backup(backup_file)
+    except DatabaseBackupError as exc:
+        return JsonResponse({"errors": {"restore": str(exc)}}, status=400)
+
+    AuditLogService.log_action(
+        user=request.user,
+        action_type="RESTORE_DATABASE",
+        entity_type="database_backup",
+        entity_id=result.filename,
+        new_value={"backup_file": result.filename, "path": result.path},
+    )
+    return JsonResponse(
+        {
+            "message": "Database restore completed successfully.",
+            "backup_file": result.filename,
         }
     )
 
@@ -7312,6 +7848,37 @@ def create_team(request, club_id):
             },
         },
         status=201,
+    )
+
+
+@login_required
+@require_GET
+def list_teams(request):
+    club_id_raw = (request.GET.get("club_id") or "").strip()
+    if not club_id_raw:
+        return JsonResponse({"errors": {"club_id": "club_id query parameter is required."}}, status=400)
+    try:
+        club_id = int(club_id_raw)
+    except ValueError:
+        return JsonResponse({"errors": {"club_id": "club_id must be a valid number."}}, status=400)
+
+    club = get_object_or_404(Club, pk=club_id)
+    if not can_manage_club(request.user, club):
+        return JsonResponse(
+            {"errors": {"authorization": "Only club directors can view teams for tournament setup."}},
+            status=403,
+        )
+
+    teams = (
+        Team.objects.filter(club=club, status=Team.Status.ACTIVE)
+        .select_related("club")
+        .order_by("name", "id")
+    )
+    return JsonResponse(
+        {
+            "club": _serialize_club(club),
+            "teams": [_serialize_team(team) for team in teams],
+        }
     )
 
 

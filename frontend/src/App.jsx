@@ -1896,33 +1896,24 @@ function App() {
     );
   }
 
-  if (pathname === "/tournaments" || pathname === "/tournaments/") {
+  if (
+    pathname === "/tournaments" ||
+    pathname === "/tournaments/" ||
+    pathname === "/tournament" ||
+    pathname === "/tournament/" ||
+    pathname === "/coach-tournaments" ||
+    pathname === "/coach-tournaments/" ||
+    pathname.startsWith("/tournaments/") ||
+    pathname.startsWith("/tournament/")
+  ) {
     if (!isAuthenticated) {
       return <LoginPage />;
     }
-    if (directorDashboardAllowed === null) {
+    if (dashboardWorkspaceAllowed === null) {
       return (
         <div className="vc-app vc-dashboard" style={{ padding: "3rem", textAlign: "center" }}>
           <p className="vc-modal__muted">Loading…</p>
         </div>
-      );
-    }
-    if (!directorDashboardAllowed) {
-      return (
-        <ClubWorkspaceLayout
-          activeTab="coach-tournaments"
-          viewerAccountRole={viewerAccountRole}
-          {...defaultTeamNavProps}
-          showPlayerSessionsTab={showPlayerSessionsTab}
-          showCoachAttendanceTab={showCoachAttendanceTab}
-        >
-          <section className="teams-page-shell" style={{ padding: "1.5rem" }}>
-            <h1 style={{ fontSize: "1.2rem" }}>Tournaments</h1>
-            <p className="vc-modal__muted" style={{ marginTop: "0.75rem" }}>
-              Tournament management is only available to club directors and platform staff.
-            </p>
-          </section>
-        </ClubWorkspaceLayout>
       );
     }
     return (
@@ -1932,6 +1923,7 @@ function App() {
         {...defaultTeamNavProps}
         showPlayerSessionsTab={showPlayerSessionsTab}
         showCoachAttendanceTab={showCoachAttendanceTab}
+        showTournamentTab
       >
         <TournamentsPage activeTeam={activeTeam} />
       </ClubWorkspaceLayout>

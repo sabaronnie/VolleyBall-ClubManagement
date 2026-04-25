@@ -4,6 +4,7 @@ import {
   fetchCoachTeamDashboard,
   fetchCurrentUser,
   fetchDirectorPaymentOverview,
+  fetchRecentAuditLogs,
   fetchTeamAttendanceAnalytics,
   fetchTeamAttendanceSummary,
   fetchTeamMembers,
@@ -15,6 +16,7 @@ import EmergencyContactForm from "../components/EmergencyContactForm";
 import DirectorAttendanceTrendCard from "../components/director/DirectorAttendanceTrendCard";
 import DirectorClubSummaryCard from "../components/director/DirectorClubSummaryCard";
 import DirectorPaymentsOverviewCard from "../components/director/DirectorPaymentsOverviewCard";
+import DirectorRecentActivityCard from "../components/director/DirectorRecentActivityCard";
 import DirectorSummaryRow from "../components/director/DirectorSummaryRow";
 import TeamStandingsCard from "../components/TeamStandingsCard";
 import { navigate } from "../navigation";
@@ -522,6 +524,9 @@ export default function DashboardPage({
   const [newClubAddress, setNewClubAddress] = useState("");
   const [newClubFoundedYear, setNewClubFoundedYear] = useState("");
   const [openDirectorSection, setOpenDirectorSection] = useState("payments");
+  const [recentActivityLogs, setRecentActivityLogs] = useState([]);
+  const [recentActivityLoading, setRecentActivityLoading] = useState(false);
+  const [recentActivityError, setRecentActivityError] = useState("");
 
   useEffect(() => {
     if (!localStorage.getItem(AUTH_TOKEN_KEY)) {
@@ -825,6 +830,43 @@ export default function DashboardPage({
 
   const showNoClubOnboarding = !profileLoading && !hasAnyClubAffiliation;
   const showWorkspace = !profileLoading && hasAnyClubAffiliation;
+  const canSeeRecentActivity = Boolean(isDirectorOrStaff && ownedClubs.length);
+
+  useEffect(() => {
+    if (!showWorkspace || isCoachWorkspace || !canSeeRecentActivity) {
+      setRecentActivityLogs([]);
+      setRecentActivityError("");
+      setRecentActivityLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setRecentActivityLoading(true);
+    setRecentActivityError("");
+    void fetchRecentAuditLogs()
+      .then((payload) => {
+        if (cancelled) {
+          return;
+        }
+        setRecentActivityLogs(Array.isArray(payload?.logs) ? payload.logs : []);
+      })
+      .catch((err) => {
+        if (cancelled) {
+          return;
+        }
+        setRecentActivityLogs([]);
+        setRecentActivityError(err?.message || "Could not load recent activity.");
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setRecentActivityLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [showWorkspace, isCoachWorkspace, canSeeRecentActivity]);
+
   const dashboardTitle = isCoachWorkspace
     ? isAllTeamsSelected
       ? "All coached teams"
@@ -1073,6 +1115,16 @@ export default function DashboardPage({
               onManageTeams={() => openDirectorSectionPanel("teams")}
             />
           </div>
+
+          {canSeeRecentActivity ? (
+            <div className="vc-dash-row vc-dash-row--dashboard">
+              <DirectorRecentActivityCard
+                loading={recentActivityLoading}
+                error={recentActivityError}
+                logs={recentActivityLogs}
+              />
+            </div>
+          ) : null}
 
           <section className="vc-dashboard-toolbox" aria-labelledby="vc-dashboard-toolbox-title">
             <div className="vc-dashboard-toolbox__header">

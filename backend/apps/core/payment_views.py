@@ -39,6 +39,7 @@ from .models import (
     TeamRole,
 )
 from .permissions import can_manage_team, can_player_make_payments, can_view_team, is_club_director
+from .services.payment_service import record_fee_payment
 
 logger = logging.getLogger(__name__)
 
@@ -983,17 +984,11 @@ def director_record_fee_payment(request, club_id, record_id):
     note = (payload.get("note") or "").strip()[:255]
 
     with transaction.atomic():
-        FeePaymentLedgerEntry.objects.create(fee_record=rec, amount=amount, note=note)
-        rec.amount_paid = rec.amount_paid + amount
-        if rec.remaining() <= 0:
-            rec.paid_at = timezone.now()
-        rec.save(update_fields=["amount_paid", "paid_at", "updated_at"])
-        _log_action(
-            club,
-            request.user,
-            DirectorPaymentAuditLog.Action.PAYMENT_RECORDED,
-            f"Recorded {rec.currency} {amount} toward fee #{rec.id} ({_family_label(rec.player)}). {note}",
-            rec,
+        rec = record_fee_payment(
+            fee_record=rec,
+            amount=amount,
+            note=note,
+            actor=request.user,
         )
 
     rec.refresh_from_db()
@@ -1494,18 +1489,14 @@ def record_self_payment(request, record_id):
         )
 
     with transaction.atomic():
-        rec.amount_paid = rec.amount_paid + amount
-        if rec.remaining() <= 0:
-            rec.paid_at = timezone.now()
-        rec.save(update_fields=["amount_paid", "paid_at", "updated_at"])
-
         ledger_note = f"Self-service payment ({method})"
         if note_text:
             ledger_note += f": {note_text}"
-        FeePaymentLedgerEntry.objects.create(
+        rec = record_fee_payment(
             fee_record=rec,
             amount=amount,
             note=ledger_note[:255],
+            actor=request.user,
         )
 
     rec.refresh_from_db()

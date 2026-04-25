@@ -50,6 +50,13 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "core-default-cache",
+    }
+}
+
 ROOT_URLCONF = "config.urls"
 
 TEMPLATES = [
@@ -101,6 +108,13 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
+PASSWORD_HASHERS = [
+    "django.contrib.auth.hashers.Argon2PasswordHasher",
+    "django.contrib.auth.hashers.PBKDF2PasswordHasher",
+    "django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher",
+    "django.contrib.auth.hashers.BCryptSHA256PasswordHasher",
+]
+
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "Asia/Beirut"
 USE_I18N = True
@@ -110,6 +124,14 @@ STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 AUTH_TOKEN_MAX_AGE = int(os.getenv("AUTH_TOKEN_MAX_AGE", 60 * 60 * 24))
+JWT_SECRET = os.getenv("JWT_SECRET", SECRET_KEY)
+JWT_ACCESS_TOKEN_MINUTES = int(os.getenv("JWT_ACCESS_TOKEN_MINUTES", "60"))
+LOGIN_RATE_LIMIT_MAX_ATTEMPTS = int(os.getenv("LOGIN_RATE_LIMIT_MAX_ATTEMPTS", "5"))
+LOGIN_RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("LOGIN_RATE_LIMIT_WINDOW_SECONDS", str(15 * 60)))
+DB_BACKUP_DIR = os.getenv("DB_BACKUP_DIR", str(PROJECT_ROOT / "backups"))
+DB_BACKUP_FREQUENCY_HOURS = int(os.getenv("DB_BACKUP_FREQUENCY_HOURS", "24"))
+MYSQLDUMP_BIN = os.getenv("MYSQLDUMP_BIN", "mysqldump")
+MYSQL_BIN = os.getenv("MYSQL_BIN", "mysql")
 
 # Payments: require an active player team membership in the club before manual fee lookup / fee creation.
 # Set DJANGO_PAYMENTS_REQUIRE_TEAM_ROSTER=false to test without roster (not recommended in production).

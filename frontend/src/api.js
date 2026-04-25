@@ -38,7 +38,7 @@ function isExpiredTokenResponse(response, payload) {
 }
 
 function shouldLogoutRejectedSession(response, payload) {
-  return response.status === 403 || isExpiredTokenResponse(response, payload);
+  return response.status === 401 || isExpiredTokenResponse(response, payload);
 }
 
 function logoutExpiredSession(response, payload) {
@@ -123,10 +123,13 @@ async function authenticatedGet(path) {
 
 async function authenticatedJson(path, method, body) {
   const token = localStorage.getItem(AUTH_TOKEN_KEY);
+  const requestUrl = `${API_BASE_URL}${path}`;
 
   let response;
+  let responseText = "";
+  let payload = null;
   try {
-    response = await fetch(`${API_BASE_URL}${path}`, {
+    response = await fetch(requestUrl, {
       method,
       headers: {
         "Content-Type": "application/json",
@@ -138,11 +141,14 @@ async function authenticatedJson(path, method, body) {
     throw new Error("Cannot reach backend. Make sure Django is running on port 8000.");
   }
 
-  let payload = null;
-  try {
-    payload = await response.json();
-  } catch {
-    payload = null;
+  responseText = await response.text();
+  payload = {};
+  if (responseText) {
+    try {
+      payload = JSON.parse(responseText);
+    } catch {
+      payload = { message: responseText.slice(0, 280) };
+    }
   }
 
   if (!response.ok) {
@@ -494,6 +500,10 @@ export async function fetchDirectorPaymentOverview(clubId) {
   return authenticatedGet(`/api/clubs/${clubId}/director/payments/overview/`);
 }
 
+export async function fetchRecentAuditLogs() {
+  return authenticatedGet("/api/audit-logs/recent/");
+}
+
 export async function fetchDirectorPaymentLookupPlayer(clubId, playerId) {
   const q = `?player_id=${encodeURIComponent(String(playerId))}`;
   return authenticatedGet(`/api/clubs/${clubId}/director/payments/lookup-player/${q}`);
@@ -619,6 +629,10 @@ export async function fetchTeamMembers(teamId) {
   return authenticatedGet(`/api/teams/${teamId}/members/`);
 }
 
+export async function fetchClubTeams(clubId) {
+  return authenticatedGet(`/api/teams?club_id=${encodeURIComponent(String(clubId))}`);
+}
+
 export async function searchTeamPlayers(teamId, query, options = {}) {
   const params = new URLSearchParams();
   params.set("q", String(query || ""));
@@ -682,24 +696,56 @@ export async function downloadTeamStandingsPdf(teamId) {
   return blob;
 }
 
-export async function fetchClubTournaments(clubId) {
-  return authenticatedGet(`/api/clubs/${encodeURIComponent(String(clubId))}/tournaments/`);
+export async function fetchTournaments() {
+  return authenticatedGet("/api/tournaments/");
 }
 
-export async function fetchClubTournamentDetail(clubId, tournamentId) {
-  return authenticatedGet(
-    `/api/clubs/${encodeURIComponent(String(clubId))}/tournaments/${encodeURIComponent(String(tournamentId))}/`,
-  );
+export async function fetchTournament(tournamentId) {
+  return authenticatedGet(`/api/tournaments/${encodeURIComponent(String(tournamentId))}/`);
 }
 
-export async function createClubTournament(clubId, body) {
-  return authenticatedJson(`/api/clubs/${encodeURIComponent(String(clubId))}/tournaments/`, "POST", body);
+export async function createTournament(body) {
+  return authenticatedJson("/api/tournaments/", "POST", body);
 }
 
-export async function deleteClubTournament(clubId, tournamentId) {
-  return authenticatedDelete(
-    `/api/clubs/${encodeURIComponent(String(clubId))}/tournaments/${encodeURIComponent(String(tournamentId))}/`,
-  );
+export async function updateTournament(tournamentId, body) {
+  return authenticatedJson(`/api/tournaments/${encodeURIComponent(String(tournamentId))}/`, "PUT", body);
+}
+
+export async function generateTournamentPools(tournamentId) {
+  return authenticatedJson(`/api/tournaments/${encodeURIComponent(String(tournamentId))}/generate-pools/`, "POST", {});
+}
+
+export async function generateTournamentPoolMatches(tournamentId) {
+  return authenticatedJson(`/api/tournaments/${encodeURIComponent(String(tournamentId))}/generate-pool-matches/`, "POST", {});
+}
+
+export async function generateTournamentBracket(tournamentId) {
+  return authenticatedJson(`/api/tournaments/${encodeURIComponent(String(tournamentId))}/generate-bracket/`, "POST", {});
+}
+
+export async function fetchTournamentMatches(tournamentId) {
+  return authenticatedGet(`/api/tournaments/${encodeURIComponent(String(tournamentId))}/matches/`);
+}
+
+export async function fetchTournamentStandings(tournamentId) {
+  return authenticatedGet(`/api/tournaments/${encodeURIComponent(String(tournamentId))}/standings/`);
+}
+
+export async function fetchTournamentBracket(tournamentId) {
+  return authenticatedGet(`/api/tournaments/${encodeURIComponent(String(tournamentId))}/bracket/`);
+}
+
+export async function fetchMyTournamentMatches() {
+  return authenticatedGet("/api/my-tournament-matches/");
+}
+
+export async function rescheduleTournamentMatch(matchId, body) {
+  return authenticatedJson(`/api/matches/${encodeURIComponent(String(matchId))}/reschedule/`, "PUT", body);
+}
+
+export async function submitTournamentMatchResult(matchId, body) {
+  return authenticatedJson(`/api/matches/${encodeURIComponent(String(matchId))}/result/`, "POST", body);
 }
 export async function directorAddTeamMember(teamId, body) {
   return authenticatedJson(`/api/teams/${teamId}/members/add/`, "POST", body);
