@@ -25,6 +25,10 @@ from .models import (
     TournamentTeam,
 )
 from .services.audit_log_service import AuditLogService
+from .services.tournament_calendar_service import (
+    sync_all_matches_in_tournament,
+    sync_calendar_sessions_for_tournament_match,
+)
 
 
 def _parse_body(request):
@@ -111,6 +115,7 @@ def _serialize_match(match):
         "winner_team_id": match.winner_team_id,
         "winner_team_name": match.winner_team.name if match.winner_team_id else None,
         "loser_team_id": match.loser_team_id,
+        "loser_team_name": match.loser_team.name if match.loser_team_id else None,
         "status": match.status,
         "scheduled_time": match.scheduled_time.isoformat() if match.scheduled_time else None,
         "location": match.location,
@@ -531,6 +536,7 @@ def generate_pool_matches(request, tournament_id):
     AuditLogService.log_action(
         user=request.user, action_type="pool_matches_generated", entity_type="tournament", entity_id=tournament.id
     )
+    sync_all_matches_in_tournament(tournament.id)
     return JsonResponse({"message": "Pool schedule generated."})
 
 
@@ -620,6 +626,7 @@ def generate_bracket(request, tournament_id):
     AuditLogService.log_action(
         user=request.user, action_type="bracket_generated", entity_type="tournament", entity_id=tournament.id
     )
+    sync_all_matches_in_tournament(tournament.id)
     return JsonResponse({"message": "Bracket generated."})
 
 
@@ -634,12 +641,14 @@ def tournament_matches(request, tournament_id):
     if not _can_view_tournament(request.user, tournament):
         return JsonResponse({"errors": {"authorization": "You do not have access to this tournament."}}, status=403)
     if request.user.is_staff or _is_director_for_club(request.user, tournament.club_id):
-        matches = TournamentMatch.objects.filter(tournament=tournament).select_related("team_a", "team_b", "pool", "winner_team")
+        matches = TournamentMatch.objects.filter(tournament=tournament).select_related(
+            "team_a", "team_b", "pool", "winner_team", "loser_team"
+        )
     else:
         team_scope = _team_ids_for_user(request.user)
         matches = TournamentMatch.objects.filter(tournament=tournament).filter(
             Q(team_a_id__in=team_scope) | Q(team_b_id__in=team_scope)
-        ).select_related("team_a", "team_b", "pool", "winner_team")
+        ).select_related("team_a", "team_b", "pool", "winner_team", "loser_team")
     return JsonResponse({"matches": [_serialize_match(match) for match in matches.order_by("match_number", "id")]})
 
 
@@ -647,7 +656,9 @@ def tournament_matches(request, tournament_id):
 @require_GET
 def match_detail(request, match_id):
     try:
-        match = TournamentMatch.objects.select_related("tournament", "team_a", "team_b", "winner_team", "pool").get(id=match_id)
+        match = TournamentMatch.objects.select_related("tournament", "team_a", "team_b", "winner_team", "loser_team", "pool").get(
+            id=match_id
+        )
     except TournamentMatch.DoesNotExist:
         return JsonResponse({"errors": {"match": "Match not found."}}, status=404)
     if not (request.user.is_staff or _is_director_for_club(request.user, match.tournament.club_id)):
@@ -677,6 +688,8 @@ def reschedule_match(request, match_id):
     if payload.get("location") is not None:
         match.location = str(payload["location"]).strip()
     match.save(update_fields=["scheduled_time", "location", "updated_at"])
+    match = TournamentMatch.objects.select_related("tournament", "team_a", "team_b", "pool").get(pk=match.pk)
+    sync_calendar_sessions_for_tournament_match(match)
     AuditLogService.log_action(
         user=request.user,
         action_type="match_rescheduled",
@@ -765,6 +778,22 @@ def submit_match_result(request, match_id):
             entity_id=match.next_match_id,
             new_value={"winner_team_id": match.winner_team_id},
         )
+    m_saved = (
+        TournamentMatch.objects.select_related("tournament", "team_a", "team_b", "pool", "winner_team", "loser_team")
+        .filter(pk=match_id)
+        .first()
+    )
+    if m_saved:
+        sync_calendar_sessions_for_tournament_match(m_saved)
+    next_id = match.next_match_id
+    if next_id:
+        m_next = (
+            TournamentMatch.objects.select_related("tournament", "team_a", "team_b", "pool", "winner_team")
+            .filter(pk=next_id)
+            .first()
+        )
+        if m_next:
+            sync_calendar_sessions_for_tournament_match(m_next)
     return JsonResponse({"message": "Result saved.", "match": _serialize_match(match)})
 
 
@@ -812,7 +841,9 @@ def tournament_bracket(request, tournament_id):
     _normalize_tournament_status(tournament)
     if not _can_view_tournament(request.user, tournament):
         return JsonResponse({"errors": {"authorization": "You do not have access to this tournament."}}, status=403)
-    matches = TournamentMatch.objects.filter(tournament=tournament, pool__isnull=True).select_related("team_a", "team_b", "winner_team")
+    matches = TournamentMatch.objects.filter(tournament=tournament, pool__isnull=True).select_related(
+        "team_a", "team_b", "winner_team", "loser_team"
+    )
     rounds = defaultdict(list)
     for match in matches:
         rounds[match.bracket_round or "Bracket"].append(_serialize_match(match))

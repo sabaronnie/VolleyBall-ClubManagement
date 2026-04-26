@@ -14,19 +14,106 @@ import {
   submitTournamentMatchResult,
 } from "../api";
 
-const TABS = ["setup", "pools", "bracket", "standings"];
+const TABS_DIRECTOR = ["setup", "overview", "pools", "bracket", "matches"];
+const TABS_VIEWER = ["overview", "pools", "bracket", "matches"];
+
+function formatTabLabel(tabId) {
+  const labels = { setup: "Setup", overview: "Overview", pools: "Pools", bracket: "Bracket", matches: "Matches" };
+  return labels[tabId] || tabId.charAt(0).toUpperCase() + tabId.slice(1);
+}
+
 const FORMATS = [
   { value: "pool_only", label: "Pool Play" },
   { value: "bracket_only", label: "Bracket" },
   { value: "pool_and_bracket", label: "Pool + Bracket" },
 ];
 
+function getMatchOutcomeCopy(match) {
+  const a = match.team_a_name || "TBD";
+  const b = match.team_b_name || "TBD";
+  if (match.status === "cancelled") {
+    return { line1: "Cancelled", line2: null };
+  }
+  if (match.status === "completed" && match.team_a_score != null && match.team_b_score != null) {
+    return {
+      line1: `${a} ${match.team_a_score} - ${match.team_b_score} ${b}`,
+      line2: match.winner_team_name ? `Winner: ${match.winner_team_name}` : null,
+    };
+  }
+  if (match.status === "scheduled") {
+    return { line1: "Not played yet", line2: null };
+  }
+  if (match.team_a_score != null && match.team_b_score != null) {
+    const leader = match.team_a_score > match.team_b_score ? a : match.team_b_score > match.team_a_score ? b : null;
+    return {
+      line1: `${a} ${match.team_a_score} - ${match.team_b_score} ${b}`,
+      line2: leader ? `Leading: ${leader}` : null,
+    };
+  }
+  if (match.status === "ongoing") {
+    return { line1: "In progress", line2: "Waiting for final scores" };
+  }
+  return { line1: "Not played yet", line2: null };
+}
+
+function getBracketWaitMessage(match, allMatches) {
+  if (match.pool_id) return null;
+  if (match.status === "completed" || (match.team_a_id && match.team_b_id)) return null;
+  const waiting = [];
+  if (!match.team_a_id) {
+    const f = allMatches.find((m) => m.next_match_id === match.id && m.next_match_slot === "A");
+    if (f && f.status !== "completed") waiting.push(`Match ${f.match_number}`);
+  }
+  if (!match.team_b_id) {
+    const f = allMatches.find((m) => m.next_match_id === match.id && m.next_match_slot === "B");
+    if (f && f.status !== "completed") waiting.push(`Match ${f.match_number}`);
+  }
+  if (waiting.length === 0) return null;
+  return `Waiting for winner of ${waiting.join(" & ")}`;
+}
+
+function getAdvanceBlurb(match, matchById) {
+  if (match.status !== "completed" || !match.winner_team_name) return null;
+  if (String(match.bracket_round || "").toLowerCase() === "final") return null;
+  if (!match.next_match_id) return null;
+  const n = matchById[match.next_match_id];
+  if (n?.bracket_round) return `Advances to ${n.bracket_round}`;
+  return "Advances to next round";
+}
+
+function MatchOutcomeLines({ match, bracketWait, advanceBlurb, compact = false, showWaitPairLine = true }) {
+  const o = getMatchOutcomeCopy(match);
+  const classRoot = compact ? "tournament-outcome tournament-outcome--compact" : "tournament-outcome";
+  const waitFirst = Boolean(bracketWait) && match.status !== "completed";
+  return (
+    <div className={classRoot}>
+      {waitFirst ? (
+        <>
+          <div className="tournament-outcome__primary tournament-outcome__wait">{bracketWait}</div>
+          {showWaitPairLine ? (
+            <div className="tournament-outcome__pair">
+              {match.team_a_name || "TBD"}{" "}
+              <span className="tournament-outcome__vs">vs</span> {match.team_b_name || "TBD"}
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <>
+          <div className="tournament-outcome__primary">{o.line1}</div>
+          {o.line2 ? <div className="tournament-outcome__secondary">{o.line2}</div> : null}
+        </>
+      )}
+      {advanceBlurb ? <div className="tournament-outcome__advance">{advanceBlurb}</div> : null}
+    </div>
+  );
+}
+
 export default function TournamentsPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  const [tab, setTab] = useState("pools");
+  const [tab, setTab] = useState("overview");
   const [me, setMe] = useState(null);
   const [tournaments, setTournaments] = useState([]);
   const [selectedTournamentId, setSelectedTournamentId] = useState(null);
@@ -48,6 +135,11 @@ export default function TournamentsPage() {
     tie_break_rule: "wins, head-to-head, point_difference, points_for, random",
     club_id: "",
   });
+  /** Match selected for the enter-result modal (replaces window.prompt). */
+  const [resultEntryMatch, setResultEntryMatch] = useState(null);
+  const [resultFormScoreA, setResultFormScoreA] = useState("");
+  const [resultFormScoreB, setResultFormScoreB] = useState("");
+  const [resultModalError, setResultModalError] = useState("");
 
   const canManage = Boolean(me?.is_director_or_staff || me?.viewer_is_staff);
   const selectedTournament = useMemo(
@@ -90,17 +182,164 @@ export default function TournamentsPage() {
     !hasDuplicateTeams &&
     poolLayoutMatches &&
     hasValidTopTeamsAdvance;
-  const poolMatchesComplete = useMemo(
-    () => matches.filter((row) => row.pool_id).every((row) => row.status === "completed"),
-    [matches],
-  );
-  const canGenerateBracket = Boolean(
-    canManage &&
-      selectedTournament &&
-      selectedTournament.format !== "pool_only" &&
-      matches.filter((row) => row.pool_id).length > 0 &&
-      poolMatchesComplete,
-  );
+  const generateBracketDisabledReason = useMemo(() => {
+    if (!canManage) return "Only club directors can generate the bracket.";
+    if (!selectedTournament) return "Select a tournament.";
+    if (selectedTournament.format === "pool_only") {
+      return "Pool-only tournaments do not use an elimination bracket.";
+    }
+    if (selectedTournament.format === "bracket_only") {
+      return "";
+    }
+    const poolRows = matches.filter((row) => row.pool_id);
+    if (poolRows.length === 0) {
+      return "Generate pools and pool matches first.";
+    }
+    if (!poolRows.every((row) => row.status === "completed")) {
+      return "Complete all pool matches before generating the bracket.";
+    }
+    return "";
+  }, [canManage, selectedTournament, matches]);
+
+  const canRunGenerateBracket = !generateBracketDisabledReason;
+
+  const allMatchesSorted = useMemo(() => {
+    return [...matches].sort((a, b) => {
+      const ta = a.scheduled_time ? Date.parse(a.scheduled_time) : Number.MAX_SAFE_INTEGER;
+      const tb = b.scheduled_time ? Date.parse(b.scheduled_time) : Number.MAX_SAFE_INTEGER;
+      if (ta !== tb) return ta - tb;
+      return (a.match_number || 0) - (b.match_number || 0);
+    });
+  }, [matches]);
+
+  const poolGroups = useMemo(() => {
+    const poolRows = matches.filter((row) => row.pool_id);
+    const map = new Map();
+    for (const m of poolRows) {
+      const name = m.pool_name || "Pool";
+      if (!map.has(name)) map.set(name, []);
+      map.get(name).push(m);
+    }
+    for (const arr of map.values()) {
+      arr.sort((a, b) => {
+        const ta = a.scheduled_time ? Date.parse(a.scheduled_time) : 0;
+        const tb = b.scheduled_time ? Date.parse(b.scheduled_time) : 0;
+        return ta - tb;
+      });
+    }
+    return Array.from(map.entries());
+  }, [matches]);
+
+  const bracketRoundsDisplayOrder = useMemo(() => {
+    const weight = (name) => {
+      const n = (name || "").toLowerCase();
+      if (n.includes("quarter")) return 1;
+      if (n.includes("semi")) return 2;
+      if (n === "final" || (n.includes("final") && !n.includes("semi"))) return 4;
+      if (n.includes("round")) return 3;
+      return 9;
+    };
+    return [...bracketRounds].sort((a, b) => weight(a.name) - weight(b.name) || (a.name || "").localeCompare(b.name || ""));
+  }, [bracketRounds]);
+
+  const progressTracker = useMemo(() => {
+    if (!selectedTournament) return [];
+    const fmt = selectedTournament.format;
+    const st = selectedTournament.status;
+    const poolMs = matches.filter((m) => m.pool_id);
+    const bracketMs = matches.filter((m) => !m.pool_id);
+    const poolsGen = fmt !== "bracket_only" && standings.length > 0;
+    const poolMatchesGen = fmt !== "bracket_only" && poolMs.length > 0;
+    const poolResDone = fmt !== "bracket_only" && poolMatchesGen && poolMs.every((m) => m.status === "completed");
+    const bracketGen = fmt !== "pool_only" && bracketMs.length > 0;
+    const items = [{ key: "c", label: "Created", done: true, na: false }];
+    if (fmt === "bracket_only") {
+      items.push({ key: "pg", label: "Pools generated", done: false, na: true });
+      items.push({ key: "pmg", label: "Pool matches generated", done: false, na: true });
+      items.push({ key: "pr", label: "Pool results completed", done: false, na: true });
+    } else {
+      items.push({ key: "pg", label: "Pools generated", done: poolsGen, na: false });
+      items.push({ key: "pmg", label: "Pool matches generated", done: poolMatchesGen, na: false });
+      items.push({ key: "pr", label: "Pool results completed", done: poolResDone, na: false });
+    }
+    if (fmt === "pool_only") {
+      items.push({ key: "br", label: "Bracket generated", done: false, na: true });
+    } else {
+      items.push({ key: "br", label: "Bracket generated", done: bracketGen, na: false });
+    }
+    items.push({ key: "fin", label: "Completed", done: st === "completed", na: false });
+    return items;
+  }, [selectedTournament, matches, standings.length]);
+
+  const matchById = useMemo(() => {
+    const o = {};
+    for (const m of matches) o[m.id] = m;
+    return o;
+  }, [matches]);
+
+  const overviewNarrative = useMemo(() => {
+    if (!selectedTournament) return null;
+    const status = selectedTournament.status;
+    const fmt = selectedTournament.format;
+    const bracketMs = matches.filter((m) => !m.pool_id);
+    if (status === "completed") {
+      const finalM = matches.find(
+        (m) =>
+          !m.pool_id &&
+          String(m.bracket_round || "").toLowerCase() === "final" &&
+          m.status === "completed" &&
+          m.winner_team_name,
+      );
+      if (finalM) {
+        return { type: "champion", line: `Champion: ${finalM.winner_team_name}` };
+      }
+      if (fmt === "pool_only" && standings.length) {
+        const parts = standings
+          .map((p) => {
+            const top = p.rows?.[0];
+            return top ? `${p.pool_name} — ${top.team_name}` : null;
+          })
+          .filter(Boolean);
+        if (parts.length) {
+          return { type: "champion", line: `Tournament complete — ${parts.join(" · ")}` };
+        }
+      }
+      return { type: "champion", line: "Tournament complete" };
+    }
+    if (status === "pool_stage" && standings.length) {
+      const parts = standings
+        .map((p) => {
+          const top = p.rows?.[0];
+          return top ? `${p.pool_name}: ${top.team_name}` : null;
+        })
+        .filter(Boolean);
+      if (parts.length) {
+        return { type: "leaders", line: `Current leaders: ${parts.join(" · ")}` };
+      }
+    }
+    if ((status === "bracket_stage" || (fmt === "bracket_only" && bracketMs.length)) && bracketMs.length) {
+      const eliminated = new Set();
+      for (const m of bracketMs) {
+        if (m.status === "completed" && m.loser_team_id) eliminated.add(m.loser_team_id);
+      }
+      const seen = new Set();
+      for (const m of bracketMs) {
+        if (m.team_a_id) seen.add(m.team_a_id);
+        if (m.team_b_id) seen.add(m.team_b_id);
+      }
+      const still = [...seen].filter((id) => !eliminated.has(id));
+      const idToName = new Map();
+      for (const m of bracketMs) {
+        if (m.team_a_id) idToName.set(m.team_a_id, m.team_a_name);
+        if (m.team_b_id) idToName.set(m.team_b_id, m.team_b_name);
+      }
+      const names = still.map((id) => idToName.get(id)).filter(Boolean);
+      if (names.length) {
+        return { type: "remaining", line: `Still in the bracket: ${names.join(", ")}` };
+      }
+    }
+    return null;
+  }, [selectedTournament, matches, standings]);
 
   useEffect(() => {
     let mounted = true;
@@ -163,9 +402,23 @@ export default function TournamentsPage() {
 
   useEffect(() => {
     if (!canManage && tab === "setup") {
-      setTab("pools");
+      setTab("overview");
     }
   }, [canManage, tab]);
+
+  useEffect(() => {
+    if (!resultEntryMatch) return undefined;
+    function onKey(e) {
+      if (e.key === "Escape") {
+        setResultEntryMatch(null);
+        setResultFormScoreA("");
+        setResultFormScoreB("");
+        setResultModalError("");
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [resultEntryMatch]);
 
   async function refreshAll(currentId) {
     const list = await fetchTournaments();
@@ -240,20 +493,38 @@ export default function TournamentsPage() {
         const keys = data && typeof data === "object" ? Object.keys(data).join(", ") : "no-json-payload";
         throw new Error(`Tournament was created but no tournament ID was returned. Response keys: ${keys}`);
       }
-      try {
-        await generateTournamentPools(id);
-      } catch (stepError) {
-        throw new Error(`Tournament created, but pool generation failed: ${stepError.message || "unknown error"}`);
+      if (form.format === "bracket_only") {
+        try {
+          await generateTournamentBracket(id);
+        } catch (stepError) {
+          throw new Error(`Tournament created, but bracket generation failed: ${stepError.message || "unknown error"}`);
+        }
+        await refreshAll(id);
+        setSelectedTournamentId(id);
+        setTab("overview");
+        setMessage("Tournament created and bracket generated. See Overview, Matches, and each team’s Schedule / Events.");
+      } else {
+        try {
+          await generateTournamentPools(id);
+        } catch (stepError) {
+          throw new Error(`Tournament created, but pool generation failed: ${stepError.message || "unknown error"}`);
+        }
+        try {
+          await generateTournamentPoolMatches(id);
+        } catch (stepError) {
+          throw new Error(`Pools generated, but pool match generation failed: ${stepError.message || "unknown error"}`);
+        }
+        await refreshAll(id);
+        setSelectedTournamentId(id);
+        setTab("overview");
+        if (form.format === "pool_and_bracket") {
+          setMessage(
+            "Tournament created. Pool play is next — use Pools / Matches, then Setup → Generate Bracket when all pool games are done. Games sync to Schedule / Events.",
+          );
+        } else {
+          setMessage("Tournament created. Pool play is ready — results update standings. Games sync to each team’s Schedule / Events.");
+        }
       }
-      try {
-        await generateTournamentPoolMatches(id);
-      } catch (stepError) {
-        throw new Error(`Pools generated, but pool match generation failed: ${stepError.message || "unknown error"}`);
-      }
-      await refreshAll(id);
-      setSelectedTournamentId(id);
-      setTab("pools");
-      setMessage("Tournament created with pools and pool matches generated.");
     } catch (err) {
       setError(err.message || "Could not generate tournament setup.");
     } finally {
@@ -275,7 +546,11 @@ export default function TournamentsPage() {
       if (action === "poolMatches") await generateTournamentPoolMatches(selectedTournamentId);
       if (action === "bracket") await generateTournamentBracket(selectedTournamentId);
       await refreshAll(selectedTournamentId);
-      setMessage("Action completed.");
+      if (action === "bracket") {
+        setMessage("Bracket generated. Review the Matches tab; games are added to each team’s Schedule.");
+      } else {
+        setMessage("Action completed. Matches tab and schedules are updated when applicable.");
+      }
     } catch (err) {
       setError(err.message || "Action failed.");
     } finally {
@@ -283,17 +558,46 @@ export default function TournamentsPage() {
     }
   }
 
-  async function enterResult(match) {
-    const scoreA = window.prompt(`Score for ${match.team_a_name || "Team A"}`);
-    const scoreB = window.prompt(`Score for ${match.team_b_name || "Team B"}`);
-    if (scoreA == null || scoreB == null) return;
+  function openResultForm(match) {
+    setResultModalError("");
+    setResultEntryMatch(match);
+    setResultFormScoreA("");
+    setResultFormScoreB("");
+  }
+
+  function closeResultForm() {
+    setResultEntryMatch(null);
+    setResultFormScoreA("");
+    setResultFormScoreB("");
+    setResultModalError("");
+  }
+
+  async function submitResultForm(event) {
+    event.preventDefault();
+    if (!resultEntryMatch || !selectedTournamentId) return;
+    const a = Number(String(resultFormScoreA).trim());
+    const b = Number(String(resultFormScoreB).trim());
+    if (!Number.isFinite(a) || !Number.isFinite(b) || a < 0 || b < 0) {
+      setResultModalError("Please enter valid non-negative numbers for both scores.");
+      return;
+    }
+    if (a === b) {
+      setResultModalError("Scores cannot be tied.");
+      return;
+    }
     setBusy(true);
+    setResultModalError("");
     try {
-      await submitTournamentMatchResult(match.id, { team_a_score: Number(scoreA), team_b_score: Number(scoreB) });
+      await submitTournamentMatchResult(resultEntryMatch.id, { team_a_score: a, team_b_score: b });
       await refreshAll(selectedTournamentId);
-      setMessage("Result entered.");
+      closeResultForm();
+      if (resultEntryMatch.pool_id) {
+        setMessage("Result saved. Pool standings, bracket (if any), and Schedule / Events are updated.");
+      } else {
+        setMessage("Result saved. Bracket, winners, and Schedule / Events are updated.");
+      }
     } catch (err) {
-      setError(err.message || "Could not enter result.");
+      setResultModalError(err.message || "Could not save result.");
     } finally {
       setBusy(false);
     }
@@ -303,13 +607,125 @@ export default function TournamentsPage() {
 
   const myMatchIds = new Set(myMatches.map((row) => row.id));
   const poolMatches = matches.filter((row) => row.pool_id);
+  const allPoolMatchesComplete =
+    poolMatches.length > 0 && poolMatches.every((row) => row.status === "completed");
+
+  /** Why the Bracket tab can be empty even when status is "bracket_stage": finishing pool play
+   *  only updates status; bracket rows are created by POST …/generate-bracket/ (Setup → Generate Bracket). */
+  const bracketEmptyLines = (() => {
+    if (!selectedTournament) return ["Select a tournament to view the bracket."];
+    const fmt = selectedTournament.format;
+    if (fmt === "pool_only") {
+      return ["This tournament is pool-only. There is no elimination bracket."];
+    }
+    if (fmt === "bracket_only") {
+      return [
+        "The elimination bracket is not in the schedule yet.",
+        canManage
+          ? "Open the Setup tab and click “Generate Bracket” to create bracket matches."
+          : "Ask a club director to generate the bracket from the Setup tab.",
+      ];
+    }
+    if (poolMatches.length === 0) {
+      return [
+        "No pool matches are scheduled yet.",
+        "Create the tournament with pools and pool matches from the Setup tab first.",
+      ];
+    }
+    if (!allPoolMatchesComplete) {
+      return [
+        "Finish every pool match first.",
+        "The bracket section will show matches after you click “Generate Bracket” on the Setup tab once all pool results are in.",
+      ];
+    }
+    return [
+      "Pool play is complete, but bracket matches have not been generated yet (this is a separate step).",
+      canManage
+        ? "Open the Setup tab and click “Generate Bracket” to build the elimination bracket."
+        : "Ask a club director to open Setup and click “Generate Bracket.”",
+    ];
+  })();
+
+  const canEnterThisMatch = (match) =>
+    (canManage || myMatchIds.has(match.id)) && match.status !== "completed";
+
+  /** Bracket (and pool) results need two assigned teams before the API accepts a score. */
+  const canEnterResultForMatch = (match) =>
+    canEnterThisMatch(match) && match.team_a_id && match.team_b_id;
+
+  const tabList = canManage ? TABS_DIRECTOR : TABS_VIEWER;
 
   return (
     <section className="teams-page-shell tournament-v2-shell">
+      {resultEntryMatch ? (
+        <div
+          className="vc-modal-backdrop"
+          role="presentation"
+          onClick={busy ? undefined : closeResultForm}
+        >
+          <div
+            className="vc-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="tournament-result-form-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="vc-modal__head">
+              <h2 id="tournament-result-form-title">Enter match result</h2>
+              <button
+                type="button"
+                className="vc-modal__close"
+                onClick={closeResultForm}
+                disabled={busy}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+            <p className="vc-modal__muted">
+              {resultEntryMatch.team_a_name || "Team A"} vs {resultEntryMatch.team_b_name || "Team B"}
+            </p>
+            <form className="tournament-reschedule-form" onSubmit={submitResultForm}>
+              <label>
+                <span>{resultEntryMatch.team_a_name || "Team A"}</span>
+                <input
+                  type="number"
+                  min="0"
+                  inputMode="numeric"
+                  value={resultFormScoreA}
+                  onChange={(e) => setResultFormScoreA(e.target.value)}
+                  required
+                  autoFocus
+                />
+              </label>
+              <label>
+                <span>{resultEntryMatch.team_b_name || "Team B"}</span>
+                <input
+                  type="number"
+                  min="0"
+                  inputMode="numeric"
+                  value={resultFormScoreB}
+                  onChange={(e) => setResultFormScoreB(e.target.value)}
+                  required
+                />
+              </label>
+              {resultModalError ? <p className="vc-modal__error">{resultModalError}</p> : null}
+              <div className="tournament-modal-actions">
+                <button type="button" className="tournament-history-btn" onClick={closeResultForm} disabled={busy}>
+                  Cancel
+                </button>
+                <button type="submit" className="vc-action-btn" disabled={busy}>
+                  {busy ? "Saving…" : "Save result"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
       <header className="teams-page-header">
         <div className="teams-page-heading">
           <p className="teams-page-kicker">Tournament Center</p>
-          <h1>Tournament Setup, Pools, Bracket, Standings</h1>
+          <h1>Overview · Pools · Bracket · Matches</h1>
         </div>
       </header>
 
@@ -317,9 +733,9 @@ export default function TournamentsPage() {
       {message ? <p className="vc-director-success">{message}</p> : null}
 
       <div className="tournament-flow-tabs">
-        {(canManage ? TABS : TABS.filter((item) => item !== "setup")).map((item) => (
+        {tabList.map((item) => (
           <button key={item} type="button" className={`tournament-flow-tab${tab === item ? " is-active" : ""}`} onClick={() => setTab(item)}>
-            {item[0].toUpperCase() + item.slice(1)}
+            {formatTabLabel(item)}
           </button>
         ))}
       </div>
@@ -345,6 +761,79 @@ export default function TournamentsPage() {
         </aside>
 
         <main className="tournament-v2-panel">
+          {tab === "overview" ? (
+            <div className="tournament-v2-scroll tournament-overview">
+              {!selectedTournament ? (
+                <p>Select a tournament from the list.</p>
+              ) : (
+                <>
+                  <div className="tournament-overview__hero">
+                    <h2 className="tournament-overview__title">{selectedTournament.name}</h2>
+                    <p className="tournament-overview__meta">
+                      <span>Format: {selectedTournament.format?.replace(/_/g, " ")}</span>
+                      <span className="tournament-overview__sep">·</span>
+                      <span>Status: {selectedTournament.status}</span>
+                    </p>
+                    {overviewNarrative ? (
+                      <p
+                        className={`tournament-overview__narrative tournament-overview__narrative--${overviewNarrative.type}`}
+                        role="status"
+                      >
+                        {overviewNarrative.line}
+                      </p>
+                    ) : null}
+                  </div>
+                  {progressTracker.length ? (
+                    <div className="tournament-progress-strip">
+                      <p className="tournament-progress-strip__title">Progress</p>
+                      <ol className="tournament-progress-steps">
+                        {progressTracker.map((step) => (
+                          <li
+                            key={step.key}
+                            className={`tournament-progress-steps__item${step.done ? " is-done" : ""}${step.na ? " is-na" : ""}`}
+                          >
+                            <span className="tournament-progress-steps__mark" aria-hidden>
+                              {step.na ? "—" : step.done ? "✓" : "○"}
+                            </span>
+                            <span>{step.label}</span>
+                          </li>
+                        ))}
+                      </ol>
+                    </div>
+                  ) : null}
+                  <div className="tournament-overview__hints">
+                    <p className="tournament-overview__hints-title">When actions are blocked</p>
+                    <ul>
+                      {selectedTournament.format === "bracket_only" ? (
+                        <li>Bracket-only tournaments do not use pools — pool steps above are not applicable.</li>
+                      ) : null}
+                      {selectedTournament.format === "pool_only" ? (
+                        <li>Pool-only format has no elimination bracket — use pool results to finish the event.</li>
+                      ) : null}
+                      {selectedTournament.format === "pool_and_bracket" ? (
+                        <li>Complete all pool matches before generating the bracket.</li>
+                      ) : null}
+                      <li>Enter results to advance winners. Pool games update standings; bracket games advance the next round.</li>
+                      {generateBracketDisabledReason && selectedTournament.format === "pool_and_bracket" ? (
+                        <li>
+                          <strong>Generate Bracket (Setup):</strong> {generateBracketDisabledReason}
+                        </li>
+                      ) : null}
+                      {generateBracketDisabledReason && selectedTournament.format === "pool_only" ? (
+                        <li>
+                          <strong>Generate Bracket (Setup):</strong> {generateBracketDisabledReason}
+                        </li>
+                      ) : null}
+                    </ul>
+                  </div>
+                  <p className="tournament-matches-intro">
+                    Scheduled games appear on each team’s <strong>Schedule</strong> and coach <strong>Events</strong> with tournament details, time, and scores after you enter
+                    results.
+                  </p>
+                </>
+              )}
+            </div>
+          ) : null}
           {tab === "setup" ? (
             <form className="tournament-form-grid" onSubmit={createNewTournament}>
               <label><span>Name</span><input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} /></label>
@@ -433,14 +922,20 @@ export default function TournamentsPage() {
                   type="submit"
                   className="vc-action-btn"
                   disabled={!canSubmitTournament}
-                  title={submitBlockReason || "Create tournament, generate pools, and generate pool matches"}
+                  title={
+                    submitBlockReason ||
+                    (form.format === "bracket_only"
+                      ? "Create tournament and generate the bracket"
+                      : "Create tournament, generate pools, and generate pool matches")
+                  }
                 >
                   Generate Tournament
                 </button>
                 <button
                   type="button"
                   className="tournament-history-btn"
-                  disabled={!canGenerateBracket || busy}
+                  disabled={!canRunGenerateBracket || busy}
+                  title={generateBracketDisabledReason || "Generate the elimination bracket"}
                   onClick={() => runAction("bracket")}
                 >
                   Generate Bracket
@@ -452,23 +947,70 @@ export default function TournamentsPage() {
             </form>
           ) : null}
 
-          {tab === "pools" ? (
+          {tab === "matches" ? (
             <div className="tournament-v2-scroll">
-              {!poolMatches.length ? <p>No pool matches yet.</p> : (
+              <p className="tournament-matches-intro">
+                Operational list of every pool and bracket game (sort: start time). Same games sync to <strong>Schedule</strong> and <strong>Events</strong> for each team.
+              </p>
+              {!allMatchesSorted.length ? <p>No matches scheduled yet.</p> : (
                 <div className="tournament-fixtures-table-wrap">
-                  <table className="tournament-fixtures-table">
-                    <thead><tr><th>Pool</th><th>Match</th><th>Time</th><th>Court</th><th>Status</th><th>Action</th></tr></thead>
+                  <table className="tournament-fixtures-table tournament-fixtures-table--all-matches">
+                    <thead>
+                      <tr>
+                        <th>Date / time</th>
+                        <th>Stage</th>
+                        <th>Pool / round</th>
+                        <th>Team A</th>
+                        <th>Team B</th>
+                        <th>Outcome</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
                     <tbody>
-                      {poolMatches.map((match) => (
-                        <tr key={match.id}>
-                          <td>{match.pool_name}</td>
-                          <td>{match.team_a_name} vs {match.team_b_name}</td>
-                          <td>{match.scheduled_time ? new Date(match.scheduled_time).toLocaleString() : "-"}</td>
-                          <td>{match.location || "-"}</td>
-                          <td>{match.status}</td>
-                          <td>{(canManage || myMatchIds.has(match.id)) && match.status !== "completed" ? <button type="button" className="tournament-history-btn" onClick={() => enterResult(match)} disabled={busy}>Enter Result</button> : "-"}</td>
-                        </tr>
-                      ))}
+                      {allMatchesSorted.map((match) => {
+                        const scoreDone =
+                          match.status === "completed" &&
+                          match.team_a_score != null &&
+                          match.team_b_score != null;
+                        const stage = match.pool_id ? "Pool" : "Bracket";
+                        const roundCol = match.pool_name || match.bracket_round || "—";
+                        const bracketWait = getBracketWaitMessage(match, matches);
+                        const advanceBlurb = !match.pool_id ? getAdvanceBlurb(match, matchById) : null;
+                        return (
+                          <tr key={match.id}>
+                            <td>{match.scheduled_time ? new Date(match.scheduled_time).toLocaleString() : "—"}</td>
+                            <td>{stage}</td>
+                            <td>{roundCol}</td>
+                            <td>{match.team_a_name || "TBD"}</td>
+                            <td>{match.team_b_name || "TBD"}</td>
+                            <td>
+                              <MatchOutcomeLines
+                                match={match}
+                                bracketWait={!match.pool_id ? bracketWait : null}
+                                advanceBlurb={advanceBlurb}
+                              />
+                            </td>
+                            <td>{match.status}</td>
+                            <td>
+                              {scoreDone ? (
+                                "—"
+                              ) : canEnterResultForMatch(match) ? (
+                                <button
+                                  type="button"
+                                  className="tournament-history-btn"
+                                  onClick={() => openResultForm(match)}
+                                  disabled={busy}
+                                >
+                                  Enter result
+                                </button>
+                              ) : (
+                                "—"
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -476,49 +1018,209 @@ export default function TournamentsPage() {
             </div>
           ) : null}
 
+          {tab === "pools" ? (
+            <div className="tournament-v2-scroll">
+              {selectedTournament?.format === "bracket_only" ? (
+                <p className="schedule-feedback schedule-feedback--error">Bracket-only tournaments do not use pools. Use the Bracket and Matches tabs.</p>
+              ) : !poolGroups.length ? (
+                <p>No pool matches yet.</p>
+              ) : (
+                <>
+                  {poolGroups.map(([poolName, poolRoundMatches]) => (
+                    <section key={poolName} className="tournament-pool-block">
+                      <div className="tournament-fixture-section__head">
+                        <h3>{poolName}</h3>
+                        <span>{poolRoundMatches.length} matches</span>
+                      </div>
+                      <div className="tournament-fixtures-table-wrap">
+                        <table className="tournament-fixtures-table">
+                          <thead>
+                            <tr>
+                              <th>Time</th>
+                              <th>Match</th>
+                              <th>Court</th>
+                              <th>Status</th>
+                              <th>Outcome</th>
+                              <th>Action</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {poolRoundMatches.map((match) => {
+                              const scoreDone =
+                                match.status === "completed" &&
+                                match.team_a_score != null &&
+                                match.team_b_score != null;
+                              return (
+                                <tr key={match.id}>
+                                  <td>{match.scheduled_time ? new Date(match.scheduled_time).toLocaleString() : "—"}</td>
+                                  <td>
+                                    {match.team_a_name} vs {match.team_b_name}
+                                  </td>
+                                  <td>{match.location || "—"}</td>
+                                  <td>{match.status}</td>
+                                  <td>
+                                    <MatchOutcomeLines match={match} compact />
+                                  </td>
+                                  <td>
+                                    {scoreDone ? (
+                                      "—"
+                                    ) : canEnterResultForMatch(match) ? (
+                                      <button
+                                        type="button"
+                                        className="tournament-history-btn"
+                                        onClick={() => openResultForm(match)}
+                                        disabled={busy}
+                                      >
+                                        Enter result
+                                      </button>
+                                    ) : (
+                                      "—"
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </section>
+                  ))}
+                  <div className="tournament-pool-standings">
+                    <h3 className="tournament-pool-standings__title">Pool standings & rankings</h3>
+                    {!standings.length ? (
+                      <p>No standings yet. Generate pools and enter some results.</p>
+                    ) : (
+                      <>
+                        {selectedTournament && Number(selectedTournament.top_teams_advance_per_pool) > 0 ? (
+                          <p className="tournament-pool-standings__rule">
+                            Top {selectedTournament.top_teams_advance_per_pool} advance
+                            {selectedTournament.format === "pool_only" ? " (standings are final; no bracket)" : ""}
+                          </p>
+                        ) : null}
+                        {standings.map((pool) => (
+                        <section key={pool.pool_id} className="tournament-fixture-section">
+                          <div className="tournament-fixture-section__head">
+                            <h3>{pool.pool_name}</h3>
+                          </div>
+                          <div className="tournament-fixtures-table-wrap">
+                            <table className="tournament-fixtures-table tournament-fixtures-table--matches tournament-fixtures-table--standings">
+                              <thead>
+                                <tr>
+                                  <th className="tournament-standings-col-rank">Order</th>
+                                  <th>W</th>
+                                  <th>L</th>
+                                  <th>Pts</th>
+                                  <th>PD</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {pool.rows.map((row) => (
+                                  <tr
+                                    key={row.team_id}
+                                    className={row.advances ? "standing-row--qualified" : "standing-row--eliminated"}
+                                  >
+                                    <td className="tournament-standings-order-cell">
+                                      <span className="tournament-standings-order">
+                                        {row.rank}. {row.team_name}{" "}
+                                        <span className="tournament-standings-order__fate">
+                                          {row.advances ? "— Qualified" : "— Eliminated"}
+                                        </span>
+                                      </span>
+                                    </td>
+                                    <td>{row.wins}</td>
+                                    <td>{row.losses}</td>
+                                    <td>{row.points}</td>
+                                    <td>{row.point_difference}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </section>
+                        ))}
+                      </>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          ) : null}
+
           {tab === "bracket" ? (
             <div className="tournament-v2-scroll tournament-v2-bracket">
-              {!bracketRounds.length ? <p>Bracket will be available after pool matches are completed.</p> : bracketRounds.map((round) => (
+              {!bracketRounds.length ? (
+                <div className="tournament-bracket-empty">
+                  {bracketEmptyLines.map((line, idx) => (
+                    <p key={idx} className="tournament-bracket-empty__line">
+                      {line}
+                    </p>
+                  ))}
+                </div>
+              ) : bracketRoundsDisplayOrder.map((round) => (
                 <section key={round.name} className="tournament-fixture-section">
                   <div className="tournament-fixture-section__head"><h3>{round.name}</h3><span>{round.matches.length} matches</span></div>
-                  {round.matches.map((match) => (
-                    <article key={match.id} className="tournament-summary-card">
-                      <strong>{match.team_a_name || "TBD"} vs {match.team_b_name || "TBD"}</strong>
-                      <span>{match.winner_team_name ? `Winner: ${match.winner_team_name}` : "Winner pending"}</span>
+                  {round.matches.map((match) => {
+                    const scoreDone =
+                      match.status === "completed" &&
+                      match.team_a_score != null &&
+                      match.team_b_score != null;
+                    const aWin = scoreDone && match.winner_team_id && match.winner_team_id === match.team_a_id;
+                    const bWin = scoreDone && match.winner_team_id && match.winner_team_id === match.team_b_id;
+                    const aOut = scoreDone && match.loser_team_id && match.loser_team_id === match.team_a_id;
+                    const bOut = scoreDone && match.loser_team_id && match.loser_team_id === match.team_b_id;
+                    const bracketWait = getBracketWaitMessage(match, matches);
+                    const advanceBlurb = getAdvanceBlurb(match, matchById);
+                    return (
+                    <article
+                      key={match.id}
+                      className={`tournament-summary-card tournament-summary-card--bracket${scoreDone ? " is-finished" : ""}`}
+                    >
+                      <p className="tournament-bracket-card__id">Match {match.match_number}</p>
+                      <div className="tournament-bracket-teams" aria-label="Competitors">
+                        <div
+                          className={`tournament-bracket-teams__side${
+                            aWin ? " is-winner" : ""}${aOut ? " is-eliminated" : ""}`}
+                        >
+                          {match.team_a_name || "TBD"}
+                        </div>
+                        <span className="tournament-bracket-teams__vs">vs</span>
+                        <div
+                          className={`tournament-bracket-teams__side${
+                            bWin ? " is-winner" : ""}${bOut ? " is-eliminated" : ""}`}
+                        >
+                          {match.team_b_name || "TBD"}
+                        </div>
+                      </div>
+                      <MatchOutcomeLines
+                        match={match}
+                        bracketWait={bracketWait}
+                        advanceBlurb={advanceBlurb}
+                        showWaitPairLine={false}
+                      />
+                      <div className="tournament-bracket-card__action">
+                        {scoreDone ? (
+                          <span className="tournament-bracket-card__action-note">Result final</span>
+                        ) : canEnterResultForMatch(match) ? (
+                          <button
+                            type="button"
+                            className="tournament-history-btn"
+                            onClick={() => openResultForm(match)}
+                            disabled={busy}
+                          >
+                            Enter result
+                          </button>
+                        ) : (
+                          <span className="tournament-bracket-card__result-muted">—</span>
+                        )}
+                      </div>
                     </article>
-                  ))}
+                    );
+                  })}
                 </section>
               ))}
             </div>
           ) : null}
 
-          {tab === "standings" ? (
-            <div className="tournament-v2-scroll">
-              {!standings.length ? <p>No standings available yet.</p> : standings.map((pool) => (
-                <section key={pool.pool_id} className="tournament-fixture-section">
-                  <div className="tournament-fixture-section__head"><h3>{pool.pool_name}</h3></div>
-                  <div className="tournament-fixtures-table-wrap">
-                    <table className="tournament-fixtures-table tournament-fixtures-table--matches">
-                      <thead><tr><th>Rank</th><th>Team</th><th>W</th><th>L</th><th>Pts</th><th>PD</th><th>Advance</th></tr></thead>
-                      <tbody>
-                        {pool.rows.map((row) => (
-                          <tr key={row.team_id}>
-                            <td>{row.rank}</td>
-                            <td>{row.team_name}</td>
-                            <td>{row.wins}</td>
-                            <td>{row.losses}</td>
-                            <td>{row.points}</td>
-                            <td>{row.point_difference}</td>
-                            <td>{row.advances ? "Yes" : "-"}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </section>
-              ))}
-            </div>
-          ) : null}
         </main>
       </div>
     </section>

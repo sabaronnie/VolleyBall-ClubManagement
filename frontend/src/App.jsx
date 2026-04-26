@@ -556,6 +556,7 @@ function trainingSessionToScheduleEntry(session, weekStart, options = {}) {
     return null;
   }
   const isMatch = session.session_type === "match";
+  const isTournamentSession = session.match_type === "tournament";
   return {
     id: options.idPrefix ? `${options.idPrefix}-ts-${session.id}` : `ts-${session.id}`,
     weekday: diff,
@@ -565,6 +566,7 @@ function trainingSessionToScheduleEntry(session, weekStart, options = {}) {
     location: session.location || "",
     isTrainingSession: true,
     isMatchSession: isMatch,
+    isTournamentSession,
     sessionId: session.id,
     sessionTypeLabel: session.session_type_label || session.session_type || "Session",
     opponent: session.opponent || "",
@@ -733,7 +735,8 @@ function WeeklyScheduleBoard({ weekStart, entries, onSelectEntry, legendTeams })
                   const hz = scheduleEventHorizontalStyle(overlapLayout, entry.id);
                   const entryKey = String(entry.id);
                   const isHoverTarget = hoverTip && String(hoverTip.entry?.id) === entryKey;
-                  const scheduleTitle = entry.isMatchSession ? "Match" : entry.activity_name;
+                  const scheduleTitle = entry.activity_name
+                    || (entry.isTournamentSession ? "Tournament match" : entry.isMatchSession ? "Match" : "Session");
 
                   return (
                     <article
@@ -741,7 +744,7 @@ function WeeklyScheduleBoard({ weekStart, entries, onSelectEntry, legendTeams })
                       className={`schedule-event${entry.isTrainingSession ? " schedule-event--interactive" : ""}${
                         entry.teamColor ? " schedule-event--team-colored" : ""
                       }${entry.isMatchSession ? " schedule-event--match" : ""
-                      }`}
+                      }${entry.isTournamentSession ? " schedule-event--tournament" : ""}`}
                       style={{
                         top: `${(minutesFromTop / 60) * SCHEDULE_HOUR_HEIGHT}px`,
                         height: `${(durationMinutes / 60) * SCHEDULE_HOUR_HEIGHT}px`,
@@ -829,7 +832,11 @@ function WeeklyScheduleBoard({ weekStart, entries, onSelectEntry, legendTeams })
           ) : null}
           {hoverTip.entry.isTrainingSession ? (
             <div className="schedule-hover-popover__muted">
-              {hoverTip.entry.isMatchSession ? "Match" : "Training session"}
+              {hoverTip.entry.isTournamentSession
+                ? "Tournament match"
+                : hoverTip.entry.isMatchSession
+                  ? "Match"
+                  : "Training session"}
               {hoverTip.entry.opponent ? ` vs ${hoverTip.entry.opponent}` : ""}
             </div>
           ) : null}

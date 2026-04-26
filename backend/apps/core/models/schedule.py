@@ -111,6 +111,13 @@ class TrainingSession(models.Model):
         choices=Status.choices,
         default=Status.SCHEDULED,
     )
+    tournament_match = models.ForeignKey(
+        "core.TournamentMatch",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="calendar_training_sessions",
+    )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -123,6 +130,13 @@ class TrainingSession(models.Model):
 
     class Meta:
         ordering = ["scheduled_date", "start_time", "title"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tournament_match", "team"],
+                condition=models.Q(tournament_match__isnull=False),
+                name="uniq_trainingsession_tournament_match_team",
+            ),
+        ]
 
     def __str__(self) -> str:
         return f"{self.team} - {self.title} ({self.scheduled_date.isoformat()})"
