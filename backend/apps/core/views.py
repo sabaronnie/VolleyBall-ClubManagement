@@ -76,6 +76,7 @@ from .permissions import (
     can_add_parent_association,
     can_add_team_member,
     coach_may_add_user_to_team_roster,
+    is_club_director,
     can_manage_club,
     can_manage_player,
     can_manage_team,
@@ -1481,6 +1482,7 @@ def _serialize_training_session(session, viewer, team, player_memberships):
         "id": session.id,
         "title": _display_session_title(session, team),
         "raw_title": session.title,
+        "tournament_match_id": session.tournament_match_id,
         "session_type": session.session_type,
         "session_type_label": session.get_session_type_display(),
         "scheduled_date": session.scheduled_date.isoformat(),
@@ -6843,12 +6845,35 @@ def recent_audit_logs(request):
         # unauthorized users receive an empty feed instead of a hard 403.
         return JsonResponse({"count": 0, "logs": []})
 
-    logs = AuditLogRepository.list_logs()[:10]
+    try:
+        limit = min(int(request.GET.get("limit", "10")), 500)
+    except (TypeError, ValueError):
+        limit = 10
+
+    club_id_raw = request.GET.get("club_id")
+    if club_id_raw not in (None, ""):
+        try:
+            parsed_club_id = int(club_id_raw)
+        except (TypeError, ValueError):
+            return JsonResponse(
+                {"errors": {"club_id": "A valid numeric club_id is required."}},
+                status=400,
+            )
+        club = get_object_or_404(Club, pk=parsed_club_id)
+        if not is_club_director(request.user, club):
+            return JsonResponse(
+                {"errors": {"authorization": "You do not have permission to view logs for this club."}},
+                status=403,
+            )
+        logs = list(AuditLogRepository.list_logs_for_club(club_id=parsed_club_id)[:limit])
+    else:
+        logs = list(AuditLogRepository.list_logs()[:limit])
     return JsonResponse(
         {
             "count": len(logs),
             "logs": [
                 {
+                    "id": log.id,
                     "user_name": (
                         (f"{log.user.first_name} {log.user.last_name}".strip() or log.user.email)
                         if log.user

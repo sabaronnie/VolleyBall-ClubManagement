@@ -500,8 +500,13 @@ export async function fetchDirectorPaymentOverview(clubId) {
   return authenticatedGet(`/api/clubs/${clubId}/director/payments/overview/`);
 }
 
-export async function fetchRecentAuditLogs() {
-  return authenticatedGet("/api/audit-logs/recent/");
+export async function fetchRecentAuditLogs(limit = 10, clubId = null) {
+  const p = new URLSearchParams();
+  p.set("limit", String(limit));
+  if (clubId != null && clubId !== "") {
+    p.set("club_id", String(clubId));
+  }
+  return authenticatedGet(`/api/audit-logs/recent/?${p.toString()}`);
 }
 
 export async function fetchDirectorPaymentLookupPlayer(clubId, playerId) {

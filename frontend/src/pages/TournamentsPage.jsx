@@ -22,6 +22,30 @@ function formatTabLabel(tabId) {
   return labels[tabId] || tabId.charAt(0).toUpperCase() + tabId.slice(1);
 }
 
+/** Local scheduled start: date and time on two lines, no seconds. */
+function TournamentStartCell({ iso }) {
+  if (!iso) {
+    return "—";
+  }
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) {
+    return "—";
+  }
+  const dateStr = d.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+  const timeStr = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return (
+    <span className="tournament-time-cell">
+      <span className="tournament-time-cell__date">{dateStr}</span>
+      <span className="tournament-time-cell__time">{timeStr}</span>
+    </span>
+  );
+}
+
 const FORMATS = [
   { value: "pool_only", label: "Pool Play" },
   { value: "bracket_only", label: "Bracket" },
@@ -957,7 +981,7 @@ export default function TournamentsPage() {
                   <table className="tournament-fixtures-table tournament-fixtures-table--all-matches">
                     <thead>
                       <tr>
-                        <th>Date / time</th>
+                        <th>Scheduled start (your time)</th>
                         <th>Stage</th>
                         <th>Pool / round</th>
                         <th>Team A</th>
@@ -979,7 +1003,9 @@ export default function TournamentsPage() {
                         const advanceBlurb = !match.pool_id ? getAdvanceBlurb(match, matchById) : null;
                         return (
                           <tr key={match.id}>
-                            <td>{match.scheduled_time ? new Date(match.scheduled_time).toLocaleString() : "—"}</td>
+                            <td>
+                              <TournamentStartCell iso={match.scheduled_time} />
+                            </td>
                             <td>{stage}</td>
                             <td>{roundCol}</td>
                             <td>{match.team_a_name || "TBD"}</td>
@@ -1036,7 +1062,7 @@ export default function TournamentsPage() {
                         <table className="tournament-fixtures-table">
                           <thead>
                             <tr>
-                              <th>Time</th>
+                              <th>Scheduled start (your time)</th>
                               <th>Match</th>
                               <th>Court</th>
                               <th>Status</th>
@@ -1052,7 +1078,9 @@ export default function TournamentsPage() {
                                 match.team_b_score != null;
                               return (
                                 <tr key={match.id}>
-                                  <td>{match.scheduled_time ? new Date(match.scheduled_time).toLocaleString() : "—"}</td>
+                                  <td>
+                                    <TournamentStartCell iso={match.scheduled_time} />
+                                  </td>
                                   <td>
                                     {match.team_a_name} vs {match.team_b_name}
                                   </td>

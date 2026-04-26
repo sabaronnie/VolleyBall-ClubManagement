@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { fetchCurrentUser, fetchDirectorPaymentLogs } from "../api";
+import { fetchCurrentUser, fetchDirectorPaymentLogs, fetchRecentAuditLogs } from "../api";
 import { navigate } from "../navigation";
+import { toReadableAction } from "../utils/auditLogDisplay";
 
 const AUTH_TOKEN_KEY = "netup.auth.token";
 const CLUB_STORAGE_KEY = "netup.director.payment.club_id";
@@ -18,10 +19,18 @@ export default function DirectorPaymentLogsPage({
 }) {
   const initialClubId = useMemo(parseClubId, []);
   const [ownedClubs, setOwnedClubs] = useState([]);
+  const [viewerIsStaff, setViewerIsStaff] = useState(false);
+  const [meReady, setMeReady] = useState(false);
   const [clubId, setClubId] = useState(initialClubId);
-  const [logs, setLogs] = useState([]);
-  const [loading, setLoading] = useState(true);
+  /** Director payment log rows (full-page / payment-only view; not used when embedded in dashboard). */
+  const [paymentLogs, setPaymentLogs] = useState([]);
+  /** General audit log rows (dashboard embed — same family as “Recent Activity”). */
+  const [activityLogs, setActivityLogs] = useState([]);
+  const [logsLoading, setLogsLoading] = useState(false);
   const [error, setError] = useState("");
+
+  const canViewLogs =
+    (Array.isArray(ownedClubs) && ownedClubs.length > 0) || viewerIsStaff;
 
   useEffect(() => {
     if (!localStorage.getItem(AUTH_TOKEN_KEY)) {
@@ -34,19 +43,34 @@ export default function DirectorPaymentLogsPage({
     (async () => {
       try {
         const me = await fetchCurrentUser();
-        const clubs = me.owned_clubs || [];
         if (cancelled) {
           return;
         }
+        const clubs = me.owned_clubs || [];
+        const staff = me.viewer_is_staff === true;
+        setViewerIsStaff(staff);
         setOwnedClubs(clubs);
         setClubId((current) => {
-          if (preferredClubId && clubs.some((c) => c.id === Number(preferredClubId))) {
-            return Number(preferredClubId);
+          if (preferredClubId) {
+            const n = Number(preferredClubId);
+            if (clubs.some((c) => c.id === n)) {
+              return n;
+            }
+            if (staff) {
+              return n;
+            }
           }
           if (current) {
-            return current;
+            if (staff || clubs.some((c) => c.id === current)) {
+              return current;
+            }
           }
           if (!clubs.length) {
+            if (staff) {
+              if (initialClubId) {
+                return initialClubId;
+              }
+            }
             return current;
           }
           const stored = sessionStorage.getItem(CLUB_STORAGE_KEY);
@@ -59,42 +83,126 @@ export default function DirectorPaymentLogsPage({
       } catch {
         if (!cancelled) {
           setOwnedClubs([]);
+          setViewerIsStaff(false);
+        }
+      } finally {
+        if (!cancelled) {
+          setMeReady(true);
         }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [preferredClubId]);
+  }, [preferredClubId, initialClubId]);
 
   useEffect(() => {
-    if (preferredClubId && ownedClubs.some((club) => club.id === Number(preferredClubId))) {
-      setClubId(Number(preferredClubId));
-    }
-  }, [preferredClubId, ownedClubs]);
-
-  const loadLogs = useCallback(async () => {
-    if (!clubId) {
-      setLogs([]);
-      setLoading(false);
+    if (!preferredClubId) {
       return;
     }
-    setLoading(true);
+    const n = Number(preferredClubId);
+    if (ownedClubs.some((club) => club.id === n)) {
+      setClubId(n);
+    } else if (viewerIsStaff) {
+      setClubId(n);
+    }
+  }, [preferredClubId, ownedClubs, viewerIsStaff]);
+
+  const loadLogs = useCallback(async () => {
+    if (!meReady) {
+      return;
+    }
+    if (!canViewLogs || !clubId) {
+      setPaymentLogs([]);
+      setActivityLogs([]);
+      setLogsLoading(false);
+      return;
+    }
+    setLogsLoading(true);
     setError("");
     try {
-      const payload = await fetchDirectorPaymentLogs(clubId, 200);
-      setLogs(payload.logs || []);
+      if (embedded) {
+        setPaymentLogs([]);
+        const payload = await fetchRecentAuditLogs(200, clubId);
+        setActivityLogs(Array.isArray(payload.logs) ? payload.logs : []);
+      } else {
+        setActivityLogs([]);
+        const payload = await fetchDirectorPaymentLogs(clubId, 200);
+        setPaymentLogs(payload.logs || []);
+      }
     } catch (err) {
-      setError(err.message || "Could not load logs.");
-      setLogs([]);
+      const msg = err.message || "Could not load logs.";
+      const lower = String(msg).toLowerCase();
+      if (
+        lower.includes("only a director") ||
+        lower.includes("authorization") ||
+        lower.includes("forbidden")
+      ) {
+        setError("You do not have permission to view logs for this club.");
+      } else {
+        setError(msg);
+      }
+      setPaymentLogs([]);
+      setActivityLogs([]);
     } finally {
-      setLoading(false);
+      setLogsLoading(false);
     }
-  }, [clubId]);
+  }, [meReady, canViewLogs, clubId, embedded]);
 
   useEffect(() => {
     loadLogs();
   }, [loadLogs]);
+
+  if (!meReady) {
+    return embedded ? (
+      <div className="vc-director-card vc-director-card--embedded">
+        <p className="vc-director-loading">Loading…</p>
+      </div>
+    ) : (
+      <div className="vc-director-page">
+        <div className="vc-director-card">
+          <button type="button" className="vc-director-back" onClick={() => navigate("/dashboard")}>
+            ← Return to Dashboard
+          </button>
+          <p className="vc-director-loading">Loading…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!canViewLogs) {
+    return embedded ? (
+      <div className="vc-director-card vc-director-card--embedded">
+        <p className="vc-director-loading">You do not have permission to view logs for this club.</p>
+      </div>
+    ) : (
+      <div className="vc-director-page">
+        <div className="vc-director-card">
+          <button type="button" className="vc-director-back" onClick={() => navigate("/dashboard")}>
+            ← Return to Dashboard
+          </button>
+          <p className="vc-director-loading">You do not have permission to view logs for this club.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!clubId) {
+    return embedded ? (
+      <div className="vc-director-card vc-director-card--embedded">
+        <p className="vc-director-loading">Select a club to view logs.</p>
+      </div>
+    ) : (
+      <div className="vc-director-page">
+        <div className="vc-director-card">
+          <button type="button" className="vc-director-back" onClick={() => navigate("/dashboard")}>
+            ← Return to Dashboard
+          </button>
+          <p className="vc-director-loading">Select a club to view logs.</p>
+        </div>
+      </div>
+    );
+  }
 
   const cardContent = (
     <div className={`vc-director-card${embedded ? " vc-director-card--embedded" : ""}`}>
@@ -146,8 +254,41 @@ export default function DirectorPaymentLogsPage({
         ) : null}
 
         <section className="vc-director-section">
-          {loading ? (
+          {logsLoading ? (
             <p className="vc-director-loading">Loading…</p>
+          ) : embedded ? (
+            <div className="vc-director-table-wrap">
+              <table className="vc-director-table">
+                <thead>
+                  <tr>
+                    <th>When</th>
+                    <th>User</th>
+                    <th>Action</th>
+                    <th>Context</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {activityLogs.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} style={{ color: "#6b7580", fontWeight: 600 }}>
+                        No logs recorded yet.
+                      </td>
+                    </tr>
+                  ) : (
+                    activityLogs.map((log) => (
+                      <tr key={log.id}>
+                        <td>{new Date(log.timestamp).toLocaleString()}</td>
+                        <td>{log.user_name || "—"}</td>
+                        <td>{toReadableAction(log.action_type)}</td>
+                        <td style={{ maxWidth: 360, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                          {String(log.entity_type || "").trim() || "—"}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           ) : (
             <div className="vc-director-table-wrap">
               <table className="vc-director-table">
@@ -160,14 +301,14 @@ export default function DirectorPaymentLogsPage({
                   </tr>
                 </thead>
                 <tbody>
-                  {logs.length === 0 ? (
+                  {paymentLogs.length === 0 ? (
                     <tr>
                       <td colSpan={4} style={{ color: "#6b7580", fontWeight: 600 }}>
-                        No activity logged yet for this club.
+                        No logs recorded yet.
                       </td>
                     </tr>
                   ) : (
-                    logs.map((log) => (
+                    paymentLogs.map((log) => (
                       <tr key={log.id}>
                         <td>{new Date(log.created_at).toLocaleString()}</td>
                         <td>{log.actor.display_name}</td>
@@ -185,23 +326,6 @@ export default function DirectorPaymentLogsPage({
         </section>
       </div>
   );
-
-  if (!ownedClubs.length && !loading) {
-    return embedded ? (
-      <div className="vc-director-card vc-director-card--embedded">
-        <p className="vc-director-loading">You are not a club director, or you have no clubs yet.</p>
-      </div>
-    ) : (
-      <div className="vc-director-page">
-        <div className="vc-director-card">
-          <button type="button" className="vc-director-back" onClick={() => navigate("/dashboard")}>
-            ← Return to Dashboard
-          </button>
-          <p className="vc-director-loading">You are not a club director, or you have no clubs yet.</p>
-        </div>
-      </div>
-    );
-  }
 
   if (embedded) {
     return cardContent;

@@ -843,7 +843,7 @@ export default function DashboardPage({
     let cancelled = false;
     setRecentActivityLoading(true);
     setRecentActivityError("");
-    void fetchRecentAuditLogs()
+    void fetchRecentAuditLogs(10, clubId)
       .then((payload) => {
         if (cancelled) {
           return;
@@ -865,7 +865,7 @@ export default function DashboardPage({
     return () => {
       cancelled = true;
     };
-  }, [showWorkspace, isCoachWorkspace, canSeeRecentActivity]);
+  }, [showWorkspace, isCoachWorkspace, canSeeRecentActivity, clubId]);
 
   const dashboardTitle = isCoachWorkspace
     ? isAllTeamsSelected
@@ -1172,7 +1172,7 @@ export default function DashboardPage({
             <DirectorDashboardDropdown
               id="dashboard-logs"
               title="Logs"
-              description="Audit recent payment activity for the active club."
+              description="Review the same recent audit feed as the dashboard (tournaments, fees, and more) for the active club."
               isOpen={openDirectorSection === "logs"}
               onToggle={() => toggleDirectorSection("logs")}
             >

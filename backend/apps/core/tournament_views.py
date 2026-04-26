@@ -1,7 +1,7 @@
 import json
 import random
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 
 from django.db import transaction
 from django.db.models import Q
@@ -28,6 +28,13 @@ from .services.audit_log_service import AuditLogService
 from .services.tournament_calendar_service import (
     sync_all_matches_in_tournament,
     sync_calendar_sessions_for_tournament_match,
+)
+from .services.tournament_scheduling import (
+    build_bracket_match_schedule,
+    build_pool_match_schedule,
+    snap_start_to_30min,
+    tournament_day_anchor,
+    effective_match_duration_minutes,
 )
 
 
@@ -378,6 +385,7 @@ def tournaments(request):
         created_by=request.user,
         name=name,
         start_date=start_date,
+        start_time=time(9, 0),
         venue=location,
         tournament_type=format_code,
         status=Tournament.Status.DRAFT,
@@ -507,32 +515,28 @@ def generate_pool_matches(request, tournament_id):
     with transaction.atomic():
         existing.delete()
         match_number = 1
-        now = timezone.now()
-        for pool in Pool.objects.filter(tournament=tournament).order_by("id"):
+        pool_rows = list(Pool.objects.filter(tournament=tournament).order_by("id"))
+        pool_rounds = []
+        for pool in pool_rows:
             team_ids = list(
-                TournamentTeam.objects.filter(tournament=tournament, pool=pool).order_by("seed", "id").values_list("team_id", flat=True)
+                TournamentTeam.objects.filter(tournament=tournament, pool=pool)
+                .order_by("seed", "id")
+                .values_list("team_id", flat=True)
             )
-            rounds = _round_robin_pairs(team_ids)
-            seen = set()
-            for round_index, pairings in enumerate(rounds):
-                for court_idx, (team_a_id, team_b_id) in enumerate(pairings, start=1):
-                    if team_a_id == team_b_id:
-                        continue
-                    sig = tuple(sorted((team_a_id, team_b_id)))
-                    if sig in seen:
-                        continue
-                    seen.add(sig)
-                    TournamentMatch.objects.create(
-                        tournament=tournament,
-                        pool=pool,
-                        match_number=match_number,
-                        team_a_id=team_a_id,
-                        team_b_id=team_b_id,
-                        scheduled_time=now + timedelta(days=round_index, hours=court_idx),
-                        location=f"Court {court_idx}",
-                        status=TournamentMatch.MatchStatus.SCHEDULED,
-                    )
-                    match_number += 1
+            pool_rounds.append((pool, _round_robin_pairs(team_ids)))
+        plan = build_pool_match_schedule(tournament, pool_rounds)
+        for item in plan:
+            TournamentMatch.objects.create(
+                tournament=tournament,
+                pool=item["pool"],
+                match_number=match_number,
+                team_a_id=item["team_a_id"],
+                team_b_id=item["team_b_id"],
+                scheduled_time=item["scheduled_time"],
+                location=str(item["location"]),
+                status=TournamentMatch.MatchStatus.SCHEDULED,
+            )
+            match_number += 1
     AuditLogService.log_action(
         user=request.user, action_type="pool_matches_generated", entity_type="tournament", entity_id=tournament.id
     )
@@ -559,6 +563,14 @@ def generate_bracket(request, tournament_id):
     existing_bracket = TournamentMatch.objects.filter(tournament=tournament, pool__isnull=True)
     if existing_bracket.filter(status__in=[TournamentMatch.MatchStatus.ONGOING, TournamentMatch.MatchStatus.COMPLETED]).exists():
         return JsonResponse({"errors": {"bracket": "Bracket already started and cannot be regenerated."}}, status=400)
+    pool_planned = TournamentMatch.objects.filter(
+        tournament=tournament, pool__isnull=False, scheduled_time__isnull=False
+    )
+    if pool_planned.exists():
+        last_pool_start = max(m.scheduled_time for m in pool_planned)
+        bracket_run_start = snap_start_to_30min(last_pool_start + timedelta(minutes=30))
+    else:
+        bracket_run_start = snap_start_to_30min(tournament_day_anchor(tournament))
     with transaction.atomic():
         existing_bracket.delete()
         qualifiers = []
@@ -580,7 +592,6 @@ def generate_bracket(request, tournament_id):
             bracket_size *= 2
         qualifiers += [None] * (bracket_size - len(qualifiers))
         round_name = "Semi-Final" if bracket_size == 4 else "Quarter-Final"
-        now = timezone.now()
         round_matches = []
         match_number = TournamentMatch.objects.filter(tournament=tournament).count() + 1
         for idx in range(bracket_size // 2):
@@ -592,8 +603,8 @@ def generate_bracket(request, tournament_id):
                 match_number=match_number,
                 team_a_id=a,
                 team_b_id=b,
-                scheduled_time=now + timedelta(days=1, hours=idx),
-                location=f"Court {idx + 1}",
+                scheduled_time=bracket_run_start,
+                location="Court 1",
                 status=TournamentMatch.MatchStatus.SCHEDULED,
             )
             round_matches.append(match)
@@ -606,8 +617,8 @@ def generate_bracket(request, tournament_id):
                     tournament=tournament,
                     bracket_round=next_round_name,
                     match_number=match_number + idx,
-                    scheduled_time=now + timedelta(days=2, hours=idx),
-                    location=f"Court {idx + 1}",
+                    scheduled_time=bracket_run_start,
+                    location="Court 1",
                     status=TournamentMatch.MatchStatus.SCHEDULED,
                 )
             )
@@ -621,6 +632,18 @@ def generate_bracket(request, tournament_id):
                 match.status = TournamentMatch.MatchStatus.COMPLETED
                 match.save(update_fields=["winner_team", "status", "updated_at"])
                 _advance_winner(match)
+        # Realistic, non-overlapping times & courts; bracket_run_start is after pool play when applicable.
+        bracket_list = list(
+            TournamentMatch.objects.filter(tournament=tournament, pool__isnull=True)
+            .select_related("tournament")
+            .order_by("id")
+        )
+        for match_obj, st, loc in build_bracket_match_schedule(
+            tournament, bracket_list, first_round_start=bracket_run_start
+        ):
+            match_obj.scheduled_time = st
+            match_obj.location = loc
+            match_obj.save(update_fields=["scheduled_time", "location", "updated_at"])
         tournament.status = Tournament.Status.BRACKET_STAGE
         tournament.save(update_fields=["status", "updated_at"])
     AuditLogService.log_action(

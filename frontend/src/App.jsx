@@ -408,6 +408,25 @@ function buildScheduleRows() {
   );
 }
 
+/** All-teams view merges two TrainingSessions per match; keep one full-width card. */
+function dedupeScheduleEntriesByTournamentMatch(entries) {
+  const seen = new Set();
+  const out = [];
+  for (const e of entries) {
+    if (e.tournamentMatchId) {
+      const k = String(e.tournamentMatchId);
+      if (seen.has(k)) {
+        continue;
+      }
+      seen.add(k);
+      out.push({ ...e, id: `tm-${k}` });
+      continue;
+    }
+    out.push(e);
+  }
+  return out;
+}
+
 function formatHourLabel(hour) {
   return formatTime12h(`${String(hour).padStart(2, "0")}:00`);
 }
@@ -424,7 +443,16 @@ function normalizeScheduleEntries(entries) {
       location: entry.location || "",
       teamColor: entry.teamColor,
       teamName: entry.teamName,
-      isTrainingSession: entry.isTrainingSession,
+      isTrainingSession: Boolean(entry.isTrainingSession),
+      isMatchSession: Boolean(entry.isMatchSession),
+      isTournamentSession: Boolean(entry.isTournamentSession),
+      sessionId: entry.sessionId,
+      sessionTypeLabel: entry.sessionTypeLabel,
+      opponent: entry.opponent,
+      statusLabel: entry.statusLabel,
+      tournamentMatchId: entry.tournamentMatchId,
+      sessionNotes: entry.sessionNotes,
+      isMatchEnded: entry.isMatchEnded,
     }));
 }
 
@@ -535,7 +563,7 @@ function scheduleEventHorizontalStyle(layout, entryId) {
   const availablePercent = 100;
   const columnGapPercent = 2;
   const totalGapPercent = Math.max(0, maxCols - 1) * columnGapPercent;
-  const columnWidthPercent = Math.max(18, (availablePercent - totalGapPercent) / maxCols);
+  const columnWidthPercent = Math.max(26, (availablePercent - totalGapPercent) / maxCols);
   const leftPercent = col * (columnWidthPercent + columnGapPercent);
   const rightPercent = Math.max(0, availablePercent - leftPercent - columnWidthPercent);
 
@@ -557,10 +585,14 @@ function trainingSessionToScheduleEntry(session, weekStart, options = {}) {
   }
   const isMatch = session.session_type === "match";
   const isTournamentSession = session.match_type === "tournament";
+  const multilineTitle =
+    isTournamentSession && session.raw_title
+      ? session.raw_title
+      : session.title || (isMatch ? "Match" : "Session");
   return {
     id: options.idPrefix ? `${options.idPrefix}-ts-${session.id}` : `ts-${session.id}`,
     weekday: diff,
-    activity_name: session.title || (isMatch ? "Match" : "Session"),
+    activity_name: multilineTitle,
     start_time: session.start_time || "",
     end_time: session.end_time || "",
     location: session.location || "",
@@ -572,6 +604,10 @@ function trainingSessionToScheduleEntry(session, weekStart, options = {}) {
     opponent: session.opponent || "",
     teamColor: options.teamColor,
     teamName: options.teamName,
+    tournamentMatchId: session.tournament_match_id || null,
+    statusLabel: session.status_label || "",
+    sessionNotes: session.notes || "",
+    isMatchEnded: Boolean(session.is_ended),
   };
 }
 
@@ -776,10 +812,27 @@ function WeeklyScheduleBoard({ weekStart, entries, onSelectEntry, legendTeams })
                         }
                       }}
                     >
-                      <strong>{scheduleTitle}</strong>
-                      <span className="schedule-event__time">
-                        {formatTimeRange12h(entry.start_time, entry.end_time)}
-                      </span>
+                      {entry.isTournamentSession ? (
+                        <div className="schedule-event__tournament-wrap">
+                          <div className="schedule-event__tournament-title">{scheduleTitle}</div>
+                          <span className="schedule-event__time">
+                            {formatTimeRange12h(entry.start_time, entry.end_time)}
+                          </span>
+                          {entry.location ? (
+                            <em className="schedule-event__tournament-meta">{entry.location}</em>
+                          ) : null}
+                          {!entry.isMatchEnded ? (
+                            <em className="schedule-event__tournament-meta">Status: Not played yet</em>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <>
+                          <strong>{scheduleTitle}</strong>
+                          <span className="schedule-event__time">
+                            {formatTimeRange12h(entry.start_time, entry.end_time)}
+                          </span>
+                        </>
+                      )}
                     </article>
                   );
                 })}
@@ -811,7 +864,15 @@ function WeeklyScheduleBoard({ weekStart, entries, onSelectEntry, legendTeams })
           }}
           role="tooltip"
         >
-          <div className="schedule-hover-popover__title">{hoverTip.entry.activity_name}</div>
+          <div
+            className={
+              hoverTip.entry.isTournamentSession
+                ? "schedule-hover-popover__title schedule-hover-popover__title--pre"
+                : "schedule-hover-popover__title"
+            }
+          >
+            {hoverTip.entry.activity_name}
+          </div>
           {hoverTip.entry.teamName ? (
             <div className="schedule-hover-popover__row">
               <span className="schedule-hover-popover__label">Team</span>
@@ -830,13 +891,19 @@ function WeeklyScheduleBoard({ weekStart, entries, onSelectEntry, legendTeams })
               <span>{hoverTip.entry.location}</span>
             </div>
           ) : null}
-          {hoverTip.entry.isTrainingSession ? (
+          {hoverTip.entry.isTournamentSession && !hoverTip.entry.isMatchEnded ? (
+            <div className="schedule-hover-popover__row">
+              <span className="schedule-hover-popover__label">Status</span>
+              <span>Not played yet</span>
+            </div>
+          ) : null}
+          {hoverTip.entry.isTrainingSession && hoverTip.entry.sessionNotes?.trim() ? (
+            <div className="schedule-hover-popover__muted schedule-hover-popover__notes">
+              {hoverTip.entry.sessionNotes}
+            </div>
+          ) : !hoverTip.entry.isTournamentSession ? (
             <div className="schedule-hover-popover__muted">
-              {hoverTip.entry.isTournamentSession
-                ? "Tournament match"
-                : hoverTip.entry.isMatchSession
-                  ? "Match"
-                  : "Training session"}
+              {hoverTip.entry.isMatchSession ? "Match" : "Training session"}
               {hoverTip.entry.opponent ? ` vs ${hoverTip.entry.opponent}` : ""}
             </div>
           ) : null}
@@ -1371,7 +1438,11 @@ function App() {
           } catch (e) {
             // ignore training fetch errors — schedule still shows static entries
           }
-          setSchedulePayload({ week_start: weekStart, entries: mergedEntries, legend });
+          setSchedulePayload({
+            week_start: weekStart,
+            entries: dedupeScheduleEntriesByTournamentMatch(mergedEntries),
+            legend,
+          });
           setDraftEntries([emptyScheduleEntry()]);
         } else {
           const payload = await fetchTeamSchedule(activeTeamId);

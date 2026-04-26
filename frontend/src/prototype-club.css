@@ -4136,6 +4136,26 @@
   color: #3d4a5c;
 }
 
+.tournament-time-cell {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  line-height: 1.25;
+}
+
+.tournament-time-cell__date {
+  font-weight: 600;
+  color: #1a2330;
+  font-size: 0.88rem;
+}
+
+.tournament-time-cell__time {
+  font-size: 0.82rem;
+  color: #5a6570;
+  font-variant-numeric: tabular-nums;
+}
+
 .tournament-overview {
   display: flex;
   flex-direction: column;
