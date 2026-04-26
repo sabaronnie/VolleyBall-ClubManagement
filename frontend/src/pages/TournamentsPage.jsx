@@ -11,6 +11,7 @@ import {
   generateTournamentBracket,
   generateTournamentPoolMatches,
   generateTournamentPools,
+  rescheduleTournamentMatch,
   submitTournamentMatchResult,
 } from "../api";
 
@@ -22,8 +23,8 @@ function formatTabLabel(tabId) {
   return labels[tabId] || tabId.charAt(0).toUpperCase() + tabId.slice(1);
 }
 
-/** Local scheduled start: date and time on two lines, no seconds. */
-function TournamentStartCell({ iso }) {
+/** Local date + time range (aligns with Schedule session start/end from the same source). */
+function TournamentStartCell({ iso, endIso }) {
   if (!iso) {
     return "—";
   }
@@ -37,13 +38,61 @@ function TournamentStartCell({ iso }) {
     day: "numeric",
     year: "numeric",
   });
-  const timeStr = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const opt = { hour: "numeric", minute: "2-digit" };
+  const timeStr = d.toLocaleTimeString(undefined, opt);
+  let timeLine = timeStr;
+  if (endIso) {
+    const e = new Date(endIso);
+    if (Number.isFinite(e.getTime())) {
+      timeLine = `${timeStr} – ${e.toLocaleTimeString(undefined, opt)}`;
+    }
+  }
   return (
     <span className="tournament-time-cell">
       <span className="tournament-time-cell__date">{dateStr}</span>
-      <span className="tournament-time-cell__time">{timeStr}</span>
+      <span className="tournament-time-cell__time">{timeLine}</span>
     </span>
   );
+}
+
+function isoToDatetimeLocalValue(iso) {
+  if (!iso) {
+    return "";
+  }
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) {
+    return "";
+  }
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** Date + time range for Bracket / Matches cards; matches Schedule when API sends scheduled_end_time. */
+function formatBracketWhenWhereLine(match, tournament) {
+  if (!match?.scheduled_time) {
+    return { when: null, where: null };
+  }
+  const start = new Date(match.scheduled_time);
+  if (!Number.isFinite(start.getTime())) {
+    return { when: null, where: null };
+  }
+  let end = match.scheduled_end_time ? new Date(match.scheduled_end_time) : null;
+  if (!end || !Number.isFinite(end.getTime())) {
+    const dur = Number(match.duration_minutes) || Number(tournament?.match_duration_minutes) || 90;
+    end = new Date(start.getTime() + dur * 60 * 1000);
+  }
+  const dateLine = start.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+  const opt = { hour: "numeric", minute: "2-digit" };
+  const t1 = start.toLocaleTimeString(undefined, opt);
+  const t2 = Number.isFinite(end.getTime()) ? end.toLocaleTimeString(undefined, opt) : t1;
+  return {
+    when: `${dateLine} · ${t1} – ${t2}`,
+    where: (match.location && String(match.location).trim()) || null,
+  };
 }
 
 const FORMATS = [
@@ -152,6 +201,9 @@ export default function TournamentsPage() {
     name: "",
     location: "",
     start_date: new Date().toISOString().slice(0, 10),
+    start_time: "09:00",
+    match_duration_minutes: 90,
+    court_count: 1,
     format: "pool_and_bracket",
     number_of_pools: 2,
     teams_per_pool: 4,
@@ -164,6 +216,9 @@ export default function TournamentsPage() {
   const [resultFormScoreA, setResultFormScoreA] = useState("");
   const [resultFormScoreB, setResultFormScoreB] = useState("");
   const [resultModalError, setResultModalError] = useState("");
+  const [scheduleEditMatch, setScheduleEditMatch] = useState(null);
+  const [scheduleForm, setScheduleForm] = useState({ datetimeLocal: "", duration: 90, location: "" });
+  const [scheduleModalError, setScheduleModalError] = useState("");
 
   const canManage = Boolean(me?.is_director_or_staff || me?.viewer_is_staff);
   const selectedTournament = useMemo(
@@ -501,6 +556,9 @@ export default function TournamentsPage() {
         number_of_pools: Number(form.number_of_pools),
         teams_per_pool: Number(form.teams_per_pool),
         top_teams_advance_per_pool: Number(form.top_teams_advance_per_pool),
+        court_count: Math.min(8, Math.max(1, Number(form.court_count) || 1)),
+        start_time: form.start_time,
+        match_duration_minutes: Math.min(180, Math.max(15, Number(form.match_duration_minutes) || 90)),
       });
       let id = data?.id ?? data?.tournament?.id ?? data?.tournament_id ?? null;
       if (!id) {
@@ -677,6 +735,61 @@ export default function TournamentsPage() {
   const canEnterResultForMatch = (match) =>
     canEnterThisMatch(match) && match.team_a_id && match.team_b_id;
 
+  const canEditMatchSchedule = (match) =>
+    canManage && match.status !== "completed" && match.status !== "cancelled" && Boolean(match.scheduled_time);
+
+  function openScheduleEdit(match) {
+    setScheduleModalError("");
+    setScheduleEditMatch(match);
+    setScheduleForm({
+      datetimeLocal: isoToDatetimeLocalValue(match.scheduled_time),
+      duration: match.duration_minutes ?? selectedTournament?.match_duration_minutes ?? 90,
+      location: match.location || "",
+    });
+  }
+
+  function closeScheduleEdit() {
+    if (busy) {
+      return;
+    }
+    setScheduleEditMatch(null);
+  }
+
+  async function submitScheduleEdit(event) {
+    event.preventDefault();
+    if (!scheduleEditMatch) {
+      return;
+    }
+    setBusy(true);
+    setScheduleModalError("");
+    try {
+      const d = new Date(scheduleForm.datetimeLocal);
+      if (!Number.isFinite(d.getTime())) {
+        setScheduleModalError("Choose a valid date and time.");
+        return;
+      }
+      const tDefault = Number(selectedTournament?.match_duration_minutes) || 90;
+      const useDur = Number(scheduleForm.duration);
+      let duration_minutes = null;
+      if (Number.isFinite(useDur) && useDur >= 15 && useDur !== tDefault) {
+        duration_minutes = useDur;
+      }
+      await rescheduleTournamentMatch(scheduleEditMatch.id, {
+        scheduled_time: d.toISOString(),
+        location: scheduleForm.location,
+        duration_minutes,
+      });
+      await refreshAll(selectedTournamentId);
+      window.dispatchEvent(new Event("netup-schedule-changed"));
+      setMessage("Match schedule updated. Schedules and Events will show the new time.");
+      setScheduleEditMatch(null);
+    } catch (err) {
+      setScheduleModalError(err.message || "Could not update schedule.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const tabList = canManage ? TABS_DIRECTOR : TABS_VIEWER;
 
   return (
@@ -740,6 +853,81 @@ export default function TournamentsPage() {
                 </button>
                 <button type="submit" className="vc-action-btn" disabled={busy}>
                   {busy ? "Saving…" : "Save result"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+      {scheduleEditMatch ? (
+        <div
+          className="vc-modal-backdrop"
+          role="presentation"
+          onClick={busy ? undefined : closeScheduleEdit}
+        >
+          <div
+            className="vc-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="tournament-schedule-form-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="vc-modal__head">
+              <h2 id="tournament-schedule-form-title">Edit match schedule</h2>
+              <button
+                type="button"
+                className="vc-modal__close"
+                onClick={closeScheduleEdit}
+                disabled={busy}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+            <p className="vc-modal__muted">
+              {scheduleEditMatch.team_a_name || "Team A"} vs {scheduleEditMatch.team_b_name || "Team B"}
+            </p>
+            <form className="tournament-reschedule-form" onSubmit={submitScheduleEdit}>
+              <label>
+                <span>Start (your local time)</span>
+                <input
+                  type="datetime-local"
+                  value={scheduleForm.datetimeLocal}
+                  onChange={(e) => setScheduleForm((f) => ({ ...f, datetimeLocal: e.target.value }))}
+                  required
+                />
+              </label>
+              <label>
+                <span>Match length (minutes)</span>
+                <input
+                  type="number"
+                  min="15"
+                  max="240"
+                  step="5"
+                  value={scheduleForm.duration}
+                  onChange={(e) => setScheduleForm((f) => ({ ...f, duration: e.target.value }))}
+                />
+                <small className="vc-modal__muted" style={{ display: "block", marginTop: 4 }}>
+                  Same as tournament default ({selectedTournament?.match_duration_minutes || 90} min) — leave as-is; change only
+                  to override for this game.
+                </small>
+              </label>
+              <label>
+                <span>Court / location</span>
+                <input
+                  type="text"
+                  value={scheduleForm.location}
+                  onChange={(e) => setScheduleForm((f) => ({ ...f, location: e.target.value }))}
+                  placeholder="e.g. Court 1"
+                />
+              </label>
+              {scheduleModalError ? <p className="vc-modal__error">{scheduleModalError}</p> : null}
+              <div className="tournament-modal-actions">
+                <button type="button" className="tournament-history-btn" onClick={closeScheduleEdit} disabled={busy}>
+                  Cancel
+                </button>
+                <button type="submit" className="vc-action-btn" disabled={busy}>
+                  {busy ? "Saving…" : "Save schedule"}
                 </button>
               </div>
             </form>
@@ -863,6 +1051,34 @@ export default function TournamentsPage() {
               <label><span>Name</span><input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} /></label>
               <label><span>Location</span><input value={form.location} onChange={(e) => setForm((f) => ({ ...f, location: e.target.value }))} /></label>
               <label><span>Start Date</span><input type="date" value={form.start_date} onChange={(e) => setForm((f) => ({ ...f, start_date: e.target.value }))} /></label>
+              <label>
+                <span>Day start time</span>
+                <input
+                  type="time"
+                  value={form.start_time}
+                  onChange={(e) => setForm((f) => ({ ...f, start_time: e.target.value }))}
+                />
+              </label>
+              <label>
+                <span>Match length (min)</span>
+                <input
+                  type="number"
+                  min="15"
+                  max="180"
+                  value={form.match_duration_minutes}
+                  onChange={(e) => setForm((f) => ({ ...f, match_duration_minutes: e.target.value }))}
+                />
+              </label>
+              <label>
+                <span>Courts (parallel)</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="8"
+                  value={form.court_count}
+                  onChange={(e) => setForm((f) => ({ ...f, court_count: e.target.value }))}
+                />
+              </label>
               <label><span>Format</span><select value={form.format} onChange={(e) => setForm((f) => ({ ...f, format: e.target.value }))}>{FORMATS.map((it) => <option key={it.value} value={it.value}>{it.label}</option>)}</select></label>
               <label><span># Pools</span><input type="number" min="1" value={form.number_of_pools} onChange={(e) => setForm((f) => ({ ...f, number_of_pools: e.target.value }))} /></label>
               <label><span>Teams/Pool</span><input type="number" min="2" value={form.teams_per_pool} onChange={(e) => setForm((f) => ({ ...f, teams_per_pool: e.target.value }))} /></label>
@@ -981,9 +1197,10 @@ export default function TournamentsPage() {
                   <table className="tournament-fixtures-table tournament-fixtures-table--all-matches">
                     <thead>
                       <tr>
-                        <th>Scheduled start (your time)</th>
+                        <th>Scheduled (your time)</th>
                         <th>Stage</th>
                         <th>Pool / round</th>
+                        <th>Court</th>
                         <th>Team A</th>
                         <th>Team B</th>
                         <th>Outcome</th>
@@ -998,16 +1215,23 @@ export default function TournamentsPage() {
                           match.team_a_score != null &&
                           match.team_b_score != null;
                         const stage = match.pool_id ? "Pool" : "Bracket";
-                        const roundCol = match.pool_name || match.bracket_round || "—";
+                        const pr = match.pool_round_number;
+                        const roundCol = match.pool_id
+                          ? (pr ? `${match.pool_name || "Pool"} · Round ${pr}` : match.pool_name || "—")
+                          : match.bracket_round || "—";
                         const bracketWait = getBracketWaitMessage(match, matches);
                         const advanceBlurb = !match.pool_id ? getAdvanceBlurb(match, matchById) : null;
                         return (
                           <tr key={match.id}>
                             <td>
-                              <TournamentStartCell iso={match.scheduled_time} />
+                              <TournamentStartCell
+                                iso={match.scheduled_time}
+                                endIso={match.scheduled_end_time}
+                              />
                             </td>
                             <td>{stage}</td>
                             <td>{roundCol}</td>
+                            <td>{match.location || "—"}</td>
                             <td>{match.team_a_name || "TBD"}</td>
                             <td>{match.team_b_name || "TBD"}</td>
                             <td>
@@ -1021,17 +1245,30 @@ export default function TournamentsPage() {
                             <td>
                               {scoreDone ? (
                                 "—"
-                              ) : canEnterResultForMatch(match) ? (
-                                <button
-                                  type="button"
-                                  className="tournament-history-btn"
-                                  onClick={() => openResultForm(match)}
-                                  disabled={busy}
-                                >
-                                  Enter result
-                                </button>
                               ) : (
-                                "—"
+                                <span className="tournament-row-actions">
+                                  {canEditMatchSchedule(match) ? (
+                                    <button
+                                      type="button"
+                                      className="tournament-history-btn"
+                                      onClick={() => openScheduleEdit(match)}
+                                      disabled={busy}
+                                    >
+                                      Edit schedule
+                                    </button>
+                                  ) : null}
+                                  {canEnterResultForMatch(match) ? (
+                                    <button
+                                      type="button"
+                                      className="tournament-history-btn"
+                                      onClick={() => openResultForm(match)}
+                                      disabled={busy}
+                                    >
+                                      Enter result
+                                    </button>
+                                  ) : null}
+                                  {!canEditMatchSchedule(match) && !canEnterResultForMatch(match) ? "—" : null}
+                                </span>
                               )}
                             </td>
                           </tr>
@@ -1079,7 +1316,10 @@ export default function TournamentsPage() {
                               return (
                                 <tr key={match.id}>
                                   <td>
-                                    <TournamentStartCell iso={match.scheduled_time} />
+                                    <TournamentStartCell
+                                      iso={match.scheduled_time}
+                                      endIso={match.scheduled_end_time}
+                                    />
                                   </td>
                                   <td>
                                     {match.team_a_name} vs {match.team_b_name}
@@ -1092,17 +1332,30 @@ export default function TournamentsPage() {
                                   <td>
                                     {scoreDone ? (
                                       "—"
-                                    ) : canEnterResultForMatch(match) ? (
-                                      <button
-                                        type="button"
-                                        className="tournament-history-btn"
-                                        onClick={() => openResultForm(match)}
-                                        disabled={busy}
-                                      >
-                                        Enter result
-                                      </button>
                                     ) : (
-                                      "—"
+                                      <span className="tournament-row-actions">
+                                        {canEditMatchSchedule(match) ? (
+                                          <button
+                                            type="button"
+                                            className="tournament-history-btn"
+                                            onClick={() => openScheduleEdit(match)}
+                                            disabled={busy}
+                                          >
+                                            Edit schedule
+                                          </button>
+                                        ) : null}
+                                        {canEnterResultForMatch(match) ? (
+                                          <button
+                                            type="button"
+                                            className="tournament-history-btn"
+                                            onClick={() => openResultForm(match)}
+                                            disabled={busy}
+                                          >
+                                            Enter result
+                                          </button>
+                                        ) : null}
+                                        {!canEditMatchSchedule(match) && !canEnterResultForMatch(match) ? "—" : null}
+                                      </span>
                                     )}
                                   </td>
                                 </tr>
@@ -1188,57 +1441,87 @@ export default function TournamentsPage() {
                 <section key={round.name} className="tournament-fixture-section">
                   <div className="tournament-fixture-section__head"><h3>{round.name}</h3><span>{round.matches.length} matches</span></div>
                   {round.matches.map((match) => {
+                    const resolved = matches.find((m) => Number(m.id) === Number(match.id)) || match;
                     const scoreDone =
-                      match.status === "completed" &&
-                      match.team_a_score != null &&
-                      match.team_b_score != null;
-                    const aWin = scoreDone && match.winner_team_id && match.winner_team_id === match.team_a_id;
-                    const bWin = scoreDone && match.winner_team_id && match.winner_team_id === match.team_b_id;
-                    const aOut = scoreDone && match.loser_team_id && match.loser_team_id === match.team_a_id;
-                    const bOut = scoreDone && match.loser_team_id && match.loser_team_id === match.team_b_id;
-                    const bracketWait = getBracketWaitMessage(match, matches);
-                    const advanceBlurb = getAdvanceBlurb(match, matchById);
+                      resolved.status === "completed" &&
+                      resolved.team_a_score != null &&
+                      resolved.team_b_score != null;
+                    const aWin = scoreDone && resolved.winner_team_id && resolved.winner_team_id === resolved.team_a_id;
+                    const bWin = scoreDone && resolved.winner_team_id && resolved.winner_team_id === resolved.team_b_id;
+                    const aOut = scoreDone && resolved.loser_team_id && resolved.loser_team_id === resolved.team_a_id;
+                    const bOut = scoreDone && resolved.loser_team_id && resolved.loser_team_id === resolved.team_b_id;
+                    const bracketWait = getBracketWaitMessage(resolved, matches);
+                    const advanceBlurb = getAdvanceBlurb(resolved, matchById);
+                    const sched = formatBracketWhenWhereLine(resolved, selectedTournament);
                     return (
                     <article
                       key={match.id}
                       className={`tournament-summary-card tournament-summary-card--bracket${scoreDone ? " is-finished" : ""}`}
                     >
-                      <p className="tournament-bracket-card__id">Match {match.match_number}</p>
+                      <p className="tournament-bracket-card__id">Match {resolved.match_number}</p>
                       <div className="tournament-bracket-teams" aria-label="Competitors">
                         <div
                           className={`tournament-bracket-teams__side${
                             aWin ? " is-winner" : ""}${aOut ? " is-eliminated" : ""}`}
                         >
-                          {match.team_a_name || "TBD"}
+                          {resolved.team_a_name || "TBD"}
                         </div>
                         <span className="tournament-bracket-teams__vs">vs</span>
                         <div
                           className={`tournament-bracket-teams__side${
                             bWin ? " is-winner" : ""}${bOut ? " is-eliminated" : ""}`}
                         >
-                          {match.team_b_name || "TBD"}
+                          {resolved.team_b_name || "TBD"}
                         </div>
                       </div>
+                      {resolved.bracket_round ? (
+                        <p className="tournament-bracket-card__round-name">{resolved.bracket_round}</p>
+                      ) : null}
+                      {sched.when ? (
+                        <p className="tournament-bracket-card__when">{sched.when}</p>
+                      ) : (
+                        <p className="tournament-bracket-card__when tournament-bracket-card__when--missing">
+                          Time not set — use Matches tab or edit schedule
+                        </p>
+                      )}
+                      {sched.where ? <p className="tournament-bracket-card__where">{sched.where}</p> : null}
+                      {!(bracketWait && resolved.status !== "completed") && resolved.status === "scheduled" && !scoreDone ? (
+                        <p className="tournament-bracket-card__status">Status: Not played yet</p>
+                      ) : null}
                       <MatchOutcomeLines
-                        match={match}
+                        match={resolved}
                         bracketWait={bracketWait}
                         advanceBlurb={advanceBlurb}
                         showWaitPairLine={false}
                       />
-                      <div className="tournament-bracket-card__action">
+                      <div className="tournament-bracket-card__action tournament-bracket-card__action--row">
                         {scoreDone ? (
                           <span className="tournament-bracket-card__action-note">Result final</span>
-                        ) : canEnterResultForMatch(match) ? (
-                          <button
-                            type="button"
-                            className="tournament-history-btn"
-                            onClick={() => openResultForm(match)}
-                            disabled={busy}
-                          >
-                            Enter result
-                          </button>
                         ) : (
-                          <span className="tournament-bracket-card__result-muted">—</span>
+                          <span className="tournament-bracket-card__action-buttons">
+                            {canEditMatchSchedule(resolved) ? (
+                              <button
+                                type="button"
+                                className="tournament-history-btn"
+                                onClick={() => openScheduleEdit(resolved)}
+                                disabled={busy}
+                              >
+                                Edit schedule
+                              </button>
+                            ) : null}
+                            {canEnterResultForMatch(resolved) ? (
+                              <button
+                                type="button"
+                                className="tournament-history-btn"
+                                onClick={() => openResultForm(resolved)}
+                                disabled={busy}
+                              >
+                                Enter result
+                              </button>
+                            ) : !canEditMatchSchedule(resolved) && !canEnterResultForMatch(resolved) ? (
+                              <span className="tournament-bracket-card__result-muted">—</span>
+                            ) : null}
+                          </span>
                         )}
                       </div>
                     </article>

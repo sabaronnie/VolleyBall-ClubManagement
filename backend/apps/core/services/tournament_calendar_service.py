@@ -42,6 +42,10 @@ def _public_title(tournament_name: str, match: TournamentMatch) -> str:
     return f"Tournament: {a} vs {b} — {br}"
 
 
+def _duration_minutes_for_match(match: TournamentMatch) -> int:
+    return int(match.duration_minutes or match.tournament.match_duration_minutes or 90)
+
+
 def _tournament_session_card_title(match: TournamentMatch) -> str:
     """
     Multi-line title for schedule / list views (stays under 255 chars).
@@ -52,7 +56,11 @@ def _tournament_session_card_title(match: TournamentMatch) -> str:
         if match.team_a_score is not None and match.team_b_score is not None:
             wn = match.winner_team.name if match.winner_team else "Winner"
             return f"Tournament Match\n{a} {match.team_a_score} - {match.team_b_score} {b}\nWinner: {wn}"[:255]
-    stage = f"{match.pool.name}" if (match.pool_id and match.pool) else (match.bracket_round or "Bracket").strip()
+    if match.pool_id and match.pool:
+        pr = match.pool_round_number
+        stage = f"{match.pool.name} · Round {pr}" if pr else match.pool.name
+    else:
+        stage = (match.bracket_round or "Bracket").strip()
     return f"Tournament Match\n{a} vs {b}\n{stage}"[:255]
 
 
@@ -73,7 +81,7 @@ def _public_notes(
         if timezone.is_naive(st):
             st = timezone.make_aware(st, timezone.get_current_timezone())
         st = timezone.localtime(st)
-        dur = int(t.match_duration_minutes or 90)
+        dur = _duration_minutes_for_match(match)
         end_dt = st + timedelta(minutes=dur)
         lines.append(
             f"Time: {_format_local_time_12h(st)} – {_format_local_time_12h(end_dt)} · {st.strftime('%Y-%m-%d')}"
@@ -114,7 +122,7 @@ def sync_calendar_sessions_for_tournament_match(match: TournamentMatch) -> None:
     st = timezone.localtime(st)
     s_date = st.date()
     s_time = st.time().replace(microsecond=0)
-    duration = t.match_duration_minutes or 90
+    duration = _duration_minutes_for_match(match)
     end_time = _add_minutes_to_time(s_time, int(duration))
     loc = (match.location or t.venue or "").strip() or ""
     is_done = match.status == TournamentMatch.MatchStatus.COMPLETED

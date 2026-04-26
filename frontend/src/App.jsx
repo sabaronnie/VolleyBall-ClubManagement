@@ -419,7 +419,13 @@ function dedupeScheduleEntriesByTournamentMatch(entries) {
         continue;
       }
       seen.add(k);
-      out.push({ ...e, id: `tm-${k}` });
+      out.push({
+        ...e,
+        id: `tm-${k}`,
+        teamColor: null,
+        teamName: null,
+        isAllTeamsTournamentCard: true,
+      });
       continue;
     }
     out.push(e);
@@ -453,6 +459,7 @@ function normalizeScheduleEntries(entries) {
       tournamentMatchId: entry.tournamentMatchId,
       sessionNotes: entry.sessionNotes,
       isMatchEnded: entry.isMatchEnded,
+      isAllTeamsTournamentCard: Boolean(entry.isAllTeamsTournamentCard),
     }));
 }
 
@@ -563,7 +570,7 @@ function scheduleEventHorizontalStyle(layout, entryId) {
   const availablePercent = 100;
   const columnGapPercent = 2;
   const totalGapPercent = Math.max(0, maxCols - 1) * columnGapPercent;
-  const columnWidthPercent = Math.max(26, (availablePercent - totalGapPercent) / maxCols);
+  const columnWidthPercent = Math.max(34, (availablePercent - totalGapPercent) / maxCols);
   const leftPercent = col * (columnWidthPercent + columnGapPercent);
   const rightPercent = Math.max(0, availablePercent - leftPercent - columnWidthPercent);
 
@@ -780,7 +787,15 @@ function WeeklyScheduleBoard({ weekStart, entries, onSelectEntry, legendTeams })
                       className={`schedule-event${entry.isTrainingSession ? " schedule-event--interactive" : ""}${
                         entry.teamColor ? " schedule-event--team-colored" : ""
                       }${entry.isMatchSession ? " schedule-event--match" : ""
-                      }${entry.isTournamentSession ? " schedule-event--tournament" : ""}`}
+                      }${
+                        entry.isTournamentSession
+                          ? ` schedule-event--tournament${
+                              entry.isAllTeamsTournamentCard
+                                ? " schedule-event--tournament--neutral"
+                                : ""
+                            }`
+                          : ""
+                      }`}
                       style={{
                         top: `${(minutesFromTop / 60) * SCHEDULE_HOUR_HEIGHT}px`,
                         height: `${(durationMinutes / 60) * SCHEDULE_HOUR_HEIGHT}px`,

@@ -51,21 +51,10 @@ def effective_match_duration_minutes(tournament) -> int:
     return max(30, min(180, d))
 
 
-def default_court_count(tournament) -> int:
-    """
-    Parallelism across pools: N pools can use up to N courts at the same time (capped).
-    Single-pool: one court = purely sequential.
-    """
-    p = int(getattr(tournament, "pool_count", None) or 0) or 1
-    return max(1, min(MAX_COURT_COUNT, p))
-
-
-def bracket_court_count(tournament) -> int:
-    """Bracket often has fewer parallel games; still allow multi-court first rounds."""
-    p = int(getattr(tournament, "pool_count", None) or 0) or 1
-    if int(getattr(tournament, "number_of_teams", None) or 0) >= 8:
-        return max(1, min(MAX_COURT_COUNT, 4))
-    return max(1, min(MAX_COURT_COUNT, p))
+def effective_court_count(tournament) -> int:
+    """Director-configured parallel courts (default 1). Not tied to pool count."""
+    c = int(getattr(tournament, "court_count", None) or 0) or 1
+    return max(1, min(MAX_COURT_COUNT, c))
 
 
 def schedule_time_blocks(
@@ -124,7 +113,7 @@ def build_pool_match_schedule(
     for _pool, rounds in pool_rounds:
         max_r = max(max_r, len(rounds or []))
     d = effective_match_duration_minutes(tournament)
-    c = default_court_count(tournament)
+    c = effective_court_count(tournament)
     t = snap_start_to_30min(tournament_day_anchor(tournament))
     out: list[dict[str, Any]] = []
     for r in range(max_r):
@@ -151,6 +140,7 @@ def build_pool_match_schedule(
                     "pool": pool,
                     "team_a_id": ta,
                     "team_b_id": tb,
+                    "pool_round_number": r + 1,
                     "scheduled_time": start,
                     "location": f"Court {int(court_idx) + 1}",
                 }
@@ -171,7 +161,7 @@ def build_bracket_match_schedule(
     `matches` = bracket matches with pool IS NULL, mixed rounds.
     """
     d = effective_match_duration_minutes(tournament)
-    c = bracket_court_count(tournament)
+    c = effective_court_count(tournament)
     # group by round sort
     if not matches:
         return []

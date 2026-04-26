@@ -4374,6 +4374,40 @@
   color: #6a7680;
 }
 
+.tournament-bracket-card__round-name {
+  margin: 0 0 0.35rem;
+  font-size: 0.88rem;
+  font-weight: 800;
+  color: #3d4a5c;
+}
+
+.tournament-bracket-card__when {
+  margin: 0 0 0.25rem;
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: #1a2330;
+  line-height: 1.35;
+}
+
+.tournament-bracket-card__when--missing {
+  color: #8a5a10;
+  font-weight: 600;
+}
+
+.tournament-bracket-card__where {
+  margin: 0 0 0.4rem;
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: #2d3b4c;
+}
+
+.tournament-bracket-card__status {
+  margin: 0 0 0.4rem;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: #3d4a5c;
+}
+
 .tournament-bracket-teams {
   display: flex;
   flex-wrap: wrap;
@@ -4418,6 +4452,21 @@
 
 .tournament-bracket-card__action {
   margin-top: 0.4rem;
+}
+
+.tournament-bracket-card__action--row {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.65rem;
+}
+
+.tournament-bracket-card__action-buttons {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
 }
 
 .tournament-bracket-card__action-note {

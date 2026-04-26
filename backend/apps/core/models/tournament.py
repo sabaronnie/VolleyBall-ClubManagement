@@ -43,9 +43,13 @@ class Tournament(models.Model):
     teams_per_pool = models.PositiveIntegerField(default=0)
     teams_qualifying_per_pool = models.PositiveIntegerField(default=0)
     match_duration_minutes = models.PositiveIntegerField(default=90)
+    court_count = models.PositiveIntegerField(
+        default=1,
+        help_text="Parallel courts for scheduling (not the same as pool count).",
+    )
     scoring_format = models.CharField(max_length=120, default="Best of 3 to 25")
     start_date = models.DateField()
-    start_time = models.TimeField(default=time(18, 0))
+    start_time = models.TimeField(default=time(9, 0))
     venue = models.CharField(max_length=255, blank=True)
     status = models.CharField(
         max_length=16,
@@ -164,6 +168,16 @@ class TournamentMatch(models.Model):
         blank=True,
     )
     scheduled_time = models.DateTimeField(null=True, blank=True)
+    duration_minutes = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Override tournament match length for this game (start + duration = end).",
+    )
+    pool_round_number = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Round index within pool play (1-based), for display only.",
+    )
     location = models.CharField(max_length=255, blank=True)
     status = models.CharField(max_length=16, choices=MatchStatus.choices, default=MatchStatus.SCHEDULED)
     next_match = models.ForeignKey(

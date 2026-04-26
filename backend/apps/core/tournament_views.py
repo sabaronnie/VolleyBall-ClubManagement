@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import random
 from collections import defaultdict
@@ -30,11 +32,11 @@ from .services.tournament_calendar_service import (
     sync_calendar_sessions_for_tournament_match,
 )
 from .services.tournament_scheduling import (
+    bracket_round_sort_key,
     build_bracket_match_schedule,
     build_pool_match_schedule,
     snap_start_to_30min,
     tournament_day_anchor,
-    effective_match_duration_minutes,
 )
 
 
@@ -43,6 +45,28 @@ def _parse_body(request):
         return json.loads(request.body.decode("utf-8") or "{}")
     except (json.JSONDecodeError, UnicodeDecodeError):
         return None
+
+
+def _parse_scheduled_dt(raw):
+    """Parse ISO-8601 datetime; naive values are interpreted in the current timezone."""
+    s = str(raw or "").strip()
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    dt = datetime.fromisoformat(s)
+    if timezone.is_naive(dt):
+        dt = timezone.make_aware(dt, timezone.get_current_timezone())
+    return dt
+
+
+def _match_end_aware(match: TournamentMatch) -> datetime | None:
+    if not match.scheduled_time:
+        return None
+    st = match.scheduled_time
+    if timezone.is_naive(st):
+        st = timezone.make_aware(st, timezone.get_current_timezone())
+    t = match.tournament
+    dur = int(match.duration_minutes or t.match_duration_minutes or 90)
+    return st + timedelta(minutes=dur)
 
 
 def _canonical_tournament_type(raw_type):
@@ -106,11 +130,17 @@ def _can_view_tournament(user, tournament):
 
 
 def _serialize_match(match):
+    end_iso = None
+    if match.scheduled_time:
+        end = _match_end_aware(match)
+        if end:
+            end_iso = end.isoformat()
     return {
         "id": match.id,
         "tournament_id": match.tournament_id,
         "pool_id": match.pool_id,
         "pool_name": match.pool.name if match.pool_id else None,
+        "pool_round_number": match.pool_round_number,
         "bracket_round": match.bracket_round or None,
         "match_number": match.match_number,
         "team_a_id": match.team_a_id,
@@ -125,6 +155,8 @@ def _serialize_match(match):
         "loser_team_name": match.loser_team.name if match.loser_team_id else None,
         "status": match.status,
         "scheduled_time": match.scheduled_time.isoformat() if match.scheduled_time else None,
+        "scheduled_end_time": end_iso,
+        "duration_minutes": match.duration_minutes,
         "location": match.location,
         "next_match_id": match.next_match_id,
         "next_match_slot": match.next_match_slot or None,
@@ -133,11 +165,15 @@ def _serialize_match(match):
 
 def _serialize_tournament(tournament):
     normalized = _normalize_tournament_status(tournament)
+    st = normalized.start_time
     return {
         "id": normalized.id,
         "name": normalized.name,
         "location": normalized.venue,
         "start_date": normalized.start_date.isoformat(),
+        "start_time": st.strftime("%H:%M") if st else "09:00",
+        "match_duration_minutes": normalized.match_duration_minutes,
+        "court_count": max(1, int(normalized.court_count or 1)),
         "status": normalized.status,
         "format": _canonical_tournament_type(normalized.tournament_type),
         "number_of_pools": normalized.pool_count,
@@ -380,12 +416,22 @@ def tournaments(request):
             return JsonResponse({"errors": {"top_teams_advance_per_pool": "Top teams cannot exceed teams per pool."}}, status=400)
 
     start_date = datetime.fromisoformat(start_date_raw).date()
+    court_count = int(payload.get("court_count") or 1)
+    court_count = max(1, min(8, court_count))
+    match_duration_minutes = int(payload.get("match_duration_minutes") or 90)
+    match_duration_minutes = max(15, min(180, match_duration_minutes))
+    st_raw = payload.get("start_time")
+    if st_raw and str(st_raw).strip():
+        parts = str(st_raw).strip().split(":")
+        start_t = time(int(parts[0]) % 24, int(parts[1]) % 60 if len(parts) > 1 else 0)
+    else:
+        start_t = time(9, 0)
     tournament = Tournament.objects.create(
         club_id=club_id,
         created_by=request.user,
         name=name,
         start_date=start_date,
-        start_time=time(9, 0),
+        start_time=start_t,
         venue=location,
         tournament_type=format_code,
         status=Tournament.Status.DRAFT,
@@ -394,6 +440,8 @@ def tournaments(request):
         teams_per_pool=teams_per_pool,
         teams_qualifying_per_pool=top_teams,
         scoring_format=tie_break_rule,
+        match_duration_minutes=match_duration_minutes,
+        court_count=court_count,
     )
     tournament.teams.set(list(team_qs))
     for index, team in enumerate(team_qs.order_by("name", "id"), start=1):
@@ -454,7 +502,26 @@ def tournament_detail(request, tournament_id):
     tournament.venue = (payload.get("location") or tournament.venue).strip()
     if payload.get("start_date"):
         tournament.start_date = datetime.fromisoformat(payload["start_date"]).date()
-    tournament.save(update_fields=["name", "venue", "start_date", "updated_at"])
+    if str(payload.get("start_time") or "").strip():
+        parts = str(payload.get("start_time")).strip().split(":")
+        tournament.start_time = time(int(parts[0]) % 24, int(parts[1]) % 60 if len(parts) > 1 else 0)
+    if payload.get("match_duration_minutes") is not None:
+        md = int(payload.get("match_duration_minutes") or 90)
+        tournament.match_duration_minutes = max(15, min(180, md))
+    if payload.get("court_count") is not None:
+        cc = int(payload.get("court_count") or 1)
+        tournament.court_count = max(1, min(8, cc))
+    tournament.save(
+        update_fields=[
+            "name",
+            "venue",
+            "start_date",
+            "start_time",
+            "match_duration_minutes",
+            "court_count",
+            "updated_at",
+        ]
+    )
     return JsonResponse({"message": "Tournament updated.", "tournament": _serialize_tournament(tournament)})
 
 
@@ -526,12 +593,14 @@ def generate_pool_matches(request, tournament_id):
             pool_rounds.append((pool, _round_robin_pairs(team_ids)))
         plan = build_pool_match_schedule(tournament, pool_rounds)
         for item in plan:
+            pr = item.get("pool_round_number")
             TournamentMatch.objects.create(
                 tournament=tournament,
                 pool=item["pool"],
                 match_number=match_number,
                 team_a_id=item["team_a_id"],
                 team_b_id=item["team_b_id"],
+                pool_round_number=int(pr) if pr is not None else None,
                 scheduled_time=item["scheduled_time"],
                 location=str(item["location"]),
                 status=TournamentMatch.MatchStatus.SCHEDULED,
@@ -563,12 +632,16 @@ def generate_bracket(request, tournament_id):
     existing_bracket = TournamentMatch.objects.filter(tournament=tournament, pool__isnull=True)
     if existing_bracket.filter(status__in=[TournamentMatch.MatchStatus.ONGOING, TournamentMatch.MatchStatus.COMPLETED]).exists():
         return JsonResponse({"errors": {"bracket": "Bracket already started and cannot be regenerated."}}, status=400)
-    pool_planned = TournamentMatch.objects.filter(
-        tournament=tournament, pool__isnull=False, scheduled_time__isnull=False
+    pool_planned = list(
+        TournamentMatch.objects.filter(tournament=tournament, pool__isnull=False, scheduled_time__isnull=False)
     )
-    if pool_planned.exists():
-        last_pool_start = max(m.scheduled_time for m in pool_planned)
-        bracket_run_start = snap_start_to_30min(last_pool_start + timedelta(minutes=30))
+    if pool_planned:
+        last_end = None
+        for m in pool_planned:
+            end = _match_end_aware(m)
+            if end and (last_end is None or end > last_end):
+                last_end = end
+        bracket_run_start = snap_start_to_30min(last_end) if last_end else snap_start_to_30min(tournament_day_anchor(tournament))
     else:
         bracket_run_start = snap_start_to_30min(tournament_day_anchor(tournament))
     with transaction.atomic():
@@ -665,13 +738,13 @@ def tournament_matches(request, tournament_id):
         return JsonResponse({"errors": {"authorization": "You do not have access to this tournament."}}, status=403)
     if request.user.is_staff or _is_director_for_club(request.user, tournament.club_id):
         matches = TournamentMatch.objects.filter(tournament=tournament).select_related(
-            "team_a", "team_b", "pool", "winner_team", "loser_team"
+            "tournament", "team_a", "team_b", "pool", "winner_team", "loser_team"
         )
     else:
         team_scope = _team_ids_for_user(request.user)
         matches = TournamentMatch.objects.filter(tournament=tournament).filter(
             Q(team_a_id__in=team_scope) | Q(team_b_id__in=team_scope)
-        ).select_related("team_a", "team_b", "pool", "winner_team", "loser_team")
+        ).select_related("tournament", "team_a", "team_b", "pool", "winner_team", "loser_team")
     return JsonResponse({"matches": [_serialize_match(match) for match in matches.order_by("match_number", "id")]})
 
 
@@ -707,10 +780,22 @@ def reschedule_match(request, match_id):
     if payload is None or not payload.get("scheduled_time"):
         return JsonResponse({"errors": {"scheduled_time": "scheduled_time is required."}}, status=400)
     old_schedule = match.scheduled_time.isoformat() if match.scheduled_time else None
-    match.scheduled_time = datetime.fromisoformat(payload["scheduled_time"])
-    if payload.get("location") is not None:
-        match.location = str(payload["location"]).strip()
-    match.save(update_fields=["scheduled_time", "location", "updated_at"])
+    try:
+        match.scheduled_time = _parse_scheduled_dt(payload["scheduled_time"])
+    except (TypeError, ValueError):
+        return JsonResponse({"errors": {"scheduled_time": "Invalid scheduled_time. Use ISO-8601 format."}}, status=400)
+    if "location" in payload:
+        match.location = str(payload.get("location") or "").strip()
+    if "duration_minutes" in payload:
+        dm = payload.get("duration_minutes")
+        if dm in (None, ""):
+            match.duration_minutes = None
+        else:
+            try:
+                match.duration_minutes = max(15, min(240, int(dm)))
+            except (TypeError, ValueError):
+                return JsonResponse({"errors": {"duration_minutes": "Invalid duration."}}, status=400)
+    match.save(update_fields=["scheduled_time", "location", "duration_minutes", "updated_at"])
     match = TournamentMatch.objects.select_related("tournament", "team_a", "team_b", "pool").get(pk=match.pk)
     sync_calendar_sessions_for_tournament_match(match)
     AuditLogService.log_action(
@@ -864,13 +949,21 @@ def tournament_bracket(request, tournament_id):
     _normalize_tournament_status(tournament)
     if not _can_view_tournament(request.user, tournament):
         return JsonResponse({"errors": {"authorization": "You do not have access to this tournament."}}, status=403)
-    matches = TournamentMatch.objects.filter(tournament=tournament, pool__isnull=True).select_related(
-        "team_a", "team_b", "winner_team", "loser_team"
+    matches = (
+        TournamentMatch.objects.filter(tournament=tournament, pool__isnull=True)
+        .select_related("tournament", "team_a", "team_b", "winner_team", "loser_team")
+        .order_by("match_number", "id")
     )
     rounds = defaultdict(list)
     for match in matches:
-        rounds[match.bracket_round or "Bracket"].append(_serialize_match(match))
-    return JsonResponse({"rounds": [{"name": name, "matches": rows} for name, rows in rounds.items()]})
+        label = (match.bracket_round or "Bracket").strip() or "Bracket"
+        rounds[label].append(_serialize_match(match))
+    # Stable round order: quarter → semi → other rounds → final
+    ordered = sorted(
+        rounds.items(),
+        key=lambda item: (bracket_round_sort_key(item[0]), item[0].lower()),
+    )
+    return JsonResponse({"rounds": [{"name": name, "matches": rows} for name, rows in ordered]})
 
 
 @login_required

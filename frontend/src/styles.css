@@ -2065,8 +2065,10 @@ button {
   line-height: 1.22;
   color: inherit;
   white-space: pre-line;
-  overflow-wrap: break-word;
-  word-break: break-word;
+  writing-mode: horizontal-tb;
+  text-orientation: mixed;
+  overflow-wrap: anywhere;
+  word-break: normal;
   max-width: 100%;
   flex-shrink: 0;
 }
@@ -2087,6 +2089,18 @@ button {
   font-size: 0.7rem;
   font-weight: 800;
   margin-top: 0.05rem;
+}
+
+.schedule-event--tournament.schedule-event--tournament--neutral {
+  --event-team-bg: #5b4a6f;
+  background: linear-gradient(145deg, #4a3d5c 0%, #5c4a72 50%, #3d2f4d 100%);
+  color: #faf8ff;
+  border: 1px solid rgba(255, 220, 160, 0.35);
+}
+
+.schedule-event--tournament.schedule-event--tournament--neutral.schedule-event--team-colored {
+  background: linear-gradient(145deg, #4a3d5c 0%, #5c4a72 50%, #3d2f4d 100%);
+  color: #faf8ff;
 }
 
 .schedule-event--tournament.schedule-event--match {
@@ -2130,9 +2144,16 @@ button {
 }
 
 
+.tournament-row-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+
 .schedule-hover-popover {
   pointer-events: none;
-  max-width: min(280px, calc(100vw - 24px));
+  max-width: min(340px, calc(100vw - 24px));
   padding: 0.75rem 0.9rem;
   border-radius: 0.75rem;
   background: #1e293b;
