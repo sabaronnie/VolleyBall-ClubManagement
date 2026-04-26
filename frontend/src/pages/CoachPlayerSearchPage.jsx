@@ -215,10 +215,6 @@ export default function CoachPlayerSearchPage({ activeTeam }) {
         setProfileLoading(false);
       }
     }
-
-    return () => {
-      cancelled = true;
-    };
   }, [teamId, selectedPlayerId]);
 
   useEffect(() => {
@@ -334,34 +330,8 @@ export default function CoachPlayerSearchPage({ activeTeam }) {
     };
   }, [profilePayload?.performanceRows, selectedMetricKey]);
 
-  if (!teamId) {
-    return (
-      <section className="teams-page-shell">
-        <header className="teams-page-header">
-          <div className="teams-page-heading">
-            <p className="teams-page-kicker">Coaching</p>
-            <h1>Player Performance</h1>
-            <p className="teams-page-subtitle">Select a coached team first to open a player performance profile.</p>
-          </div>
-        </header>
-      </section>
-    );
-  }
-
-  const attendancePlayer = profilePayload?.attendanceSummary?.player || null;
-  const profileMember = profilePayload?.selectedMember || null;
   const performanceRows = profilePayload?.performanceRows || [];
-  const totals = profilePayload?.totals || null;
-  const avgWeightedScore =
-    totals && totals.matches > 0 ? (totals.weightedScore / totals.matches).toFixed(1) : "—";
   const selectedMetric = METRIC_OPTIONS.find((option) => option.key === selectedMetricKey) || METRIC_OPTIONS[0];
-  const selectedMetricValues = performanceRows
-    .map((row) => row?.[selectedMetric.key])
-    .filter((value) => value != null)
-    .map((value) => Number(value));
-  const selectedMetricAverage = selectedMetricValues.length
-    ? (selectedMetricValues.reduce((sum, value) => sum + value, 0) / selectedMetricValues.length).toFixed(1)
-    : null;
   const performanceRowsById = useMemo(
     () => new Map(performanceRows.map((row) => [Number(row.matchId), row])),
     [performanceRows],
@@ -413,10 +383,35 @@ export default function CoachPlayerSearchPage({ activeTeam }) {
 
   useEffect(() => {
     const validIds = new Set(performanceRows.map((row) => Number(row.matchId)));
-    setSelectedComparisonMatchIds((current) =>
-      current.filter((id) => validIds.has(Number(id))),
-    );
+    setSelectedComparisonMatchIds((current) => current.filter((id) => validIds.has(Number(id))));
   }, [performanceRows]);
+
+  if (!teamId) {
+    return (
+      <section className="teams-page-shell">
+        <header className="teams-page-header">
+          <div className="teams-page-heading">
+            <p className="teams-page-kicker">Coaching</p>
+            <h1>Player Performance</h1>
+            <p className="teams-page-subtitle">Select a coached team first to open a player performance profile.</p>
+          </div>
+        </header>
+      </section>
+    );
+  }
+
+  const attendancePlayer = profilePayload?.attendanceSummary?.player || null;
+  const profileMember = profilePayload?.selectedMember || null;
+  const totals = profilePayload?.totals || null;
+  const avgWeightedScore =
+    totals && totals.matches > 0 ? (totals.weightedScore / totals.matches).toFixed(1) : "—";
+  const selectedMetricValues = performanceRows
+    .map((row) => row?.[selectedMetric.key])
+    .filter((value) => value != null)
+    .map((value) => Number(value));
+  const selectedMetricAverage = selectedMetricValues.length
+    ? (selectedMetricValues.reduce((sum, value) => sum + value, 0) / selectedMetricValues.length).toFixed(1)
+    : null;
 
   const toggleComparisonMatch = (matchId) => {
     const normalizedId = Number(matchId);
