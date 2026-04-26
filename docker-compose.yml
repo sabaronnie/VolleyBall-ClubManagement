@@ -1,0 +1,53 @@
+services:
+  db:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${DOCKER_MYSQL_DATABASE:-project_db}
+      MYSQL_USER: ${DOCKER_MYSQL_USER:-project_user}
+      MYSQL_PASSWORD: ${DOCKER_MYSQL_PASSWORD:-change-me}
+      MYSQL_ROOT_PASSWORD: ${DOCKER_MYSQL_ROOT_PASSWORD:-root-change-me}
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.development
+      MYSQL_DATABASE: ${DOCKER_MYSQL_DATABASE:-project_db}
+      MYSQL_USER: ${DOCKER_MYSQL_USER:-project_user}
+      MYSQL_PASSWORD: ${DOCKER_MYSQL_PASSWORD:-change-me}
+      MYSQL_HOST: db
+      MYSQL_PORT: "3306"
+      DJANGO_ALLOWED_HOSTS: 127.0.0.1,localhost,backend
+    command: sh -c "python manage.py migrate && python manage.py runserver 0.0.0.0:8000"
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"
+
+volumes:
+  mysql_data:

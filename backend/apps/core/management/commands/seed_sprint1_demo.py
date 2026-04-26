@@ -7,11 +7,11 @@ Run from backend/: python manage.py seed_sprint1_demo
 Then (optional): python manage.py remind_incomplete_training_attendance
 
 Default login password for most seeded accounts: Sprint1Demo123!
-Exception: taymamerhebi@gmail.com uses password taymamerhebi (club director on all demo clubs).
+Exception: abdallahleen33@gmail.com uses password taymamerhebi (club director on all demo clubs).
 Coach dashboard: log in as lyn.coach@sprint1.local, open Dashboard, select Riyadi U16 in the team
 dropdown (or rely on default), data is read from the database only.
 
-Director dashboard: log in as taymamerhebi@gmail.com, open Club dashboard — KPIs, 30-day attendance
+Director dashboard: log in as abdallahleen33@gmail.com, open Club dashboard — KPIs, 30-day attendance
 trend, payments overview, and club summary are populated from fees, ledger entries, sessions, and
 audit logs (see _seed_riyadi_fees_and_ledgers / _seed_nahda_low_attendance).
 """
@@ -104,7 +104,7 @@ class Command(BaseCommand):
                 clubs[name] = club
 
             tayma_director_gmail = self._ensure_user(
-                email="taymamerhebi@gmail.com",
+                email="abdallahleen33@gmail.com",
                 first_name="Tayma",
                 last_name="Merhebi",
                 date_of_birth=date_from_year(1995),
@@ -114,7 +114,7 @@ class Command(BaseCommand):
                 ClubMembership.objects.assign_director(user=tayma_director_gmail, club=club)
             self.stdout.write(
                 self.style.SUCCESS(
-                    "Added taymamerhebi@gmail.com as club director on Riyadi, Nahda, CPF, and AUB."
+                    "Added abdallahleen33@gmail.com as club director on Riyadi, Nahda, CPF, and AUB."
                 )
             )
 
@@ -222,7 +222,7 @@ class Command(BaseCommand):
             self.style.SUCCESS(
                 f"Done. Log in as lyn.coach@sprint1.local / {DEMO_PASSWORD} (coach) or "
                 f"tayma.parent@sprint1.local (parent of Karma and Racha) or "
-                f"taymamerhebi@gmail.com / taymamerhebi (director). "
+                f"abdallahleen33@gmail.com / taymamerhebi (director). "
                 f"Team id for Riyadi U16: {team_riyadi.id}."
             )
         )
@@ -335,7 +335,7 @@ class Command(BaseCommand):
                 password=EECE430_PASSWORD,
             ),
             "tayma": self._ensure_user(
-                email="tayma.merhebi@gmail.com",
+                email="abdallahleen33@gmail.com",
                 first_name="Tayma",
                 last_name="Merhebi",
                 date_of_birth=date(2008, 5, 14),

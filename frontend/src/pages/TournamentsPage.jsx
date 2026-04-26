@@ -221,6 +221,8 @@ export default function TournamentsPage() {
   const [scheduleModalError, setScheduleModalError] = useState("");
 
   const canManage = Boolean(me?.is_director_or_staff || me?.viewer_is_staff);
+  const viewerRole = String(me?.user?.role || "").toLowerCase();
+  const canViewTournamentActions = viewerRole !== "player" && viewerRole !== "parent";
   const selectedTournament = useMemo(
     () => tournaments.find((item) => Number(item.id) === Number(selectedTournamentId)) || null,
     [tournaments, selectedTournamentId],
@@ -729,14 +731,18 @@ export default function TournamentsPage() {
   })();
 
   const canEnterThisMatch = (match) =>
-    (canManage || myMatchIds.has(match.id)) && match.status !== "completed";
+    canViewTournamentActions && (canManage || myMatchIds.has(match.id)) && match.status !== "completed";
 
   /** Bracket (and pool) results need two assigned teams before the API accepts a score. */
   const canEnterResultForMatch = (match) =>
     canEnterThisMatch(match) && match.team_a_id && match.team_b_id;
 
   const canEditMatchSchedule = (match) =>
-    canManage && match.status !== "completed" && match.status !== "cancelled" && Boolean(match.scheduled_time);
+    canViewTournamentActions &&
+    canManage &&
+    match.status !== "completed" &&
+    match.status !== "cancelled" &&
+    Boolean(match.scheduled_time);
 
   function openScheduleEdit(match) {
     setScheduleModalError("");
@@ -1205,7 +1211,7 @@ export default function TournamentsPage() {
                         <th>Team B</th>
                         <th>Outcome</th>
                         <th>Status</th>
-                        <th>Action</th>
+                        {canViewTournamentActions ? <th>Action</th> : null}
                       </tr>
                     </thead>
                     <tbody>
@@ -1242,35 +1248,37 @@ export default function TournamentsPage() {
                               />
                             </td>
                             <td>{match.status}</td>
-                            <td>
-                              {scoreDone ? (
-                                "—"
-                              ) : (
-                                <span className="tournament-row-actions">
-                                  {canEditMatchSchedule(match) ? (
-                                    <button
-                                      type="button"
-                                      className="tournament-history-btn"
-                                      onClick={() => openScheduleEdit(match)}
-                                      disabled={busy}
-                                    >
-                                      Edit schedule
-                                    </button>
-                                  ) : null}
-                                  {canEnterResultForMatch(match) ? (
-                                    <button
-                                      type="button"
-                                      className="tournament-history-btn"
-                                      onClick={() => openResultForm(match)}
-                                      disabled={busy}
-                                    >
-                                      Enter result
-                                    </button>
-                                  ) : null}
-                                  {!canEditMatchSchedule(match) && !canEnterResultForMatch(match) ? "—" : null}
-                                </span>
-                              )}
-                            </td>
+                            {canViewTournamentActions ? (
+                              <td>
+                                {scoreDone ? (
+                                  "—"
+                                ) : (
+                                  <span className="tournament-row-actions">
+                                    {canEditMatchSchedule(match) ? (
+                                      <button
+                                        type="button"
+                                        className="tournament-history-btn"
+                                        onClick={() => openScheduleEdit(match)}
+                                        disabled={busy}
+                                      >
+                                        Edit schedule
+                                      </button>
+                                    ) : null}
+                                    {canEnterResultForMatch(match) ? (
+                                      <button
+                                        type="button"
+                                        className="tournament-history-btn"
+                                        onClick={() => openResultForm(match)}
+                                        disabled={busy}
+                                      >
+                                        Enter result
+                                      </button>
+                                    ) : null}
+                                    {!canEditMatchSchedule(match) && !canEnterResultForMatch(match) ? "—" : null}
+                                  </span>
+                                )}
+                              </td>
+                            ) : null}
                           </tr>
                         );
                       })}
@@ -1304,7 +1312,7 @@ export default function TournamentsPage() {
                               <th>Court</th>
                               <th>Status</th>
                               <th>Outcome</th>
-                              <th>Action</th>
+                              {canViewTournamentActions ? <th>Action</th> : null}
                             </tr>
                           </thead>
                           <tbody>
@@ -1329,35 +1337,37 @@ export default function TournamentsPage() {
                                   <td>
                                     <MatchOutcomeLines match={match} compact />
                                   </td>
-                                  <td>
-                                    {scoreDone ? (
-                                      "—"
-                                    ) : (
-                                      <span className="tournament-row-actions">
-                                        {canEditMatchSchedule(match) ? (
-                                          <button
-                                            type="button"
-                                            className="tournament-history-btn"
-                                            onClick={() => openScheduleEdit(match)}
-                                            disabled={busy}
-                                          >
-                                            Edit schedule
-                                          </button>
-                                        ) : null}
-                                        {canEnterResultForMatch(match) ? (
-                                          <button
-                                            type="button"
-                                            className="tournament-history-btn"
-                                            onClick={() => openResultForm(match)}
-                                            disabled={busy}
-                                          >
-                                            Enter result
-                                          </button>
-                                        ) : null}
-                                        {!canEditMatchSchedule(match) && !canEnterResultForMatch(match) ? "—" : null}
-                                      </span>
-                                    )}
-                                  </td>
+                                  {canViewTournamentActions ? (
+                                    <td>
+                                      {scoreDone ? (
+                                        "—"
+                                      ) : (
+                                        <span className="tournament-row-actions">
+                                          {canEditMatchSchedule(match) ? (
+                                            <button
+                                              type="button"
+                                              className="tournament-history-btn"
+                                              onClick={() => openScheduleEdit(match)}
+                                              disabled={busy}
+                                            >
+                                              Edit schedule
+                                            </button>
+                                          ) : null}
+                                          {canEnterResultForMatch(match) ? (
+                                            <button
+                                              type="button"
+                                              className="tournament-history-btn"
+                                              onClick={() => openResultForm(match)}
+                                              disabled={busy}
+                                            >
+                                              Enter result
+                                            </button>
+                                          ) : null}
+                                          {!canEditMatchSchedule(match) && !canEnterResultForMatch(match) ? "—" : null}
+                                        </span>
+                                      )}
+                                    </td>
+                                  ) : null}
                                 </tr>
                               );
                             })}
@@ -1494,36 +1504,38 @@ export default function TournamentsPage() {
                         advanceBlurb={advanceBlurb}
                         showWaitPairLine={false}
                       />
-                      <div className="tournament-bracket-card__action tournament-bracket-card__action--row">
-                        {scoreDone ? (
-                          <span className="tournament-bracket-card__action-note">Result final</span>
-                        ) : (
-                          <span className="tournament-bracket-card__action-buttons">
-                            {canEditMatchSchedule(resolved) ? (
-                              <button
-                                type="button"
-                                className="tournament-history-btn"
-                                onClick={() => openScheduleEdit(resolved)}
-                                disabled={busy}
-                              >
-                                Edit schedule
-                              </button>
-                            ) : null}
-                            {canEnterResultForMatch(resolved) ? (
-                              <button
-                                type="button"
-                                className="tournament-history-btn"
-                                onClick={() => openResultForm(resolved)}
-                                disabled={busy}
-                              >
-                                Enter result
-                              </button>
-                            ) : !canEditMatchSchedule(resolved) && !canEnterResultForMatch(resolved) ? (
-                              <span className="tournament-bracket-card__result-muted">—</span>
-                            ) : null}
-                          </span>
-                        )}
-                      </div>
+                      {canViewTournamentActions ? (
+                        <div className="tournament-bracket-card__action tournament-bracket-card__action--row">
+                          {scoreDone ? (
+                            <span className="tournament-bracket-card__action-note">Result final</span>
+                          ) : (
+                            <span className="tournament-bracket-card__action-buttons">
+                              {canEditMatchSchedule(resolved) ? (
+                                <button
+                                  type="button"
+                                  className="tournament-history-btn"
+                                  onClick={() => openScheduleEdit(resolved)}
+                                  disabled={busy}
+                                >
+                                  Edit schedule
+                                </button>
+                              ) : null}
+                              {canEnterResultForMatch(resolved) ? (
+                                <button
+                                  type="button"
+                                  className="tournament-history-btn"
+                                  onClick={() => openResultForm(resolved)}
+                                  disabled={busy}
+                                >
+                                  Enter result
+                                </button>
+                              ) : !canEditMatchSchedule(resolved) && !canEnterResultForMatch(resolved) ? (
+                                <span className="tournament-bracket-card__result-muted">—</span>
+                              ) : null}
+                            </span>
+                          )}
+                        </div>
+                      ) : null}
                     </article>
                     );
                   })}
