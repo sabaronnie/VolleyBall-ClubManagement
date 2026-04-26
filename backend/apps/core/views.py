@@ -1587,6 +1587,7 @@ def _serialize_coach_training_session_attendance(session, team, player_membershi
         "location": session.location,
         "opponent": _display_match_opponent(session, team),
         "opponent_team_id": session.opponent_team_id,
+        "tournament_match_id": session.tournament_match_id,
         "match_type": session.match_type,
         "match_type_label": session.get_match_type_display() if session.match_type else "",
         "notes": session.notes,
@@ -2070,8 +2071,6 @@ def _serialize_match_common_payload(detail, session):
     match_status = "scheduled"
     if detail.get("is_ended"):
         match_status = "finished"
-    elif detail.get("status") == TrainingSession.Status.ONGOING:
-        match_status = "ongoing"
 
     return {
         "match_id": session.id,

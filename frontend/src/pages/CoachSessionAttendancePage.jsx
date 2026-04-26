@@ -683,19 +683,40 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
     void loadDetail(selectedSessionId);
   }, [selectedSessionId, loadDetail]);
 
-  const loadMatchDetail = useCallback(async (matchId) => {
-    if (!matchId) {
+  const loadMatchDetail = useCallback(async (session) => {
+    if (!session?.id) {
       setMatchPayload(null);
       return;
     }
+    const isTournamentLine =
+      session.match_type === "tournament" || session.tournament_match_id != null;
     setMatchLoading(true);
     setMatchError("");
     try {
-      const data = await fetchMatch(matchId, teamId);
+      const data = await fetchMatch(session.id, teamId);
       setMatchPayload(data);
     } catch (err) {
       setMatchPayload(null);
-      setMatchError(err.message || "Could not load match stats.");
+      const msg = err && typeof err.message === "string" ? err.message : "";
+      const tainted =
+        !msg || msg.length > 400 || /[<>]/.test(msg) || /AttributeError|Traceback|DOCTYPE/i.test(msg);
+      if (tainted) {
+        setMatchError(
+          isTournamentLine
+            ? "Performance tracking is not available for this tournament match yet."
+            : "Unable to load match performance right now.",
+        );
+      } else {
+        const isGenericServer =
+          msg === "Match performance data is not available yet." ||
+          msg === "Unable to complete the request. Please try again." ||
+          msg === "The server returned an unexpected response. Please try again.";
+        if (isTournamentLine && isGenericServer) {
+          setMatchError("Performance tracking is not available for this tournament match yet.");
+        } else {
+          setMatchError(msg);
+        }
+      }
     } finally {
       setMatchLoading(false);
     }
@@ -708,7 +729,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
       setOpponentFinalScoreInput("");
       return;
     }
-    void loadMatchDetail(detailPayload.session.id);
+    void loadMatchDetail(detailPayload.session);
   }, [detailPayload, loadMatchDetail]);
 
   useEffect(() => {
@@ -1156,6 +1177,7 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
   const detailSession = detailPayload?.session;
   const detailMatch = matchPayload?.match;
   const detailMatchSummary = detailMatch?.summary?.final_score || null;
+  const matchPerformanceLoadFailed = Boolean(matchError) && !matchLoading;
   const editableMatchPlayers = (detailMatch?.players || []).filter(
     (player) => player?.attendance_status !== "absent",
   );
@@ -1747,6 +1769,17 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
               </header>
               {detailSession.session_type === "match" ? (
                 <section className="match-stats-panel" aria-labelledby="match-stats-heading">
+                  {matchPerformanceLoadFailed ? (
+                    <>
+                      <h4 id="match-stats-heading" style={{ margin: "0 0 0.5rem" }}>
+                        Match performance tracking
+                      </h4>
+                      <p className="vc-modal__muted" style={{ margin: 0, lineHeight: 1.5 }} role="status">
+                        {matchError}
+                      </p>
+                    </>
+                  ) : (
+                    <>
                   <div className="match-stats-panel__head">
                     <div>
                       <h4 id="match-stats-heading">Match performance tracking</h4>
@@ -1886,7 +1919,6 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
                     </div>
                   ) : null}
                   {matchLoading && !matchPayload ? <p className="vc-modal__muted">Loading match stats…</p> : null}
-                  {matchError ? <p className="schedule-feedback schedule-feedback--error">{matchError}</p> : null}
                   {endMatchMessage ? <p className="vc-director-success">{endMatchMessage}</p> : null}
                   {endMatchError ? <p className="schedule-feedback schedule-feedback--error">{endMatchError}</p> : null}
                   {statsSaveError ? <p className="schedule-feedback schedule-feedback--error">{statsSaveError}</p> : null}
@@ -1944,6 +1976,8 @@ export default function CoachSessionAttendancePage({ activeTeam }) {
                   ) : !matchLoading ? (
                     <p className="vc-modal__muted">No present/pending players available for this match.</p>
                   ) : null}
+                    </>
+                  )}
                 </section>
               ) : null}
               {canManageTraining && detailSession.status !== "cancelled" && detailSession.can_send_reminders !== false ? (

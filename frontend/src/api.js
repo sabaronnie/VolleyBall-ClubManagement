@@ -6,6 +6,49 @@ const AUTH_USER_KEY = "netup.auth.user";
 const ACTIVE_TEAM_KEY = "netup.active.team";
 const AUTH_EXPIRED_KEY = "netup.auth.expired";
 
+function isLikelyServerHtmlErrorBody(text) {
+  if (!text || typeof text !== "string") {
+    return false;
+  }
+  const t = text.trim();
+  if (/^\s*<(!DOCTYPE|html)\b/i.test(t)) {
+    return true;
+  }
+  if (t.length > 200 && (t.includes("AttributeError at /") || t.includes("Traceback (most recent call last)"))) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Parses a fetch response body. Never returns HTML or Django debug page text as a JSON field’s value.
+ */
+function parseJsonResponseText(text) {
+  if (text == null || text === "") {
+    return { payload: null, isHtml: false };
+  }
+  if (isLikelyServerHtmlErrorBody(text)) {
+    return { payload: null, isHtml: true };
+  }
+  const trimmed = text.trim();
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try {
+      return { payload: JSON.parse(text), isHtml: false };
+    } catch {
+      return { payload: null, isHtml: isLikelyServerHtmlErrorBody(text) };
+    }
+  }
+  if (isLikelyServerHtmlErrorBody(text)) {
+    return { payload: null, isHtml: true };
+  }
+  return {
+    payload: { message: text.length > 220 ? "Invalid response from server." : text },
+    isHtml: false,
+  };
+}
+
+const GENERIC_API_FAILURE = "Unable to complete the request. Please try again.";
+
 function normalizeErrors(payload, fallbackMessage) {
   if (!payload || typeof payload !== "object") {
     return fallbackMessage;
@@ -101,21 +144,19 @@ async function authenticatedGet(path) {
   }
 
   const text = await response.text();
-  let payload = null;
-  if (text) {
-    try {
-      payload = JSON.parse(text);
-    } catch {
-      payload = { message: text.slice(0, 280) };
+  const { payload, isHtml } = parseJsonResponseText(text);
+  if (isHtml) {
+    logoutExpiredSession(response, null);
+    if (!response.ok) {
+      throw new Error(GENERIC_API_FAILURE);
     }
+    throw new Error("The server returned an unexpected response. Please try again.");
   }
 
   if (!response.ok) {
     const fromApi = normalizeErrors(payload, "");
     logoutExpiredSession(response, payload);
-    throw new Error(
-      fromApi || `Request failed (HTTP ${response.status}). Response was not JSON — is Django running on port 8000?`,
-    );
+    throw new Error(fromApi || `Request failed (HTTP ${response.status}). ${GENERIC_API_FAILURE}`);
   }
 
   return payload;
@@ -142,18 +183,23 @@ async function authenticatedJson(path, method, body) {
   }
 
   responseText = await response.text();
-  payload = {};
-  if (responseText) {
-    try {
-      payload = JSON.parse(responseText);
-    } catch {
-      payload = { message: responseText.slice(0, 280) };
+  const parsed = parseJsonResponseText(responseText);
+  if (parsed.isHtml) {
+    if (!response.ok) {
+      logoutExpiredSession(response, null);
     }
+    throw new Error(
+      !response.ok ? GENERIC_API_FAILURE : "The server returned an unexpected response. Please try again.",
+    );
+  }
+  payload = parsed.payload;
+  if (payload == null) {
+    payload = {};
   }
 
   if (!response.ok) {
     logoutExpiredSession(response, payload);
-    throw new Error(normalizeErrors(payload, "Request failed. Please try again."));
+    throw new Error(normalizeErrors(payload, GENERIC_API_FAILURE));
   }
 
   return payload;
@@ -286,7 +332,11 @@ function appendTeamQuery(path, teamId) {
 }
 
 export async function fetchMatch(matchId, teamId) {
-  return authenticatedGet(appendTeamQuery(`/api/matches/${matchId}/`, teamId));
+  const data = await authenticatedGet(appendTeamQuery(`/api/matches/${matchId}/`, teamId));
+  if (data == null || typeof data !== "object" || !("match" in data) || data.match == null) {
+    throw new Error("Match performance data is not available yet.");
+  }
+  return data;
 }
 
 export async function endMatch(matchId, payload, teamId) {
